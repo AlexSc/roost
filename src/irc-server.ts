@@ -66,6 +66,19 @@ const client = new IRC.Client()
 let irc_ready = false
 const join_resolvers = new Map<string, Array<(ok: boolean) => void>>()
 
+// IRCv3 draft/multiline state. Populated when the server ACKs the cap.
+// When enabled, outbound long messages go out as a draft/multiline BATCH
+// (server reassembles cleanly, capable receivers get one message); when
+// disabled, we fall back to the heuristic chunk + receiver-buffer dance
+// below. Limits come from the cap value (e.g.
+// `draft/multiline=max-bytes=16384,max-lines=200`); we cache them here.
+let multilineEnabled = false
+let multilineMaxBytes = 4096
+let multilineMaxLines = 100
+// Per-line PRIVMSG cap inside a batch is still bounded by IRC's 512-byte
+// line limit; we use the same conservative chunker as the legacy path.
+const MULTILINE_LINE_BYTES = 300
+
 // Per-channel ring buffer of recent messages — gives us
 // channel_history without needing a bouncer.
 const history: Map<string, IrcMessage[]> = new Map()
@@ -78,19 +91,28 @@ const pushHistory = (key: string, msg: IrcMessage) => {
 
 // ---- Send-side splitting + receive-side buffering ----------------------
 //
-// IRC's per-line limit is 512 bytes including the server-added prefix.
-// irc-framework's `message_max_length` defaults to 350 bytes. We pre-
-// split outbound text into chunks of ≤300 bytes so each PRIVMSG passes
-// through unsplit. Receivers reassemble heuristically: PRIVMSGs from the
-// same sender to the same target arriving within BUFFER_WINDOW_MS are
-// concatenated and emitted as one channel event.
+// Two paths, picked at runtime based on CAP negotiation:
+//
+//   1. draft/multiline batch (preferred). When the server advertises
+//      draft/multiline (ergo does), outbound long messages are sent as
+//      `BATCH +<id> draft/multiline <target>` followed by tagged
+//      PRIVMSGs and `BATCH -<id>`. The receiving MCP listens for
+//      `batch end draft/multiline` and emits a single channel event.
+//      Lossless: explicit \n's in the source text round-trip exactly
+//      via the +draft/multiline-concat tag on continuation chunks.
+//
+//   2. Legacy time-window heuristic (fallback). If the server doesn't
+//      speak draft/multiline (ngircd), we pre-split into ≤300-byte
+//      chunks and reassemble on the receiver by buffering PRIVMSGs from
+//      the same sender→target pair within a short time window. Lossy
+//      under genuine fast back-to-back sends from one sender, but
+//      acceptable for ngircd-era traffic.
 //
 // Why not markers in the body? Visible noise to non-MCP observers
 // (irssi, weechat) — even one-line markers fragment human readability.
-// Why not IRCv3 message-tags? ngircd-27 advertises only `multi-prefix`
-// in CAP LS; tagged PRIVMSGs are silently dropped (probed 2026-04-27).
-// A different IRC server (solanum, inspircd) would unblock tags; we
-// chose to stay on ngircd and reassemble heuristically.
+// Why the path split? ngircd-27 advertises only `multi-prefix` in
+// CAP LS; tagged PRIVMSGs are silently dropped (probed 2026-04-27).
+// Ergo unblocks tags + multiline cleanly (added 2026-04-28).
 //
 // Backward compat: if an inbound PRIVMSG carries the legacy
 // [roost-split:<id>:<i>/<n>] body-prefix marker (from a not-yet-cycled
@@ -200,11 +222,11 @@ const splitText = (text: string): string[] | null => {
   return out
 }
 
-const sendWithSplit = (target: string, text: string): { chunks: number } => {
+const sendLegacyChunks = (target: string, text: string): { chunks: number; mode: 'single' | 'chunked' } => {
   const chunks = splitText(text)
   if (!chunks) {
     client.say(target, text)
-    return { chunks: 1 }
+    return { chunks: 1, mode: 'single' }
   }
   for (const c of chunks) {
     client.say(target, c)
@@ -212,7 +234,91 @@ const sendWithSplit = (target: string, text: string): { chunks: number } => {
   process.stderr.write(
     `roost-irc[${NICK}]: split outbound to ${target} into ${chunks.length} naked chunks (receiver buffers)\n`,
   )
-  return { chunks: chunks.length }
+  return { chunks: chunks.length, mode: 'chunked' }
+}
+
+// Split a single logical line (no internal \n) into ≤MULTILINE_LINE_BYTES
+// chunks at natural boundaries. First chunk has no concat tag (so it
+// retains the implicit newline-from-prior-line); subsequent chunks carry
+// +draft/multiline-concat so they reassemble onto the first.
+const splitLineForMultiline = (line: string): string[] => {
+  if (line.length <= MULTILINE_LINE_BYTES) return [line]
+  const out: string[] = []
+  let i = 0
+  while (i < line.length) {
+    const remaining = line.length - i
+    if (remaining <= MULTILINE_LINE_BYTES) {
+      out.push(line.slice(i))
+      break
+    }
+    const split = findNaturalBoundary(line, i, i + MULTILINE_LINE_BYTES)
+    out.push(line.slice(i, split))
+    i = split
+  }
+  return out
+}
+
+const newBatchId = (): string =>
+  Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, '0')
+
+const sendMultiline = (target: string, text: string): { chunks: number; mode: 'single' | 'multiline' } => {
+  // Single-line, single-chunk fast path: no batch overhead.
+  if (text.length <= MULTILINE_LINE_BYTES && !text.includes('\n')) {
+    client.say(target, text)
+    return { chunks: 1, mode: 'single' }
+  }
+
+  const id = newBatchId()
+  // Logical lines split on the source text's own newlines. An empty
+  // logical line (consecutive \n's) is preserved as a zero-length PRIVMSG
+  // body — receiver re-joins with \n separators, restoring the blank.
+  const logicalLines = text.split('\n')
+  const wireLines: Array<{ body: string; concat: boolean }> = []
+  for (const line of logicalLines) {
+    const chunks = splitLineForMultiline(line)
+    chunks.forEach((chunk, idx) => {
+      // Continuation chunks of one logical line concat onto the previous;
+      // the first chunk of each logical line takes the default \n join.
+      wireLines.push({ body: chunk, concat: idx > 0 })
+    })
+  }
+
+  if (wireLines.length > multilineMaxLines) {
+    process.stderr.write(
+      `roost-irc[${NICK}]: multiline target=${target} would emit ${wireLines.length} lines, exceeds server max ${multilineMaxLines}; falling back to legacy chunker\n`,
+    )
+    const legacy = sendLegacyChunks(target, text)
+    return { chunks: legacy.chunks, mode: 'single' }
+  }
+
+  client.raw('BATCH', `+${id}`, 'draft/multiline', target)
+  for (const { body, concat } of wireLines) {
+    // Construct the wire line ourselves: irc-framework's IrcMessage
+    // serializer drops the trailing-param `:` marker for empty bodies,
+    // which the multiline spec explicitly permits — empty lines map to
+    // empty paragraphs and must round-trip.
+    //
+    // Tag name is `draft/multiline-concat` — NO `+` prefix, even
+    // though IRCv3 reserves `+` for client-only tags. Ergo's
+    // caps/constants.go calls it `draft/multiline-concat` flat; with
+    // a `+` prefix it'd be treated as an unrelated client tag, get
+    // stripped on relay, and the receiver would default-newline-join
+    // continuation chunks (verified 2026-04-28).
+    const tagStr = concat
+      ? `batch=${id};draft/multiline-concat`
+      : `batch=${id}`
+    client.connection.write(`@${tagStr} PRIVMSG ${target} :${body}`)
+  }
+  client.raw('BATCH', `-${id}`)
+  process.stderr.write(
+    `roost-irc[${NICK}]: multiline outbound to ${target} as batch ${id} (${wireLines.length} lines, ${text.length} bytes)\n`,
+  )
+  return { chunks: wireLines.length, mode: 'multiline' }
+}
+
+const sendWithSplit = (target: string, text: string): { chunks: number; mode: 'single' | 'chunked' | 'multiline' } => {
+  if (multilineEnabled) return sendMultiline(target, text)
+  return sendLegacyChunks(target, text)
 }
 
 const flushBuffer = (key: string) => {
@@ -403,16 +509,22 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
     case 'channel_message': {
       const channel = String(args.channel ?? '')
       const text = String(args.text ?? '')
-      const { chunks } = sendWithSplit(channel, text)
-      const note = chunks > 1 ? ` (split into ${chunks} chunks for IRC line cap)` : ''
+      const { chunks, mode } = sendWithSplit(channel, text)
+      const note =
+        mode === 'multiline' ? ` (sent as draft/multiline batch, ${chunks} lines)`
+        : chunks > 1 ? ` (split into ${chunks} chunks for IRC line cap)`
+        : ''
       const preview = text.length > 120 ? text.slice(0, 117) + '...' : text
       return { content: [{ type: 'text', text: `sent to ${channel}: ${preview}${note}` }] }
     }
     case 'direct_message': {
       const nick = String(args.nick ?? '')
       const text = String(args.text ?? '')
-      const { chunks } = sendWithSplit(nick, text)
-      const note = chunks > 1 ? ` (split into ${chunks} chunks for IRC line cap)` : ''
+      const { chunks, mode } = sendWithSplit(nick, text)
+      const note =
+        mode === 'multiline' ? ` (sent as draft/multiline batch, ${chunks} lines)`
+        : chunks > 1 ? ` (split into ${chunks} chunks for IRC line cap)`
+        : ''
       const preview = text.length > 120 ? text.slice(0, 117) + '...' : text
       return { content: [{ type: 'text', text: `DM to ${nick}: ${preview}${note}` }] }
     }
@@ -487,6 +599,29 @@ process.stderr.write(`roost-irc[${NICK}]: MCP transport up at ${new Date().toISO
 client.on('registered', () => {
   irc_ready = true
   process.stderr.write(`roost-irc[${NICK}]: registered with ${SERVER}:${PORT}\n`)
+  // After registration, the cap.enabled set is final. Inspect it for
+  // draft/multiline and parse the limits from the cap value.
+  const enabled = client.network?.cap?.enabled ?? []
+  const available: Map<string, string> = client.network?.cap?.available ?? new Map()
+  if (enabled.includes('draft/multiline')) {
+    multilineEnabled = true
+    const val = available.get('draft/multiline') || ''
+    // val format: "max-bytes=16384,max-lines=200"
+    for (const kv of val.split(',')) {
+      const [k, v] = kv.split('=')
+      const n = Number(v)
+      if (!Number.isFinite(n) || n <= 0) continue
+      if (k === 'max-bytes') multilineMaxBytes = n
+      if (k === 'max-lines') multilineMaxLines = n
+    }
+    process.stderr.write(
+      `roost-irc[${NICK}]: draft/multiline enabled (max-bytes=${multilineMaxBytes}, max-lines=${multilineMaxLines})\n`,
+    )
+  } else {
+    process.stderr.write(
+      `roost-irc[${NICK}]: draft/multiline NOT enabled (server caps: ${enabled.join(',') || '(none)'}); falling back to legacy chunker\n`,
+    )
+  }
   for (const ch of AUTO_JOIN) {
     client.join(ch)
     process.stderr.write(`roost-irc[${NICK}]: auto-joining ${ch}\n`)
@@ -601,8 +736,12 @@ client.on('message', (event: {
   target: string
   message: string
   type: 'privmsg' | 'notice' | 'action' | string
+  batch?: { id: string; type: string; params: string[] }
 }) => {
   if (event.nick === NICK) return // don't loop our own messages back
+  // draft/multiline batch members are reassembled in the batch-end
+  // handler below — skip them here to avoid double-emit.
+  if (event.batch?.type === 'draft/multiline') return
   const isDirect = event.target === NICK
   const channel = isDirect ? event.nick : event.target
   const ts = new Date().toISOString()
@@ -640,6 +779,64 @@ client.on('message', (event: {
   })
 })
 
+// Reassemble a draft/multiline batch into a single channel event. The
+// batch's `commands` array is the buffered PRIVMSGs in send order;
+// adjacent lines join with \n unless the line carries the
+// +draft/multiline-concat tag (then they concat directly).
+client.on(
+  'batch end draft/multiline',
+  (event: {
+    id: string
+    params: string[]
+    commands: Array<{
+      command: string
+      params: string[]
+      nick: string
+      tags: Record<string, unknown>
+      getServerTime?: () => number | undefined
+    }>
+  }) => {
+    const target = event.params[0]
+    if (!target) return
+    const cmds = event.commands.filter(c => c.command === 'PRIVMSG')
+    if (cmds.length === 0) return
+    const sender = cmds[0].nick
+    if (sender === NICK) return // don't loop our own messages back
+
+    // Reassemble.
+    let text = ''
+    cmds.forEach((c, i) => {
+      const body = c.params[c.params.length - 1] ?? ''
+      // Tag is on the wire as `draft/multiline-concat` (no `+` prefix;
+      // see send-side note). Use presence-check — valueless tags
+      // decode to "" which is falsy under !!.
+      const concat = 'draft/multiline-concat' in c.tags
+      if (i === 0) {
+        text = body
+      } else if (concat) {
+        text += body
+      } else {
+        text += '\n' + body
+      }
+    })
+
+    const isDirect = target === NICK
+    const channel = isDirect ? sender : target
+    // Prefer server-time of the first chunk if available.
+    const serverTimeMs = cmds[0].getServerTime?.()
+    const ts = (serverTimeMs ? new Date(serverTimeMs) : new Date()).toISOString()
+    const msg: IrcMessage = {
+      channel,
+      sender,
+      text,
+      ts,
+      isDirect,
+    }
+    pushHistory(channel, msg)
+    emitChannelEvent(msg, { buffered: cmds.length > 1, chunkCount: cmds.length })
+  },
+)
+
 client.on('socket close', () => {
   process.stderr.write(`roost-irc[${NICK}]: socket closed\n`)
   irc_ready = false
@@ -648,6 +845,11 @@ client.on('socket close', () => {
 client.on('socket error', (err: Error) => {
   process.stderr.write(`roost-irc[${NICK}]: socket error: ${err.message}\n`)
 })
+
+// Ask the server for the IRCv3 caps we need beyond irc-framework's
+// defaults. labeled-response isn't strictly required for multiline, but
+// it pairs well with future features (await-able send confirmations).
+client.requestCap(['draft/multiline', 'labeled-response'])
 
 client.connect({
   host: SERVER,

@@ -1,0 +1,224 @@
+# ergo config for roost development — spike phase
+#
+# Coexists with ngircd during the cutover. Listens on 127.0.0.1:6668
+# while ngircd holds 6667. Once the multiline + audit-log story is
+# proven, ergo moves to 6667 and ngircd retires.
+#
+# Working dir is /Users/alex/Dev/GoCarrot/roost/var/ergo when launched
+# via the project Makefile/scripts. All relative paths resolve there.
+
+network:
+    name: roost
+
+server:
+    name: roost.local
+
+    listeners:
+        # Spike port — ngircd still owns 6667.
+        "127.0.0.1:6668":
+        "[::1]:6668":
+
+    # No STS — plaintext loopback only.
+    sts:
+        enabled: false
+
+    websockets:
+        allowed-origins: []
+
+    casemapping: "ascii"
+
+    enforce-utf8: true
+
+    # Lookup hostnames? No, loopback only — skip to speed up registration.
+    lookup-hostnames: false
+    forward-confirm-hostnames: false
+    check-ident: false
+
+    # MOTD — keep the ngircd vibe.
+    motd: ergo.motd
+    motd-formatting: true
+
+    # Send-queue cap per client.
+    max-sendq: 96k
+
+    # Where to put the IPC bits when ergo runs from var/ergo.
+    relaymsg:
+        enabled: false
+
+    compatibility:
+        force-trailing: true
+        send-unprefixed-sasl: true
+        allow-truncation: false
+
+    ip-limits:
+        count: true
+        max-concurrent-connections: 64
+        throttle: true
+        window: 10m
+        max-connections-per-window: 256
+        cidr-len-ipv4: 32
+        cidr-len-ipv6: 64
+        exempted:
+            - "localhost"
+
+accounts:
+    authentication-enabled: true
+
+    registration:
+        enabled: false
+        allow-before-connect: false
+        verify-timeout: "32h"
+        bcrypt-cost: 4
+        throttling:
+            enabled: false
+            duration: 10m
+            max-attempts: 30
+        email-verification:
+            enabled: false
+
+    login-throttling:
+        enabled: false
+        duration: 1m
+        max-attempts: 3
+
+    skip-server-password: false
+    login-via-pass-command: true
+    advertise-scram: true
+
+    require-sasl:
+        enabled: false
+
+    nick-reservation:
+        enabled: false
+        additional-nick-limit: 0
+        method: strict
+        allow-custom-enforcement: false
+        guest-nickname-format: "Guest-*"
+        force-guest-format: false
+        force-nick-equals-account: true
+        forbid-anonymous-nick-changes: false
+
+    multiclient:
+        enabled: true
+        allowed-by-default: true
+        always-on: "disabled"
+        auto-away: "disabled"
+        always-on-expiration: 0
+
+    vhosts:
+        enabled: false
+
+    default-user-modes: ""
+
+    auth-script:
+        enabled: false
+
+channels:
+    default-modes: +nt
+    max-channels-per-client: 100
+    operator-only-creation: false
+    registration:
+        enabled: false
+        operator-only: true
+        max-channels-per-account: 15
+    list-delay: 0s
+    invite-expiration: 24h
+
+# No oper accounts for the spike. Add later if we need /SAJOIN etc.
+oper-classes:
+    "server-admin":
+        title: Server Admin
+        capabilities:
+            - "kill"
+            - "ban"
+            - "rehash"
+            - "history"
+opers: {}
+
+logging:
+    # Operational log → stderr (captured by tmux session like ngircd).
+    -
+        method: stderr
+        type: "* -userinput -useroutput"
+        level: info
+
+    # AUDIT log → file. Every PRIVMSG and NOTICE flows through userinput
+    # (what clients sent us) and useroutput (what we sent back). Capture
+    # both into a rotating file so we have a forever-record of inter-agent
+    # chatter, including any token leaks (per Alex: feature, not bug).
+    -
+        method: file
+        filename: logs/audit.log
+        type: "userinput useroutput"
+        level: debug
+
+debug:
+    recover-from-errors: true
+
+lock-file: "ircd.lock"
+
+datastore:
+    path: ircd.db
+    autoupgrade: true
+
+languages:
+    enabled: true
+    default: en
+    path: languages
+
+limits:
+    nicklen: 32
+    identlen: 20
+    realnamelen: 150
+    channellen: 64
+    awaylen: 390
+    kicklen: 390
+    topiclen: 390
+    monitor-entries: 100
+    whowas-entries: 100
+    chan-list-modes: 100
+    registration-messages: 1024
+    multiline:
+        # Enough headroom for multi-paragraph agent reasoning.
+        # 16KB per batch, 200 lines.
+        max-bytes: 16384
+        max-lines: 200
+
+fakelag:
+    # Agents send bursts during planning / handoff. Disable for the spike
+    # so we don't trip on legitimate traffic; revisit if anything goes
+    # rogue.
+    enabled: false
+    window: 1s
+    burst-limit: 5
+    messages-per-window: 2
+    cooldown: 2s
+
+roleplay:
+    enabled: false
+
+history:
+    enabled: true
+    channel-length: 2048
+    client-length: 256
+    autoresize-window: 3d
+    # Replay last 50 messages on JOIN — same ballpark as our MCP ring buffer.
+    autoreplay-on-join: 50
+    chathistory-maxmessages: 1000
+    znc-maxmessages: 2048
+    restrictions:
+        expire-time: 0
+        query-cutoff: 'none'
+        grace-period: 1h
+    persistent:
+        enabled: false
+    retention:
+        allow-individual-delete: false
+        enable-account-indexing: false
+    tagmsg-storage:
+        default: false
+        whitelist:
+            - "+draft/react"
+            - "+react"
+
+allow-environment-overrides: true
