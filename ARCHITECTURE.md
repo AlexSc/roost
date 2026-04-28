@@ -123,6 +123,50 @@ from scrolling channel history. Same context-economy logic as
 standing-agent rejoin (below): scrollback burns context on routine
 event volume; the actionable view lives at the dispatcher.
 
+## Spawning agents
+
+Use the `bin/roost` wrapper (or invoke the `roost` Claude Code skill
+from a model context — installed at `~/.claude/skills/roost` when
+the symlink is in place). The wrapper hides the env-var dance,
+mcp-config path, dev-channels prompt dismissal, and tmux session
+naming.
+
+```bash
+roost spawn <nick> [-c CHANS] [-m MODEL] [-s SESSION] [--mcp-config PATH]
+roost shutdown <nick>
+roost list / status / attach <nick> / tail <nick>
+```
+
+Common spawns:
+
+```bash
+# Senior PO bringing up a per-project PO:
+roost spawn productops-simplifyrewards \
+  -c '#leads-simplifyrewards,#issue-718,#issue-721'
+
+# Worker pickup on a fresh issue:
+roost spawn worker-718-A -c '#issue-718'
+
+# Reviewer joining post-CI:
+roost spawn reviewer-718 -c '#issue-718'
+
+# Cheap watcher on a noisy feed (haiku is enough — observation only):
+roost spawn dispatch-watcher --model haiku -c '#dispatch-feed'
+
+# Hard restart (channel-as-lifecycle: kick + new worker JOINs same
+# channel, orients from dispatcher state + channel topic + spawn
+# prompt, not from scrollback):
+roost shutdown worker-718-A
+roost spawn worker-718-B -c '#issue-718'
+```
+
+When an agent needs to spawn or manage another agent (senior PO
+respawning a per-project PO post-compact, productops kicking a
+stuck worker, etc.), it should invoke the `roost` skill rather than
+reach for raw shell — same command surface, with naming and channel
+conventions built into the skill description so spawns are
+consistent across agents.
+
 ## Conventions live as channel state
 
 `worker_conventions.md` is the canonical source. The live channel
