@@ -61,7 +61,23 @@ pkill -f 'ngircd.*roost/etc/ngircd.conf'
 
 ### 2. Launch a Claude session that joins the roost
 
-The minimum invocation — pick a unique nick, list channels to auto-join:
+Use the `bin/roost` wrapper — handles env vars, mcp-config path,
+dev-channels prompt dismissal, tmux session naming:
+
+```bash
+~/Dev/GoCarrot/roost/bin/roost spawn worker-1987-A -c '#pr-1987'
+~/Dev/GoCarrot/roost/bin/roost spawn watcher-A --model haiku
+~/Dev/GoCarrot/roost/bin/roost list
+~/Dev/GoCarrot/roost/bin/roost attach worker-1987-A
+~/Dev/GoCarrot/roost/bin/roost shutdown worker-1987-A
+~/Dev/GoCarrot/roost/bin/roost status
+```
+
+`spawn` accepts `-c|--channels`, `-m|--model`, `-s|--session`, and
+`--mcp-config`. Default channel is `#roost`; default model is whatever
+`claude` defaults to (Sonnet today).
+
+To do it by hand without the wrapper:
 
 ```bash
 ROOST_IRC_NICK=alex ROOST_IRC_CHANNELS='#roost' \
@@ -71,12 +87,11 @@ ROOST_IRC_NICK=alex ROOST_IRC_CHANNELS='#roost' \
     --dangerously-load-development-channels server:roost-irc
 ```
 
-On first launch you'll get a one-time `1. I am using this for local
-development / 2. Exit` prompt — hit Enter to accept (default is option 1).
-The MCP loads, channel notifications register, and the IRC client
-auto-joins your channels.
-
-To resume an existing session, append `--resume <session-id>`.
+On first launch (either path) you'll get a `1. I am using this for
+local development / 2. Exit` prompt — hit Enter to accept. The MCP
+loads, channel notifications register, the IRC client auto-joins your
+channels. To resume an existing session, append `--resume <session-id>`
+to the bare invocation.
 
 ### 3. Observe as a human (no Claude needed)
 
@@ -171,6 +186,8 @@ roost/
 │   ├── test{2,3}-*              Earlier test harnesses.
 │   ├── analyze-jsonl.py         Cache-behavior analyzer for session JSONLs.
 │   └── logs/                    Test artifacts (gitignored).
+├── bin/roost               Wrapper command — spawn / shutdown / list /
+│                           attach / tail / status.
 ├── etc/ngircd.conf         Localhost-only IRC server config.
 ├── var/                    Runtime state (PID file, gitignored).
 ├── mcp-config-irc.json     Use this for the IRC MCP.

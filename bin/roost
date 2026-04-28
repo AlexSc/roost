@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+# roost — manage roost-irc Claude sessions in tmux.
+#
+# Subcommands:
+#   spawn <nick> [options]  — bring up a Claude session on the roost
+#   shutdown <nick>         — kill the tmux session for that nick
+#   list                    — show all roost-prefixed tmux sessions
+#   attach <nick>           — tmux attach to that nick's session
+#   tail <nick> [-n LINES]  — show recent pane output
+#   status                  — ngircd state + session count
+#
+# Hides the launch boilerplate: env-var names, mcp-config path, the
+# dev-channels prompt dismissal, the auto-join list, the tmux session
+# naming convention.
+
+set -uo pipefail
+
+ROOST_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+DEFAULT_MCP_CONFIG="${ROOST_DIR}/mcp-config-irc.json"
+SESSION_PREFIX="roost-"
+
+usage() {
+  cat <<EOF
+Usage: roost <command> [args]
+
+Commands:
+  spawn <nick> [options]   Bring up a Claude session on the roost.
+                           Joins channels, dismisses dev-channels prompt.
+  shutdown <nick>          Kill the tmux session for that nick.
+  list                     Show all roost-prefixed tmux sessions.
+  attach <nick>            tmux attach to that nick's session.
+  tail <nick> [-n LINES]   Show recent pane output (default 30 lines).
+  status                   ngircd state + roost session count.
+
+spawn options:
+  -c, --channels CHANS     Comma-separated channels to auto-join.
+                           Default: #roost
+  -m, --model MODEL        Pass --model to claude (e.g. haiku, sonnet, opus).
+  -s, --session NAME       Override tmux session name. Default: roost-<nick>
+  --mcp-config PATH        Override mcp-config path.
+                           Default: ${DEFAULT_MCP_CONFIG}
+
+Examples:
+  roost spawn worker-1987-A -c '#pr-1987'
+  roost spawn watcher-A --model haiku -c '#dispatch-feed'
+  roost shutdown worker-1987-A
+  roost list
+  roost tail worker-1987-A -n 50
+EOF
+}
+
+require_ngircd() {
+  if ! lsof -nP -iTCP:6667 -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "error: ngircd not listening on 127.0.0.1:6667" >&2
+    echo "  start with: ngircd -f ${ROOST_DIR}/etc/ngircd.conf" >&2
+    exit 2
+  fi
+}
+
+cmd_spawn() {
+  local nick=""
+  local channels="#roost"
+  local model=""
+  local session_name=""
+  local mcp_config="${DEFAULT_MCP_CONFIG}"
+
+  if [ "$#" -lt 1 ]; then
+    echo "error: spawn requires a nick" >&2
+    usage
+    exit 1
+  fi
+  nick="$1"
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -c|--channels) channels="$2"; shift 2 ;;
+      -m|--model)    model="$2"; shift 2 ;;
+      -s|--session)  session_name="$2"; shift 2 ;;
+      --mcp-config)  mcp_config="$2"; shift 2 ;;
+      -h|--help)     usage; exit 0 ;;
+      *) echo "error: unknown spawn option: $1" >&2; usage; exit 1 ;;
+    esac
+  done
+  [ -z "${session_name}" ] && session_name="${SESSION_PREFIX}${nick}"
+
+  require_ngircd
+
+  if tmux has-session -t "${session_name}" 2>/dev/null; then
+    echo "error: tmux session '${session_name}' already exists" >&2
+    echo "  shutdown first: roost shutdown ${nick}" >&2
+    exit 3
+  fi
+
+  local model_flag=""
+  [ -n "${model}" ] && model_flag="--model ${model}"
+
+  echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model:-default})"
+  tmux new-session -d -s "${session_name}" -x 200 -y 50 -c "${ROOST_DIR}" \
+    "ROOST_IRC_NICK=${nick} ROOST_IRC_CHANNELS='${channels}' \
+     claude ${model_flag} \
+            --mcp-config ${mcp_config} \
+            --dangerously-skip-permissions \
+            --dangerously-load-development-channels server:roost-irc"
+
+  # Dismiss the dev-channels confirmation prompt. Default is option 1
+  # (accept), so a single Enter is enough.
+  local dismissed=0
+  for i in $(seq 1 30); do
+    if tmux capture-pane -t "${session_name}" -p 2>/dev/null \
+         | grep -q "I am using this for local development"; then
+      tmux send-keys -t "${session_name}" Enter
+      echo "  [+${i}s] dev-channels prompt dismissed"
+      dismissed=1
+      break
+    fi
+    sleep 1
+  done
+  if [ "${dismissed}" -eq 0 ]; then
+    echo "  warning: dev-channels prompt did not appear within 30s; session may need manual attention" >&2
+    echo "  attach with: roost attach ${nick}" >&2
+  fi
+
+  sleep 4
+  echo "  ready. attach with: roost attach ${nick}"
+  echo "  shutdown with: roost shutdown ${nick}"
+}
+
+cmd_shutdown() {
+  if [ "$#" -lt 1 ]; then
+    echo "error: shutdown requires a nick" >&2
+    exit 1
+  fi
+  local nick="$1"
+  local session_name="${SESSION_PREFIX}${nick}"
+  if ! tmux has-session -t "${session_name}" 2>/dev/null; then
+    echo "no tmux session named '${session_name}'" >&2
+    exit 4
+  fi
+  tmux kill-session -t "${session_name}"
+  echo "killed ${session_name}"
+}
+
+cmd_list() {
+  local sessions
+  sessions="$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep "^${SESSION_PREFIX}" || true)"
+  if [ -z "${sessions}" ]; then
+    echo "(no roost sessions)"
+    return 0
+  fi
+  echo "${sessions}" | while IFS= read -r s; do
+    local nick="${s#${SESSION_PREFIX}}"
+    local created_unix created
+    created_unix="$(tmux display -t "${s}" -p '#{session_created}' 2>/dev/null)"
+    if [ -n "${created_unix}" ]; then
+      created="$(date -r "${created_unix}" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "${created_unix}")"
+    else
+      created="?"
+    fi
+    printf '%-30s nick=%s   created=%s\n' "${s}" "${nick}" "${created}"
+  done
+}
+
+cmd_attach() {
+  if [ "$#" -lt 1 ]; then
+    echo "error: attach requires a nick" >&2
+    exit 1
+  fi
+  local nick="$1"
+  local session_name="${SESSION_PREFIX}${nick}"
+  exec tmux attach -t "${session_name}"
+}
+
+cmd_tail() {
+  if [ "$#" -lt 1 ]; then
+    echo "error: tail requires a nick" >&2
+    exit 1
+  fi
+  local nick="$1"
+  shift
+  local lines=30
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -n) lines="$2"; shift 2 ;;
+      *) echo "error: unknown tail option: $1" >&2; exit 1 ;;
+    esac
+  done
+  local session_name="${SESSION_PREFIX}${nick}"
+  if ! tmux has-session -t "${session_name}" 2>/dev/null; then
+    echo "no tmux session named '${session_name}'" >&2
+    exit 4
+  fi
+  tmux capture-pane -t "${session_name}" -p -S "-${lines}"
+}
+
+cmd_status() {
+  if lsof -nP -iTCP:6667 -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "ngircd: up on 127.0.0.1:6667"
+  else
+    echo "ngircd: DOWN (start: ngircd -f ${ROOST_DIR}/etc/ngircd.conf)"
+  fi
+  local count
+  count="$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -c "^${SESSION_PREFIX}" || echo 0)"
+  echo "roost sessions: ${count}"
+  if [ "${count}" -gt 0 ]; then
+    cmd_list
+  fi
+}
+
+if [ "$#" -eq 0 ]; then
+  usage
+  exit 1
+fi
+cmd="$1"
+shift
+case "${cmd}" in
+  spawn)    cmd_spawn "$@" ;;
+  shutdown) cmd_shutdown "$@" ;;
+  list)     cmd_list "$@" ;;
+  attach)   cmd_attach "$@" ;;
+  tail)     cmd_tail "$@" ;;
+  status)   cmd_status "$@" ;;
+  -h|--help|help) usage ;;
+  *) echo "error: unknown command: ${cmd}" >&2; usage; exit 1 ;;
+esac
