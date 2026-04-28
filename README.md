@@ -195,7 +195,8 @@ roost/
 - **`channel_history` is per-MCP-instance.** Restarting an MCP loses
   the buffer. Use IRC server logs (ngircd writes to its configured
   `Log` target) for durable history.
-- **`alwaysLoad` not yet wired.** First IRC tool call still pays a
-  one-time `tools_changed` cache miss as the deferred tool surfaces.
-  Setting `alwaysLoad: true` in the mcp-config when supported would
-  eliminate it (see `docs/LEARNINGS.md` Finding A).
+- **None of the previously-listed cache misses.** `alwaysLoad: true`
+  is set on the roost-irc server in `mcp-config-irc.json`, so all
+  six tools stay non-deferred. Empirical baseline-vs-alwaysLoad probe
+  (2026-04-28) showed 0 `tools_changed` misses with the flag vs 2
+  without (see `docs/LEARNINGS.md` Finding A).

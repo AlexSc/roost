@@ -268,8 +268,24 @@ first MCP tool.
 For the IRC-MCP itself, the listener+worker shape is the norm —
 `channel_message`, `direct_message`, etc. are MCP tools and will all
 be deferred initially. A worker's first IRC outbound action will pay
-the miss. This is acceptable. Mitigation candidate (untested):
-`alwaysLoad: true` in the mcp-config skips deferral entirely.
+the miss.
+
+**Mitigation confirmed: `alwaysLoad: true`.** Empirical probe
+2026-04-28 (`/tmp/test-alwaysload.sh`) — two fresh interactive
+sessions, identical prompt that calls `channel_message` once then
+`Bash` to touch a done marker. Baseline `mcp-config-irc.json` (no
+flag) showed **2** `tools_changed` misses (one when `ToolSearch`
+promotes `channel_message`, another when `Bash` surfaces).
+`alwaysLoad: true` showed **0** misses across the same prompt
+shape. The flag is now applied to `roost/mcp-config-irc.json` —
+new sessions inherit it. Trade-off: all six roost-irc tool schemas
+stay loaded in context (small constant cost) for zero
+`tools_changed` invalidations. Worth it.
+
+Note Finding D is now mostly moot for roost-irc users — the
+listener / listener+worker distinction collapses when alwaysLoad
+makes the cost zero either way. Still relevant for non-roost MCPs
+that don't use the flag.
 
 ### Finding E — ngircd-27 does not support IRCv3 message-tags
 
@@ -448,8 +464,9 @@ long-run side-effect.
   Structured PRIVMSG (`@CLAIM pr-1987 worker-1987`)? IRC topic/mode?
   Custom `<channel event="claim">` notification? Affects what the
   dispatcher's "what's still unclaimed" projection looks like.
-- `alwaysLoad: true` retest — eliminates the one-time
-  `tools_changed` miss from Finding A. Quick experiment, not yet run.
+- ~~`alwaysLoad: true` retest~~ — done 2026-04-28. Confirmed:
+  baseline 2 `tools_changed` misses → alwaysLoad 0 misses. Flag
+  applied to `mcp-config-irc.json`. See Finding A mitigation.
 - Channel-history-summary primitive (productops-customer's framing):
   on rejoin, agents need "what's actionable since you left," not the
   full event log. Likely belongs at the dispatcher tier, not in the

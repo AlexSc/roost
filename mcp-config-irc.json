@@ -2,7 +2,8 @@
   "mcpServers": {
     "roost-irc": {
       "command": "bun",
-      "args": ["run", "/Users/alex/Dev/GoCarrot/roost/src/irc-server.ts"]
+      "args": ["run", "/Users/alex/Dev/GoCarrot/roost/src/irc-server.ts"],
+      "alwaysLoad": true
     }
   }
 }
