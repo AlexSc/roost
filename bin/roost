@@ -33,19 +33,25 @@ Commands:
   status                   ngircd state + roost session count.
 
 spawn options:
-  -c, --channels CHANS     Comma-separated channels to auto-join.
-                           Default: #roost
-  -m, --model MODEL        Pass --model to claude (e.g. haiku, sonnet, opus).
-  -s, --session NAME       Override tmux session name. Default: roost-<nick>
-  --mcp-config PATH        Override mcp-config path.
-                           Default: ${DEFAULT_MCP_CONFIG}
+  -c, --channels CHANS       Comma-separated channels to auto-join.
+                             Default: #roost
+  -m, --model MODEL          Pass --model to claude (e.g. haiku, sonnet, opus).
+  -s, --session NAME         Override tmux session name. Default: roost-<nick>
+  --mcp-config PATH          Override mcp-config path.
+                             Default: ${DEFAULT_MCP_CONFIG}
+  -p, --prompt-file PATH     Paste contents into the TUI input + submit
+                             after the session boots. Useful for handoff
+                             prompts (senior PO → per-project PO respawn).
 
 Examples:
-  roost spawn worker-1987-A -c '#pr-1987'
+  roost spawn worker-718-A -c '#issue-718'
   roost spawn watcher-A --model haiku -c '#dispatch-feed'
-  roost shutdown worker-1987-A
+  roost spawn productops-simplifyrewards \\
+    -c '#leads-simplifyrewards,#issue-718,#issue-721' \\
+    --prompt-file /tmp/handoff-2026-04-28.md
+  roost shutdown worker-718-A
   roost list
-  roost tail worker-1987-A -n 50
+  roost tail worker-718-A -n 50      # show recent TUI output (debug)
 EOF
 }
 
@@ -63,6 +69,7 @@ cmd_spawn() {
   local model=""
   local session_name=""
   local mcp_config="${DEFAULT_MCP_CONFIG}"
+  local prompt_file=""
 
   if [ "$#" -lt 1 ]; then
     echo "error: spawn requires a nick" >&2
@@ -73,15 +80,20 @@ cmd_spawn() {
   shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      -c|--channels) channels="$2"; shift 2 ;;
-      -m|--model)    model="$2"; shift 2 ;;
-      -s|--session)  session_name="$2"; shift 2 ;;
-      --mcp-config)  mcp_config="$2"; shift 2 ;;
-      -h|--help)     usage; exit 0 ;;
+      -c|--channels)    channels="$2"; shift 2 ;;
+      -m|--model)       model="$2"; shift 2 ;;
+      -s|--session)     session_name="$2"; shift 2 ;;
+      --mcp-config)     mcp_config="$2"; shift 2 ;;
+      -p|--prompt-file) prompt_file="$2"; shift 2 ;;
+      -h|--help)        usage; exit 0 ;;
       *) echo "error: unknown spawn option: $1" >&2; usage; exit 1 ;;
     esac
   done
   [ -z "${session_name}" ] && session_name="${SESSION_PREFIX}${nick}"
+  if [ -n "${prompt_file}" ] && [ ! -f "${prompt_file}" ]; then
+    echo "error: --prompt-file ${prompt_file} not found" >&2
+    exit 1
+  fi
 
   require_ngircd
 
@@ -121,6 +133,20 @@ cmd_spawn() {
   fi
 
   sleep 4
+
+  if [ -n "${prompt_file}" ]; then
+    # Paste the file's contents into the TUI input box, then submit.
+    # Used for handoff prompts (senior PO orienting a fresh
+    # per-project PO post-compact) or any spawn that needs an
+    # initial prompt without manual attach.
+    local buf="roost-prompt-${nick}-$$"
+    tmux load-buffer -b "${buf}" "${prompt_file}"
+    tmux paste-buffer -t "${session_name}" -b "${buf}" -p
+    tmux send-keys -t "${session_name}" Enter
+    tmux delete-buffer -b "${buf}" 2>/dev/null
+    echo "  pasted prompt from ${prompt_file}"
+  fi
+
   echo "  ready. attach with: roost attach ${nick}"
   echo "  shutdown with: roost shutdown ${nick}"
 }

@@ -132,7 +132,7 @@ mcp-config path, dev-channels prompt dismissal, and tmux session
 naming.
 
 ```bash
-roost spawn <nick> [-c CHANS] [-m MODEL] [-s SESSION] [--mcp-config PATH]
+roost spawn <nick> [-c CHANS] [-m MODEL] [-s SESSION] [-p PROMPT-FILE] [--mcp-config PATH]
 roost shutdown <nick>
 roost list / status / attach <nick> / tail <nick>
 ```
@@ -140,10 +140,6 @@ roost list / status / attach <nick> / tail <nick>
 Common spawns:
 
 ```bash
-# Senior PO bringing up a per-project PO:
-roost spawn productops-simplifyrewards \
-  -c '#leads-simplifyrewards,#issue-718,#issue-721'
-
 # Worker pickup on a fresh issue:
 roost spawn worker-718-A -c '#issue-718'
 
@@ -160,12 +156,59 @@ roost shutdown worker-718-A
 roost spawn worker-718-B -c '#issue-718'
 ```
 
+### Senior PO respawning a per-project PO
+
+A respawn is an orchestrated handoff, not a fresh start. The
+per-project PO is replaceable cheaply because the senior PO holds
+the cross-project knowledge and can re-orient any per-project
+instance from durable artifacts. Sequence:
+
+1. Senior PO reads the project journal + the project's recent
+   `#leads-{project}` topic / pinned conventions.
+2. Queries the dispatcher for current state of every watched issue
+   in the project (open PRs, CI state, pending CEO threads).
+3. Drafts a handoff prompt encoding:
+   - Open escalation-queue items the previous instance was holding.
+   - Active CEO threads needing translation.
+   - The dispatcher endpoint for ongoing state queries.
+   - The project-specific `worker_conventions.md` path.
+4. Spawns:
+
+```bash
+roost spawn productops-simplifyrewards \
+  -c '#leads-simplifyrewards,#issue-718,#issue-721,#issue-693' \
+  --prompt-file /tmp/handoff-2026-04-28.md
+```
+
+`--prompt-file` is the load-bearing primitive — it's what lets the
+fresh instance pick up without scrolling channel history. The
+wrapper waits for the dev-channels prompt, dismisses it, then
+pastes the handoff prompt into the TUI and submits it.
+
+### Debugging stalled agents
+
+`roost tail <nick> -n 50` captures the recent TUI output without
+attaching the full session. Useful for "is this agent alive but
+stuck, or has it died?" without taking over the operator's view.
+For deeper inspection — MCP stderr, IRC connection logs — check
+`~/Library/Caches/claude-cli-nodejs/<project>/mcp-logs-roost-irc/`.
+
+### When to use the skill vs raw shell
+
 When an agent needs to spawn or manage another agent (senior PO
 respawning a per-project PO post-compact, productops kicking a
-stuck worker, etc.), it should invoke the `roost` skill rather than
-reach for raw shell — same command surface, with naming and channel
-conventions built into the skill description so spawns are
-consistent across agents.
+stuck worker, etc.), it should invoke the `roost` skill rather
+than reach for raw shell — same command surface, with naming and
+channel conventions baked into the skill description so spawns are
+consistent across spawners. Raw shell is fine for human operators
+running ad-hoc commands.
+
+Parking-lot enhancements (not yet built):
+
+- `--rejoin-project <name>` — auto-enumerate the project's
+  channels (`#leads-<name>` + every `#issue-NNN` where the
+  project's dispatcher is active) so the senior PO doesn't have
+  to hand-list 5–10 channels at respawn.
 
 ## Conventions live as channel state
 
