@@ -16,6 +16,7 @@
 set -uo pipefail
 
 ROOST_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+OPERATIONS_DIR="${ROOST_DIR%/*}/operations"
 DEFAULT_MCP_CONFIG="${ROOST_DIR}/mcp-config-irc.json"
 SESSION_PREFIX="roost-"
 
@@ -37,7 +38,17 @@ spawn options:
                              Default: #roost
   -m, --model MODEL          Override --model. Default: opus. Auto mode
                              requires Opus 4.7; passing a non-Opus model
-                             will degrade auto mode to manual permissioning.
+                             will silently degrade auto mode to manual
+                             permissioning. Per ProductOps Project_Execution.md
+                             all roost agents run on Opus.
+  --cwd PATH                 Working directory for the spawned session.
+                             Default: operations repo dir (~/Dev/GoCarrot/operations).
+                             Operations agents (productops, finance, sales,
+                             marketing, cos, opsmanager) want the default —
+                             their state, journals, and runbooks live there.
+                             Code workers (in carrot, taro, teak-ios, …) MUST
+                             pass their worktree path so RVM/bundler/nvm
+                             resolve correctly inside the login shell.
   -s, --session NAME         Override tmux session name. Default: roost-<nick>
   --mcp-config PATH          Override mcp-config path.
                              Default: ${DEFAULT_MCP_CONFIG}
@@ -47,7 +58,9 @@ spawn options:
   -- <args...>               Pass remaining args directly to claude.
                              Use for --chrome, --system-prompt, etc.
 
-Sessions launch with --permission-mode auto (Opus 4.7 auto-mode classifier).
+Sessions launch with --permission-mode auto (Opus 4.7 auto-mode classifier)
+under \`zsh -l\` (login shell) so .zprofile loads — required for RVM, nvm,
+and other shell-rc-managed toolchains.
 
 Code workers (in carrot, taro, teak-ios, etc.) want the default Claude
 Code system prompt. Operations agents (productops, finance, sales, etc.)
@@ -86,6 +99,7 @@ cmd_spawn() {
   local session_name=""
   local mcp_config="${DEFAULT_MCP_CONFIG}"
   local prompt_file=""
+  local cwd="${OPERATIONS_DIR}"
   local extra_args=()
 
   if [ "$#" -lt 1 ]; then
@@ -102,6 +116,7 @@ cmd_spawn() {
       -s|--session)     session_name="$2"; shift 2 ;;
       --mcp-config)     mcp_config="$2"; shift 2 ;;
       -p|--prompt-file) prompt_file="$2"; shift 2 ;;
+      --cwd)            cwd="$2"; shift 2 ;;
       -h|--help)        usage; exit 0 ;;
       --)               shift; extra_args=("$@"); break ;;
       *)
@@ -115,6 +130,10 @@ cmd_spawn() {
   [ -z "${session_name}" ] && session_name="${SESSION_PREFIX}${nick}"
   if [ -n "${prompt_file}" ] && [ ! -f "${prompt_file}" ]; then
     echo "error: --prompt-file ${prompt_file} not found" >&2
+    exit 1
+  fi
+  if [ ! -d "${cwd}" ]; then
+    echo "error: --cwd ${cwd} is not a directory" >&2
     exit 1
   fi
 
@@ -137,14 +156,15 @@ cmd_spawn() {
     exit 3
   fi
 
-  echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: auto)"
+  echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: auto, cwd: ${cwd})"
   [ -n "${extra_str}" ] && echo "  extra claude args:${extra_str}"
-  tmux new-session -d -s "${session_name}" -x 200 -y 50 -c "${ROOST_DIR}" \
-    "ROOST_IRC_NICK=${nick} ROOST_IRC_CHANNELS='${channels}' \
-     claude --model ${model} \
-            --permission-mode auto \
-            --mcp-config ${mcp_config} \
-            --dangerously-load-development-channels server:roost-irc${extra_str}"
+  # `zsh -l` (login shell) ensures .zprofile runs before claude — required for
+  # RVM / nvm / shell-rc-managed toolchains. Env vars go through tmux -e so
+  # the inner command stays a clean single-quoted string.
+  tmux new-session -d -s "${session_name}" -x 200 -y 50 -c "${cwd}" \
+    -e "ROOST_IRC_NICK=${nick}" \
+    -e "ROOST_IRC_CHANNELS=${channels}" \
+    "exec zsh -l -c \"claude --model ${model} --permission-mode auto --mcp-config ${mcp_config} --dangerously-load-development-channels server:roost-irc${extra_str}\""
 
   # Dismiss the dev-channels confirmation prompt. Default is option 1
   # (accept), so a single Enter is enough.
