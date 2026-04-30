@@ -16,8 +16,8 @@
 set -uo pipefail
 
 ROOST_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
-OPERATIONS_DIR="${ROOST_DIR%/*}/operations"
 DEFAULT_MCP_CONFIG="${ROOST_DIR}/mcp-config-irc.json"
+IRC_PORT=6667
 SESSION_PREFIX="roost-"
 
 usage() {
@@ -39,8 +39,7 @@ spawn options:
   -m, --model MODEL          Override --model. Default: opus. Auto mode
                              requires Opus 4.7; passing a non-Opus model
                              will silently degrade auto mode to manual
-                             permissioning. Per ProductOps Project_Execution.md
-                             all roost agents run on Opus.
+                             permissioning.
   --perm-irc                 Start a permbot side daemon (bin/roost-permbot)
                              that surfaces this worker's tool-permission
                              prompts as DMs to --perm-target. Useful for
@@ -48,21 +47,18 @@ spawn options:
                              would otherwise flood the terminal with
                              prompts. Daemon is killed by 'roost shutdown'.
   --perm-target NICK         Operator nick to DM for permission prompts.
-                             Default: alex2. Only meaningful with --perm-irc.
+                             Required when --perm-irc is set.
   --cwd PATH                 Working directory for the spawned session.
-                             Default: operations repo dir (~/Dev/GoCarrot/operations).
-                             Operations agents (productops, finance, sales,
-                             marketing, cos, opsmanager) want the default —
-                             their state, journals, and runbooks live there.
-                             Code workers (in carrot, taro, teak-ios, …) MUST
-                             pass their worktree path so RVM/bundler/nvm
-                             resolve correctly inside the login shell.
+                             Default: current directory. Pass a worktree
+                             path so RVM/bundler/nvm resolve correctly
+                             inside the login shell.
   -s, --session NAME         Override tmux session name. Default: roost-<nick>
   --mcp-config PATH          Override mcp-config path.
                              Default: ${DEFAULT_MCP_CONFIG}
   -p, --prompt-file PATH     Paste contents into the TUI input + submit
                              after the session boots. Useful for handoff
-                             prompts (senior PO → per-project PO respawn).
+                             prompts or any spawn that needs an initial
+                             prompt without manual attach.
   -- <args...>               Pass remaining args directly to claude.
                              Use for --chrome, --system-prompt, etc.
 
@@ -70,30 +66,24 @@ Sessions launch with --permission-mode auto (Opus 4.7 auto-mode classifier)
 under \`zsh -l\` (login shell) so .zprofile loads — required for RVM, nvm,
 and other shell-rc-managed toolchains.
 
-Code workers (in carrot, taro, teak-ios, etc.) want the default Claude
-Code system prompt. Operations agents (productops, finance, sales, etc.)
-typically want --chrome and a blank system prompt — pass those after a
-'--' separator.
-
 Examples:
-  # Code worker on a PR — defaults are right:
-  roost spawn worker-718-A -c '#issue-718'
+  roost spawn worker-1 -c '#my-channel' --cwd ~/Dev/myproject
 
-  # Operations agent — chrome + blank system prompt:
-  roost spawn productops-simplifyrewards \\
-    -c '#leads-simplifyrewards,#issue-718' \\
-    --prompt-file /tmp/handoff-2026-04-28.md \\
+  roost spawn agent-2 \\
+    -c '#my-channel' \\
+    --cwd ~/Dev/myproject \\
+    --prompt-file /tmp/handoff.md \\
     -- --chrome --system-prompt ' '
 
-  roost shutdown worker-718-A
+  roost shutdown worker-1
   roost list
-  roost tail worker-718-A -n 50      # show recent TUI output (debug)
+  roost tail worker-1 -n 50
 EOF
 }
 
 require_ircd() {
-  if ! lsof -nP -iTCP:6667 -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "error: no IRC daemon listening on 127.0.0.1:6667" >&2
+  if ! lsof -nP -iTCP:${IRC_PORT} -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "error: no IRC daemon listening on 127.0.0.1:${IRC_PORT}" >&2
     echo "  start ergo with:" >&2
     echo "    cd ${ROOST_DIR}/var/ergo && ./ergo run --conf ${ROOST_DIR}/etc/ergo.yaml" >&2
     exit 2
@@ -165,9 +155,9 @@ cmd_spawn() {
   local session_name=""
   local mcp_config="${DEFAULT_MCP_CONFIG}"
   local prompt_file=""
-  local cwd="${OPERATIONS_DIR}"
+  local cwd="${PWD}"
   local perm_irc=0
-  local perm_target="alex2"
+  local perm_target=""
   local extra_args=()
 
   if [ "$#" -lt 1 ]; then
@@ -204,6 +194,10 @@ cmd_spawn() {
   fi
   if [ ! -d "${cwd}" ]; then
     echo "error: --cwd ${cwd} is not a directory" >&2
+    exit 1
+  fi
+  if [ "${perm_irc}" -eq 1 ] && [ -z "${perm_target}" ]; then
+    echo "error: --perm-irc requires --perm-target NICK" >&2
     exit 1
   fi
 
@@ -270,9 +264,6 @@ cmd_spawn() {
 
   if [ -n "${prompt_file}" ]; then
     # Paste the file's contents into the TUI input box, then submit.
-    # Used for handoff prompts (senior PO orienting a fresh
-    # per-project PO post-compact) or any spawn that needs an
-    # initial prompt without manual attach.
     local buf="roost-prompt-${nick}-$$"
     tmux load-buffer -b "${buf}" "${prompt_file}"
     tmux paste-buffer -t "${session_name}" -b "${buf}" -p
@@ -356,8 +347,8 @@ cmd_tail() {
 }
 
 cmd_status() {
-  if lsof -nP -iTCP:6667 -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "ircd: up on 127.0.0.1:6667"
+  if lsof -nP -iTCP:${IRC_PORT} -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "ircd: up on 127.0.0.1:${IRC_PORT}"
   else
     echo "ircd: DOWN (start: cd ${ROOST_DIR}/var/ergo && ./ergo run --conf ${ROOST_DIR}/etc/ergo.yaml)"
   fi
