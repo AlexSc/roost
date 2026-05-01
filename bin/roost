@@ -362,7 +362,7 @@ cmd_status() {
     echo "ircd: DOWN (start: cd ${ROOST_DIR}/var/ergo && ./ergo run --conf ${ROOST_DIR}/etc/ergo.yaml)"
   fi
   local count
-  count="$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -c "^${SESSION_PREFIX}" || echo 0)"
+  count="$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -c "^${SESSION_PREFIX}")" || count=0
   echo "roost sessions: ${count}"
   if [ "${count}" -gt 0 ]; then
     cmd_list
