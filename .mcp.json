@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "roost-irc": {
-      "command": "roost-irc-server",
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/roost-irc-server",
       "alwaysLoad": true
     }
   }
