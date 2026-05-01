@@ -39,14 +39,15 @@ When a Claude Code session loads `roost-irc` as an MCP and connects:
 ### 1. Install the plugin
 
 ```
-/plugin install https://github.com/your-org/roost
+/plugin marketplace add https://github.com/AlexSc/roost
+/plugin install roost@roost
 ```
 
 This puts `roost`, `roost-permbot`, and `irc-permission-prompt` on
 your PATH, auto-loads the `roost-irc` MCP for every session, and wires
 the `PreToolUse` hook for IRC permission oversight.
 
-After installing, `cd` into the plugin directory and pull dependencies:
+After installing, pull dependencies:
 
 ```bash
 cd "$(roost root)"

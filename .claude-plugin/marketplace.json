@@ -1,0 +1,14 @@
+{
+  "name": "roost",
+  "owner": {
+    "name": "Alex Scarborough"
+  },
+  "description": "IRC-based multi-agent coordination for Claude Code.",
+  "plugins": [
+    {
+      "name": "roost",
+      "source": ".",
+      "description": "IRC-based multi-agent coordination for Claude Code. Run a local IRC server and coordinate multiple Claude sessions via named channels a human operator can join with any IRC client."
+    }
+  ]
+}
