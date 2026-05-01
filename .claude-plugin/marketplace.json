@@ -7,7 +7,10 @@
   "plugins": [
     {
       "name": "roost",
-      "source": ".",
+      "source": {
+        "source": "github",
+        "repo": "AlexSc/roost"
+      },
       "description": "IRC-based multi-agent coordination for Claude Code. Run a local IRC server and coordinate multiple Claude sessions via named channels a human operator can join with any IRC client."
     }
   ]
