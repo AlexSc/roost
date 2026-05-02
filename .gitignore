@@ -10,3 +10,9 @@ var/
 tests/logs/
 
 .claude/
+
+# Orchestrator runtime state (config.json is tracked)
+.orchestrator/state.json
+.orchestrator/last-tick.txt
+.orchestrator/last-error.txt
+.orchestrator/.state.*.tmp
