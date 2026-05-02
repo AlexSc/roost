@@ -8,12 +8,12 @@ import { afterAll } from 'bun:test'
 const ROOST_ROOT = join(import.meta.dirname, '..', '..')
 
 function findErgoBin(): string | null {
-  const explicit = [
+  const candidates: string[] = [
+    ...(process.env.ERGO_BIN ? [resolve(process.env.ERGO_BIN)] : []),
     join(ROOST_ROOT, 'var', 'ergo-bin', 'ergo'),
-    process.env.ERGO_BIN ? resolve(process.env.ERGO_BIN) : '',
-  ].filter(Boolean)
+  ]
 
-  for (const c of explicit) {
+  for (const c of candidates) {
     try {
       accessSync(c, constants.X_OK)
       return c
@@ -22,10 +22,7 @@ function findErgoBin(): string | null {
     }
   }
 
-  const onPath = Bun.which('ergo')
-  if (onPath) return onPath
-
-  return null
+  return Bun.which('ergo')
 }
 
 function getFreePort(): Promise<number> {
@@ -110,14 +107,14 @@ export interface ErgoContext {
   host: string
 }
 
-export async function startErgo(): Promise<ErgoContext> {
+export async function startErgo(): Promise<ErgoContext | null> {
   const ergo = findErgoBin()
   if (!ergo) {
     console.warn(
       '\nERGO NOT FOUND — skipping integration tests.\n' +
         'Run bin/install-ergo or set ERGO_BIN to the ergo binary path.\n',
     )
-    return null as unknown as ErgoContext
+    return null
   }
 
   const port = await getFreePort()

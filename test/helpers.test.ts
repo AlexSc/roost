@@ -3,7 +3,7 @@ import { startErgo, type ErgoContext } from './helpers/ergo.js'
 import { startMcp } from './helpers/mcp.js'
 import { connectPeer } from './helpers/peer.js'
 
-let ergo: ErgoContext
+let ergo: ErgoContext | null
 
 describe('test helpers', () => {
   beforeAll(async () => {

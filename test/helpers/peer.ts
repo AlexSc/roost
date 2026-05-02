@@ -69,12 +69,14 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
           () => reject(new Error(`joinChannel ${channel} timed out`)),
           5000,
         )
-        client.on('join', (event: { nick: string; channel: string }) => {
+        const onJoin = (event: { nick: string; channel: string }) => {
           if (event.nick === peerNick && event.channel === channel) {
+            client.removeListener('join', onJoin)
             clearTimeout(timeout)
             resolve()
           }
-        })
+        }
+        client.on('join', onJoin)
         client.join(channel)
       })
     },
