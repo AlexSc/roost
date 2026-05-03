@@ -388,11 +388,11 @@ cmd_send() {
   shift
   local message="$*"
   require_ircd
-  ROOST_SEND_TARGET="${nick}" ROOST_SEND_MESSAGE="${message}" python3 - <<'PYEOF'
+  ROOST_SEND_TARGET="${nick}" ROOST_SEND_MESSAGE="${message}" ROOST_SEND_PORT="${IRC_PORT}" python3 - <<'PYEOF'
 import os, socket, sys, time
 
-HOST = "127.0.0.1"
-PORT = 6667
+HOST = os.environ.get("ROOST_SEND_HOST", "127.0.0.1")
+PORT = int(os.environ.get("ROOST_SEND_PORT", "6667"))
 target = os.environ["ROOST_SEND_TARGET"]
 message = os.environ["ROOST_SEND_MESSAGE"]
 nick = f"roost-send-{os.getpid()}"
