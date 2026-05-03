@@ -555,9 +555,9 @@ def should_push(event: dict) -> bool:
 
 def _comment_snippet(event: dict) -> tuple[str, str, str]:
     body_preview = (event.get("body_preview") or "").strip()
-    snippet_lines = body_preview.splitlines()[:1]
+    snippet_lines = body_preview.splitlines()
     snippet = snippet_lines[0][:160] if snippet_lines else ""
-    ellipsis = "…" if len(body_preview) > len(snippet) or "\n" in body_preview else ""
+    ellipsis = "…" if len(body_preview) > len(snippet) or len(snippet_lines) > 1 else ""
     url = event.get("comment_url") or event.get("url", "")
     return snippet, ellipsis, url
 
