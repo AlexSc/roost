@@ -98,20 +98,27 @@ const pushHistory = (key: string, msg: IrcMessage) => {
 
 // ---- Replay dedupe (issue #44) -----------------------------------------
 
-const seenFingerprints = new Set<string>()
+// Per-channel seen-fingerprint sets. Each channel's set is capped at
+// HISTORY_SIZE; eviction uses Set insertion order (oldest first).
+const seenFingerprints = new Map<string, Set<string>>()
 
 const msgFingerprint = (msg: IrcMessage): string =>
-  `${msg.channel}|${msg.sender}|${msg.ts}|${msg.text}`
+  `${msg.sender}|${msg.ts}|${msg.text}`
 
-const addFingerprint = (fp: string) => {
-  if (seenFingerprints.has(fp)) return
-  seenFingerprints.add(fp)
-  // Evict oldest (Set iterates insertion order) when over cap.
-  const cap = HISTORY_SIZE * Math.max(1, channelUsers.size) * 2
-  while (seenFingerprints.size > cap) {
-    seenFingerprints.delete(seenFingerprints.values().next().value!)
+const addFingerprint = (msg: IrcMessage) => {
+  let set = seenFingerprints.get(msg.channel)
+  if (!set) {
+    set = new Set()
+    seenFingerprints.set(msg.channel, set)
   }
+  const fp = msgFingerprint(msg)
+  if (set.has(fp)) return
+  set.add(fp)
+  while (set.size > HISTORY_SIZE) set.delete(set.values().next().value!)
 }
+
+const hasFingerprint = (msg: IrcMessage): boolean =>
+  seenFingerprints.get(msg.channel)?.has(msgFingerprint(msg)) ?? false
 
 // SIGUSR1: PreCompact hook fires this to clear the seen-set. Next backfill
 // after reconnect re-delivers messages compacted out of the agent's context.
@@ -120,13 +127,15 @@ process.on('SIGUSR1', () => {
   process.stderr.write(`roost-irc[${NICK}]: SIGUSR1 — seen-set cleared (compaction reset)\n`)
 })
 
-// Write our PID so the PreCompact hook can signal us.
+// Write our PID so the PreCompact hook can signal us. Only when ROOST_DATA_DIR
+// is set — that's always true for sessions spawned by bin/roost.
 const DATA_DIR = env('ROOST_DATA_DIR', '')
-const PID_FILE = DATA_DIR ? `${DATA_DIR}/mcp.pid` : `/tmp/roost-mcp-${NICK}.pid`
-try {
-  await Bun.write(PID_FILE, String(process.pid))
-} catch (e) {
-  process.stderr.write(`roost-irc[${NICK}]: warn: could not write pidfile ${PID_FILE}: ${e}\n`)
+if (DATA_DIR) {
+  try {
+    await Bun.write(`${DATA_DIR}/mcp.pid`, String(process.pid))
+  } catch (e) {
+    process.stderr.write(`roost-irc[${NICK}]: warn: could not write pidfile: ${e}\n`)
+  }
 }
 
 // ---- Send-side splitting + receive-side buffering ----------------------
@@ -486,7 +495,7 @@ const emitChannelEvent = (
   msg: IrcMessage,
   extras: { buffered?: boolean; chunkCount?: number; historical?: boolean } = {},
 ) => {
-  addFingerprint(msgFingerprint(msg))
+  addFingerprint(msg)
   const seq = ++receiveSeq
   const meta: Record<string, string> = {
     sender: msg.sender,
@@ -950,8 +959,7 @@ client.on(
     // Take the most-recent N (ergo sends oldest-first).
     const limited = JOIN_HISTORY_LINES > 0 ? batch.slice(-JOIN_HISTORY_LINES) : batch
     for (const msg of limited) {
-      const fp = msgFingerprint(msg)
-      if (seenFingerprints.has(fp)) {
+      if (hasFingerprint(msg)) {
         process.stderr.write(`roost-irc[${NICK}]: chathistory dedup skip ${msg.sender}@${msg.channel} ${msg.ts}\n`)
         continue
       }

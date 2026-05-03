@@ -9,8 +9,7 @@ var/
 # Test artifacts
 tests/logs/
 
-.claude/*
-!.claude/settings.json
+.claude/
 
 # Orchestrator runtime state (config.json is tracked)
 .orchestrator/state.json

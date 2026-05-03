@@ -6,38 +6,27 @@ Fired by Claude Code before context compaction. Sends SIGUSR1 to the MCP
 process so that the next chathistory backfill (after any reconnect) delivers
 messages that were compacted out of the agent's context window.
 
-Env:
-  ROOST_DATA_DIR   Session data dir (set by bin/roost; pidfile lives here).
-  ROOST_IRC_NICK   Worker nick — used to locate the pidfile when ROOST_DATA_DIR
-                   is absent (falls back to /tmp/roost-mcp-{nick}.pid).
-
-Never exits non-zero — a hook failure must not block compaction.
+Wired by bin/roost at spawn time via roost-settings.json; never exits
+non-zero so a hook failure doesn't block compaction.
 """
-import glob
 import os
 import signal
 import sys
 
-nick = os.environ.get("ROOST_IRC_NICK", "")
 data_dir = os.environ.get("ROOST_DATA_DIR", "")
+if not data_dir:
+    sys.stderr.write("roost-compact-hook: ROOST_DATA_DIR not set, skipping\n")
+    sys.exit(0)
 
-if data_dir:
-    candidates = [os.path.join(data_dir, "mcp.pid")]
-else:
-    pattern = f"/tmp/roost-mcp-{nick}.pid" if nick else "/tmp/roost-mcp-*.pid"
-    candidates = glob.glob(pattern)
-
-pid_path = next((p for p in candidates if os.path.exists(p)), None)
-if not pid_path:
-    sys.stderr.write(
-        f"roost-compact-hook: pidfile not found (nick={nick!r}, data_dir={data_dir!r}), skipping\n"
-    )
+pid_path = os.path.join(data_dir, "mcp.pid")
+if not os.path.exists(pid_path):
+    sys.stderr.write(f"roost-compact-hook: {pid_path} not found, skipping\n")
     sys.exit(0)
 
 try:
     pid = int(open(pid_path).read().strip())
     os.kill(pid, signal.SIGUSR1)
-    sys.stderr.write(f"roost-compact-hook: sent SIGUSR1 to MCP pid {pid} (nick={nick!r})\n")
+    sys.stderr.write(f"roost-compact-hook: sent SIGUSR1 to MCP pid {pid}\n")
 except Exception as e:
-    sys.stderr.write(f"roost-compact-hook: failed to signal MCP: {e}\n")
+    sys.stderr.write(f"roost-compact-hook: failed: {e}\n")
     sys.exit(0)
