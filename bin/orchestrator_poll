@@ -350,8 +350,8 @@ def format_comment_event(c: dict, *, kind: str, repo: str | None, pr: int | None
     is_agent_author = bool(agent_logins) and author in (agent_logins or set())
     stripped = body.lstrip()
     has_agent_prefix = (stripped.startswith("[worker-")
-                        or stripped.startswith("[productops]")
-                        or stripped.startswith("[reviewer]"))
+                        or stripped.startswith("[lead-")
+                        or stripped.startswith("[reviewer-"))
     is_worker = is_agent_author or has_agent_prefix
     ev: dict = {
         "kind": kind,
