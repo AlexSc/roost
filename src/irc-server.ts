@@ -31,6 +31,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 // @ts-expect-error — irc-framework lacks first-class type defs
 import IRC from 'irc-framework'
+import { MULTILINE_LINE_BYTES } from './constants.js'
 
 const SOURCE_NAME = 'roost-irc'
 
@@ -81,10 +82,9 @@ const join_resolvers = new Map<string, Array<(ok: boolean) => void>>()
 // `draft/multiline=max-bytes=16384,max-lines=200`); we cache them here.
 let multilineEnabled = false
 let multilineMaxBytes = 4096
+// Pre-negotiation placeholder; overwritten by cap value once multilineEnabled=true.
+// TODO: could be undefined until cap negotiation lands
 let multilineMaxLines = 100
-// Per-line PRIVMSG cap inside a batch is still bounded by IRC's 512-byte
-// line limit; we use the same conservative chunker as the legacy path.
-const MULTILINE_LINE_BYTES = 300
 
 // Per-channel ring buffer of recent messages — gives us
 // channel_history without needing a bouncer.
