@@ -232,7 +232,7 @@ cmd_spawn() {
   # Create a per-session data directory. mktemp guarantees uniqueness across
   # concurrent spawns and across repos using identical nick names.
   local ROOST_DATA_DIR
-  ROOST_DATA_DIR="$(mktemp -d /tmp/roost.XXXXXXXX)"
+  ROOST_DATA_DIR="$(mktemp -d "/tmp/roost-${nick}.XXXXXXXX")"
   chmod 700 "${ROOST_DATA_DIR}"
   perm_paths "${ROOST_DATA_DIR}"
   # On any failure before the tmux session is created, clean up the data dir

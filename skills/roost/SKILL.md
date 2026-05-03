@@ -94,8 +94,14 @@ The hook auto-passes any `mcp__roost-irc__*` tool through without
 asking — otherwise the worker couldn't talk on IRC, including replying
 to its own approver.
 
-Daemon logs land at `/tmp/roost-permbot-{worker}.log` if anything looks
-off (registration failures, IRC disconnects, etc.).
+To find permbot logs for a running session:
+
+```bash
+dir=$(tmux show-environment -t roost-<nick> ROOST_DATA_DIR | sed 's/ROOST_DATA_DIR=//')
+cat "$dir/permbot.log"
+```
+
+The data dir is also printed by `roost spawn` as "data dir: ...".
 
 ## Prerequisites
 
