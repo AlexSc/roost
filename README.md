@@ -236,6 +236,24 @@ roost/
 └── package.json / tsconfig.json / bun.lock
 ```
 
+## Testing
+
+```bash
+bun test
+```
+
+Requires ergo. Install it once with `bin/install-ergo`, or point `ERGO_BIN` at
+an existing binary. Tests skip gracefully when ergo isn't found.
+
+For coverage (line ≥ 85%, branch ≥ 75% globally):
+
+```bash
+bun test --coverage
+```
+
+Coverage only reflects files imported by tests. `src/irc-server.ts` runs as a
+subprocess via the MCP harness and won't appear — that's expected.
+
 ## Known limitations
 
 - **No SASL / nick reservation.** Any local process that connects can

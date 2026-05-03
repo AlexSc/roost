@@ -8,6 +8,7 @@ var/
 
 # Test artifacts
 tests/logs/
+coverage/
 
 .claude/
 
