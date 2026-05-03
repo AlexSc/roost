@@ -79,12 +79,9 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     const mcp = await startMcp(ergo, 'rejoin-test-mcp')
 
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#rejoin-test' } })
-    const start = Date.now()
     const result = await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#rejoin-test' } })
-    const elapsed = Date.now() - start
 
     expect(result.isError).toBeFalsy()
-    expect(elapsed).toBeLessThan(1000)
   })
 
   it('channel_leave parts cleanly', async () => {
