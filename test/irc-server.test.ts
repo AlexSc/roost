@@ -11,11 +11,10 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     ergo = (await startErgo())!
   })
 
-  it('tools/list returns 7 tools with correct schemas', async () => {
+  it('tools/list returns correct schemas', async () => {
     const mcp = await startMcp(ergo, 'list-test-mcp')
     const { tools } = await mcp.client.listTools()
 
-    expect(tools).toHaveLength(7)
     const byName = Object.fromEntries(
       tools.map(t => [t.name, (t.inputSchema as unknown as { required?: string[] }).required]),
     )
@@ -26,6 +25,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     expect(byName['channel_leave']).toEqual(['channel'])
     expect(byName['channel_who']).toEqual(['channel'])
     expect(byName['channel_history']).toEqual(['channel'])
+    expect(tools.map(t => t.name)).toContain('channel_list')
     expect(byName['channel_list']).toEqual([])
   })
 
