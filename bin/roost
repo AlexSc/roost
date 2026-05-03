@@ -32,7 +32,7 @@ Commands:
   tail <nick> [-n LINES]   Show recent pane output (default 30 lines).
   status                   ergo state + roost session count.
   root                     Print the roost plugin root directory.
-  send <nick> <message...> Send a message directly to a nick's session.
+  send <nick> <message...> Inject text into a nick's tmux pane.
 
 spawn options:
   -c, --channels CHANS       Comma-separated channels to auto-join.
@@ -387,9 +387,13 @@ cmd_send() {
   local nick="$1"
   shift
   local message="$*"
+  if [[ "${message}" == *$'\n'* ]]; then
+    echo "error: message must be a single line (newlines not allowed)" >&2
+    exit 1
+  fi
   local session_name="${SESSION_PREFIX}${nick}"
   if ! tmux has-session -t "${session_name}" 2>/dev/null; then
-    echo "error: no session for nick '${nick}'" >&2
+    echo "no tmux session named '${session_name}'" >&2
     exit 4
   fi
   tmux send-keys -t "${session_name}" -l "${message}"
