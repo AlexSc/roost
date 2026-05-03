@@ -96,6 +96,57 @@ const pushHistory = (key: string, msg: IrcMessage) => {
   history.set(key, buf)
 }
 
+// ---- Replay dedupe (issue #44) -----------------------------------------
+//
+// Tracks fingerprints of every message emitted to the agent. On chathistory
+// backfill (join or reconnect), messages whose fingerprints are already
+// present are skipped — they're already in the agent's context window.
+//
+// "Same context window" = same MCP process. If the process restarts, the
+// set is empty and full backfill is delivered. For compaction (which does
+// NOT restart the process), the PreCompact hook sends SIGUSR1 to clear the
+// set so the next backfill after reconnect delivers the compacted history.
+//
+// Fingerprint: channel|sender|server-ts|text-prefix. The text prefix handles
+// the (rare) case of two senders posting at the same millisecond.
+//
+// Cap: HISTORY_SIZE × joined-channels × 2, enforced by evicting the oldest
+// entry. Evaluated dynamically so it scales as channels are joined/parted.
+
+const seenFingerprints = new Set<string>()
+const fingerprintQueue: string[] = []
+
+const msgFingerprint = (channel: string, sender: string, ts: string, text: string): string =>
+  `${channel}|${sender}|${ts}|${text.slice(0, 64)}`
+
+const addFingerprint = (fp: string) => {
+  if (seenFingerprints.has(fp)) return
+  seenFingerprints.add(fp)
+  fingerprintQueue.push(fp)
+  const cap = HISTORY_SIZE * Math.max(1, channelUsers.size) * 2
+  while (fingerprintQueue.length > cap) {
+    const oldest = fingerprintQueue.shift()!
+    seenFingerprints.delete(oldest)
+  }
+}
+
+// SIGUSR1: clear the seen-set so the next chathistory backfill (after
+// reconnect) delivers messages that were compacted out of context.
+process.on('SIGUSR1', () => {
+  seenFingerprints.clear()
+  fingerprintQueue.length = 0
+  process.stderr.write(`roost-irc[${NICK}]: SIGUSR1 — seen-set cleared (compaction reset)\n`)
+})
+
+// Write our PID so the PreCompact hook can signal us.
+const DATA_DIR = env('ROOST_DATA_DIR', '')
+const PID_FILE = DATA_DIR ? `${DATA_DIR}/mcp.pid` : `/tmp/roost-mcp-${NICK}.pid`
+try {
+  await Bun.write(PID_FILE, String(process.pid))
+} catch (e) {
+  process.stderr.write(`roost-irc[${NICK}]: warn: could not write pidfile ${PID_FILE}: ${e}\n`)
+}
+
 // ---- Send-side splitting + receive-side buffering ----------------------
 //
 // Two paths, picked at runtime based on CAP negotiation:
@@ -453,6 +504,7 @@ const emitChannelEvent = (
   msg: IrcMessage,
   extras: { buffered?: boolean; chunkCount?: number; historical?: boolean } = {},
 ) => {
+  addFingerprint(msgFingerprint(msg.channel, msg.sender, msg.ts, msg.text))
   const seq = ++receiveSeq
   const meta: Record<string, string> = {
     sender: msg.sender,
@@ -777,6 +829,7 @@ client.on('message', (event: {
   message: string
   type: 'privmsg' | 'notice' | 'action' | string
   batch?: { id: string; type: string; params: string[] }
+  tags?: Record<string, string>
 }) => {
   if (event.nick === NICK) return // don't loop our own messages back
   // draft/multiline and chathistory batch members are handled in their
@@ -785,7 +838,9 @@ client.on('message', (event: {
   if (event.batch?.type === CAP_CHATHISTORY) return
   const isDirect = event.target === NICK
   const channel = isDirect ? event.nick : event.target
-  const ts = new Date().toISOString()
+  // Use server-time tag when available (server-time cap) so the fingerprint
+  // matches what ergo records and replays in chathistory batches.
+  const ts = event.tags?.['time'] ?? new Date().toISOString()
 
   // Strip legacy [roost-split:...] marker if present (backward compat
   // with senders not yet on the buffering build).
@@ -913,6 +968,11 @@ client.on(
     // Take the most-recent N (ergo sends oldest-first).
     const limited = JOIN_HISTORY_LINES > 0 ? batch.slice(-JOIN_HISTORY_LINES) : batch
     for (const msg of limited) {
+      const fp = msgFingerprint(msg.channel, msg.sender, msg.ts, msg.text)
+      if (seenFingerprints.has(fp)) {
+        process.stderr.write(`roost-irc[${NICK}]: chathistory dedup skip ${msg.sender}@${msg.channel} ${msg.ts}\n`)
+        continue
+      }
       pushHistory(msg.channel, msg)
       emitChannelEvent(msg, { historical: true })
     }
@@ -931,7 +991,10 @@ client.on('socket error', (err: Error) => {
 // Ask the server for the IRCv3 caps we need beyond irc-framework's
 // defaults. labeled-response isn't strictly required for multiline, but
 // it pairs well with future features (await-able send confirmations).
-client.requestCap(['draft/multiline', 'labeled-response', CAP_CHATHISTORY])
+// server-time: ergo stamps every message with @time; we use this timestamp
+// in replay-dedupe fingerprints so live-message and chathistory-replay
+// fingerprints match (both keyed on server time, not client-arrival time).
+client.requestCap(['draft/multiline', 'labeled-response', CAP_CHATHISTORY, 'server-time'])
 
 client.connect({
   host: SERVER,
