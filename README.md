@@ -44,8 +44,7 @@ When a Claude Code session loads `roost-irc` as an MCP and connects:
 ```
 
 This puts `roost`, `roost-permbot`, and `irc-permission-prompt` on
-your PATH, auto-loads the `roost-irc` MCP for every session, and wires
-the `PreToolUse` hook for IRC permission oversight.
+your PATH and auto-loads the `roost-irc` MCP for every session.
 
 After installing, pull dependencies:
 
@@ -219,7 +218,7 @@ roost/
 │   └── plugin.json         Plugin manifest.
 ├── .mcp.json               MCP server config (auto-loaded by plugin).
 ├── hooks/
-│   └── hooks.json          PreToolUse hook for IRC permission oversight.
+│   └── hooks.json          Plugin hook config (PermissionRequest wired per-session via --perm-irc).
 ├── skills/roost/SKILL.md   Claude Code skill wrapping the roost command surface.
 ├── src/
 │   ├── irc-server.ts       The MCP server.
@@ -229,7 +228,7 @@ roost/
 │   ├── roost               Wrapper: spawn / shutdown / list / attach / tail / status / root.
 │   ├── roost-irc-server    PATH-resolvable launcher for the MCP server.
 │   ├── roost-permbot       IRC permission oversight daemon.
-│   └── irc-permission-prompt  PreToolUse hook (thin socket client).
+│   └── irc-permission-prompt  PermissionRequest hook (thin socket client, loaded per-session by --perm-irc).
 ├── etc/ergo.yaml           Sample ergo IRC server config.
 ├── extras/weechat/         Optional weechat notification script.
 ├── ARCHITECTURE.md         Channel topology, roles, routing, lifecycle.

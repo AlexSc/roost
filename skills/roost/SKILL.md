@@ -86,10 +86,9 @@ roost spawn scratch-h -c '#sandbox' -m haiku \
 ```
 
 Worker prerequisite: the worker must have the roost plugin active.
-The plugin's `hooks/hooks.json` wires `PreToolUse` to
-`irc-permission-prompt` automatically. The hook degrades gracefully
-when no daemon is running (returns `ask`, terminal prompt fires as
-normal), so it's safe to have wired at all times.
+`roost spawn --perm-irc` injects the `PermissionRequest` hook into
+the spawned session via `--settings`; sessions without `--perm-irc`
+do not have the hook loaded.
 
 The hook auto-passes any `mcp__roost-irc__*` tool through without
 asking — otherwise the worker couldn't talk on IRC, including replying

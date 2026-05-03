@@ -99,6 +99,7 @@ perm_paths() {
   PERM_SOCK="/tmp/roost-permbot-${nick}.sock"
   PERM_PID="/tmp/roost-permbot-${nick}.pid"
   PERM_LOG="/tmp/roost-permbot-${nick}.log"
+  PERM_SETTINGS="/tmp/roost-perm-settings-${nick}.json"
 }
 
 start_permbot() {
@@ -131,7 +132,10 @@ start_permbot() {
 stop_permbot() {
   local nick="$1"
   perm_paths "${nick}"
-  [ ! -f "${PERM_PID}" ] && return 0
+  if [ ! -f "${PERM_PID}" ]; then
+    rm -f "${PERM_SETTINGS}"
+    return 0
+  fi
   local pid
   pid="$(cat "${PERM_PID}" 2>/dev/null || true)"
   if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
@@ -146,7 +150,7 @@ stop_permbot() {
     kill -0 "${pid}" 2>/dev/null && kill -9 "${pid}" 2>/dev/null || true
     echo "  killed permbot (pid ${pid})"
   fi
-  rm -f "${PERM_PID}" "${PERM_SOCK}"
+  rm -f "${PERM_PID}" "${PERM_SOCK}" "${PERM_SETTINGS}"
 }
 
 cmd_spawn() {
@@ -230,13 +234,17 @@ cmd_spawn() {
 
   # Start the permbot side daemon if --perm-irc was passed. Done before
   # spawning the worker so the unix socket exists when the worker fires
-  # its first PreToolUse hook. The worker's settings.json must wire the
-  # hook to bin/irc-permission-prompt for this to do anything visible.
+  # its first PermissionRequest hook.
+  # Also writes a per-session settings file that wires the PermissionRequest
+  # hook only for this session; cleaned up by cmd_shutdown → stop_permbot.
   local perm_sock=""
+  local perm_settings_flag=""
   if [ "${perm_irc}" -eq 1 ]; then
     start_permbot "${nick}" "${perm_target}" || true
     perm_paths "${nick}"
     perm_sock="${PERM_SOCK}"
+    printf '%s\n' "{\"hooks\":{\"PermissionRequest\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/irc-permission-prompt\"}]}]}}" > "${PERM_SETTINGS}"
+    perm_settings_flag=" --settings ${PERM_SETTINGS}"
   fi
 
   echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: ${permission_mode}, cwd: ${cwd})"
@@ -262,7 +270,7 @@ cmd_spawn() {
     mcp_flag=" --mcp-config ${mcp_config}"
     channel_server="server:roost-irc"
   fi
-  local inner_cmd="claude --model ${model} --permission-mode ${permission_mode}${mcp_flag} --dangerously-load-development-channels ${channel_server}${extra_str}"
+  local inner_cmd="claude --model ${model} --permission-mode ${permission_mode}${mcp_flag}${perm_settings_flag} --dangerously-load-development-channels ${channel_server}${extra_str}"
   if [ -n "${prompt_file}" ]; then
     inner_cmd="${inner_cmd} --"' "$(< "$ROOST_PROMPT_FILE")"'
     tmux_env+=(-e "ROOST_PROMPT_FILE=${prompt_file}")
