@@ -12,10 +12,10 @@ responds or the socket closes. Falls back to the terminal prompt if the
 daemon is unreachable or returns an unrecognized reply.
 
 Configuration (env, all optional):
-  ROOST_PERM_SOCK   Daemon socket path. Defaults to
-                    /tmp/roost-permbot-{ROOST_IRC_NICK}.sock
-  ROOST_IRC_NICK    Worker nick (set by bin/roost spawn). Used to
-                    derive the default socket path.
+  ROOST_PERM_SOCK   Daemon socket path. Set automatically by bin/roost spawn
+                    when --perm-irc is used. Without it the hook falls back to
+                    the terminal permission prompt.
+  ROOST_IRC_NICK    Worker nick (set by bin/roost spawn).
 
 Tools whose names start with `mcp__roost-irc__` are passthrough
 (allowed without asking) — otherwise the worker couldn't talk on IRC,
@@ -28,10 +28,7 @@ import sys
 import time
 
 WORKER = os.environ.get("ROOST_IRC_NICK", "unknown")
-SOCK_PATH = os.environ.get(
-    "ROOST_PERM_SOCK",
-    f"/tmp/roost-permbot-{WORKER}.sock",
-)
+SOCK_PATH = os.environ.get("ROOST_PERM_SOCK", "")
 SOCKET_SAFETY_TIMEOUT = 570  # just under Claude Code's 600s hook default
 
 PASSTHROUGH_PREFIXES = ("mcp__roost-irc__", "mcp__plugin_roost_roost-irc__")
@@ -178,8 +175,8 @@ def extract_intent(transcript_path: str) -> str:
 
 def ask_daemon(summary: str):
     """Round-trip a request through the permbot socket. Return reply str or None."""
-    if not os.path.exists(SOCK_PATH):
-        sys.stderr.write(f"perm-hook: socket {SOCK_PATH} missing\n")
+    if not SOCK_PATH or not os.path.exists(SOCK_PATH):
+        sys.stderr.write("perm-hook: ROOST_PERM_SOCK not set or socket missing\n")
         return None
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
