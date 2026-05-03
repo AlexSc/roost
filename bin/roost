@@ -387,17 +387,16 @@ cmd_send() {
   local nick="$1"
   shift
   local message="$*"
-  if [[ "${message}" == *$'\n'* ]]; then
-    echo "error: message must be a single line (newlines not allowed)" >&2
-    exit 1
-  fi
   local session_name="${SESSION_PREFIX}${nick}"
   if ! tmux has-session -t "${session_name}" 2>/dev/null; then
     echo "no tmux session named '${session_name}'" >&2
     exit 4
   fi
-  tmux send-keys -t "${session_name}" -l "${message}"
+  local buf="roost-send-${nick}-$$"
+  printf '%s' "${message}" | tmux load-buffer -b "${buf}" -
+  tmux paste-buffer -t "${session_name}" -b "${buf}" -p
   tmux send-keys -t "${session_name}" Enter
+  tmux delete-buffer -b "${buf}" 2>/dev/null || true
 }
 
 if [ "$#" -eq 0 ]; then
