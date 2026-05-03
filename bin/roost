@@ -99,7 +99,6 @@ require_ircd() {
 # Future per-session files belong in that dir; no additional convention needed.
 perm_paths() {
   local data_dir="$1"
-  PERM_DIR="${data_dir}"
   PERM_SOCK="${data_dir}/permbot.sock"
   PERM_PID="${data_dir}/permbot.pid"
   PERM_LOG="${data_dir}/permbot.log"
@@ -296,10 +295,9 @@ cmd_spawn() {
     "${tmux_env[@]}" \
     "exec zsh -l -c $(printf '%q' "${inner_cmd}")"
 
-  # Store the data dir in the tmux session env for shutdown/debug discovery:
-  #   tmux show-environment -t roost-<nick> ROOST_DATA_DIR
-  tmux set-environment -t "${session_name}" ROOST_DATA_DIR "${ROOST_DATA_DIR}"
   # Session created successfully; clear the failure-cleanup trap.
+  # ROOST_DATA_DIR is already in the tmux session env via -e at new-session,
+  # discoverable via: tmux show-environment -t roost-<nick> ROOST_DATA_DIR
   trap - EXIT
 
   # Dismiss the dev-channels confirmation prompt. Default is option 1
