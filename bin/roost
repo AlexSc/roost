@@ -241,8 +241,10 @@ cmd_spawn() {
   local perm_settings_flag=""
   if [ "${perm_irc}" -eq 1 ]; then
     start_permbot "${nick}" "${perm_target}" || true
-    perm_paths "${nick}"
+    # perm_paths already called inside start_permbot; PERM_SOCK/PERM_SETTINGS are set.
     perm_sock="${PERM_SOCK}"
+    # ROOST_DIR is derived from the script's own path (cd … && pwd) so it won't
+    # contain quotes or backslashes — the printf JSON embedding is safe.
     printf '%s\n' "{\"hooks\":{\"PermissionRequest\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/irc-permission-prompt\"}]}]}}" > "${PERM_SETTINGS}"
     perm_settings_flag=" --settings ${PERM_SETTINGS}"
   fi
