@@ -92,30 +92,34 @@ require_ircd() {
   fi
 }
 
-# Side-daemon (permbot) lifecycle. PERM_SOCK / PERM_PID / PERM_LOG paths
-# are derived from the worker nick — one daemon per worker, lifecycle
-# tied to the tmux session via roost spawn / roost shutdown.
+# Side-daemon (permbot) lifecycle. All per-session files live under a
+# mktemp-generated directory created at spawn time (ROOST_DATA_DIR).
+# The dir is stored in the tmux session env so shutdown can find it:
+#   tmux show-environment -t roost-<nick> ROOST_DATA_DIR
+# Future per-session files belong in that dir; no additional convention needed.
 perm_paths() {
-  local nick="$1"
-  PERM_SOCK="/tmp/roost-permbot-${nick}.sock"
-  PERM_PID="/tmp/roost-permbot-${nick}.pid"
-  PERM_LOG="/tmp/roost-permbot-${nick}.log"
-  PERM_SETTINGS="/tmp/roost-perm-settings-${nick}.json"
+  local data_dir="$1"
+  PERM_DIR="${data_dir}"
+  PERM_SOCK="${data_dir}/permbot.sock"
+  PERM_PID="${data_dir}/permbot.pid"
+  PERM_LOG="${data_dir}/permbot.log"
+  PERM_SETTINGS="${data_dir}/perm-settings.json"
 }
 
 start_permbot() {
   local nick="$1"
   local target="$2"
-  perm_paths "${nick}"
+  local data_dir="$3"
+  perm_paths "${data_dir}"
   if [ -f "${PERM_PID}" ] && kill -0 "$(cat "${PERM_PID}" 2>/dev/null)" 2>/dev/null; then
     echo "  permbot already running (pid $(cat "${PERM_PID}")) — reusing"
     return 0
   fi
-  rm -f "${PERM_PID}" "${PERM_SOCK}"
   ROOST_PERM_NICK="permbot-${nick}" \
   ROOST_PERM_SOCK="${PERM_SOCK}" \
   ROOST_PERM_TARGET="${target}" \
   ROOST_PERM_WORKER="${nick}" \
+  ROOST_PERM_DEBUG_LOG="${PERM_LOG}" \
     nohup "${ROOST_DIR}/bin/roost-permbot" >>"${PERM_LOG}" 2>&1 </dev/null &
   echo $! > "${PERM_PID}"
   disown 2>/dev/null || true
@@ -131,27 +135,28 @@ start_permbot() {
 }
 
 stop_permbot() {
-  local nick="$1"
-  perm_paths "${nick}"
-  if [ ! -f "${PERM_PID}" ]; then
-    rm -f "${PERM_SETTINGS}"
+  local data_dir="${1:-}"
+  if [ -z "${data_dir}" ] || [ ! -d "${data_dir}" ]; then
     return 0
   fi
-  local pid
-  pid="$(cat "${PERM_PID}" 2>/dev/null || true)"
-  if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
-    kill "${pid}" 2>/dev/null || true
-    # Daemon should respond to SIGTERM and clean up the socket; give it
-    # a moment, then SIGKILL if still alive.
-    local i
-    for i in 1 2 3 4; do
-      kill -0 "${pid}" 2>/dev/null || break
-      sleep 0.25
-    done
-    kill -0 "${pid}" 2>/dev/null && kill -9 "${pid}" 2>/dev/null || true
-    echo "  killed permbot (pid ${pid})"
+  perm_paths "${data_dir}"
+  if [ -f "${PERM_PID}" ]; then
+    local pid
+    pid="$(cat "${PERM_PID}" 2>/dev/null || true)"
+    if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+      kill "${pid}" 2>/dev/null || true
+      # Daemon should respond to SIGTERM and clean up the socket; give it
+      # a moment, then SIGKILL if still alive.
+      local i
+      for i in 1 2 3 4; do
+        kill -0 "${pid}" 2>/dev/null || break
+        sleep 0.25
+      done
+      kill -0 "${pid}" 2>/dev/null && kill -9 "${pid}" 2>/dev/null || true
+      echo "  killed permbot (pid ${pid})"
+    fi
   fi
-  rm -f "${PERM_PID}" "${PERM_SOCK}" "${PERM_SETTINGS}"
+  rm -rf "${data_dir}"
 }
 
 cmd_spawn() {
@@ -225,6 +230,16 @@ cmd_spawn() {
     done
   fi
 
+  # Create a per-session data directory. mktemp guarantees uniqueness across
+  # concurrent spawns and across repos using identical nick names.
+  local ROOST_DATA_DIR
+  ROOST_DATA_DIR="$(mktemp -d /tmp/roost.XXXXXXXX)"
+  chmod 700 "${ROOST_DATA_DIR}"
+  perm_paths "${ROOST_DATA_DIR}"
+  # On any failure before the tmux session is created, clean up the data dir
+  # (and any permbot that was started) so we don't leak orphans.
+  trap 'stop_permbot "${ROOST_DATA_DIR}"' EXIT
+
   require_ircd
 
   if tmux has-session -t "${session_name}" 2>/dev/null; then
@@ -241,8 +256,7 @@ cmd_spawn() {
   local perm_sock=""
   local perm_settings_flag=""
   if [ "${perm_irc}" -eq 1 ]; then
-    start_permbot "${nick}" "${perm_target}" || true
-    # perm_paths already called inside start_permbot; PERM_SOCK/PERM_SETTINGS are set.
+    start_permbot "${nick}" "${perm_target}" "${ROOST_DATA_DIR}" || true
     perm_sock="${PERM_SOCK}"
     # ROOST_DIR is derived from the script's own path (cd … && pwd) so it won't
     # contain quotes or backslashes — the printf JSON embedding is safe.
@@ -255,7 +269,7 @@ cmd_spawn() {
   # `zsh -l` (login shell) ensures .zprofile runs before claude — required for
   # RVM / nvm / shell-rc-managed toolchains. Env vars go through tmux -e so
   # the inner command stays a clean single-quoted string.
-  local tmux_env=(-e "ROOST_IRC_NICK=${nick}" -e "ROOST_IRC_CHANNELS=${channels}")
+  local tmux_env=(-e "ROOST_IRC_NICK=${nick}" -e "ROOST_IRC_CHANNELS=${channels}" -e "ROOST_DATA_DIR=${ROOST_DATA_DIR}")
   [ -n "${perm_sock}" ] && tmux_env+=(-e "ROOST_PERM_SOCK=${perm_sock}")
 
   # Build the inner zsh command. Bash expands its own ${vars} here, then
@@ -282,6 +296,12 @@ cmd_spawn() {
     "${tmux_env[@]}" \
     "exec zsh -l -c $(printf '%q' "${inner_cmd}")"
 
+  # Store the data dir in the tmux session env for shutdown/debug discovery:
+  #   tmux show-environment -t roost-<nick> ROOST_DATA_DIR
+  tmux set-environment -t "${session_name}" ROOST_DATA_DIR "${ROOST_DATA_DIR}"
+  # Session created successfully; clear the failure-cleanup trap.
+  trap - EXIT
+
   # Dismiss the dev-channels confirmation prompt. Default is option 1
   # (accept), so a single Enter is enough.
   local dismissed=0
@@ -300,6 +320,7 @@ cmd_spawn() {
     echo "  attach with: roost attach ${nick}" >&2
   fi
 
+  echo "  data dir: ${ROOST_DATA_DIR}"
   echo "  ready. attach with: roost attach ${nick}"
   echo "  shutdown with: roost shutdown ${nick}"
 }
@@ -313,13 +334,13 @@ cmd_shutdown() {
   local session_name="${SESSION_PREFIX}${nick}"
   if ! tmux has-session -t "${session_name}" 2>/dev/null; then
     echo "no tmux session named '${session_name}'" >&2
-    # Still try to clean up an orphaned permbot for this nick.
-    stop_permbot "${nick}"
     exit 4
   fi
+  local data_dir
+  data_dir="$(tmux show-environment -t "${session_name}" ROOST_DATA_DIR 2>/dev/null | sed 's/^ROOST_DATA_DIR=//')"
   tmux kill-session -t "${session_name}"
   echo "killed ${session_name}"
-  stop_permbot "${nick}"
+  stop_permbot "${data_dir}"
 }
 
 cmd_list() {

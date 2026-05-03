@@ -33,7 +33,7 @@ Configuration (env, all required unless noted):
   ROOST_PERM_HOST       IRC server (default: 127.0.0.1)
   ROOST_PERM_PORT       IRC port   (default: 6667)
   ROOST_PERM_WORKER     Worker nick to display in prompts (default: same as NICK without permbot- prefix)
-  ROOST_PERM_DEBUG_LOG  Append-only trace log path (default: /tmp/roost-permbot.log)
+  ROOST_PERM_DEBUG_LOG  Append-only trace log path (default: <sock-dir>/permbot.log)
 """
 import json
 import os
@@ -50,7 +50,7 @@ TARGET = os.environ.get("ROOST_PERM_TARGET") or sys.exit("ROOST_PERM_TARGET requ
 HOST = os.environ.get("ROOST_PERM_HOST", "127.0.0.1")
 PORT = int(os.environ.get("ROOST_PERM_PORT", "6667"))
 WORKER = os.environ.get("ROOST_PERM_WORKER") or NICK.removeprefix("permbot-")
-DEBUG_LOG = os.environ.get("ROOST_PERM_DEBUG_LOG", "/tmp/roost-permbot.log")
+DEBUG_LOG = os.environ.get("ROOST_PERM_DEBUG_LOG") or os.path.join(os.path.dirname(SOCK_PATH), "permbot.log")
 
 
 def dlog(msg: str) -> None:
