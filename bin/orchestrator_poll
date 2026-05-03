@@ -553,6 +553,15 @@ def should_push(event: dict) -> bool:
 # Channel formatting
 # ---------------------------------------------------------------------------
 
+def _comment_snippet(event: dict) -> tuple[str, str, str]:
+    body_preview = (event.get("body_preview") or "").strip()
+    snippet_lines = body_preview.splitlines()[:1]
+    snippet = snippet_lines[0][:160] if snippet_lines else ""
+    ellipsis = "…" if len(body_preview) > len(snippet) or "\n" in body_preview else ""
+    url = event.get("comment_url") or event.get("url", "")
+    return snippet, ellipsis, url
+
+
 def format_event(event: dict) -> str:
     kind = event.get("kind") or "unknown"
     n = event.get("pr") or event.get("issue")
@@ -572,19 +581,11 @@ def format_event(event: dict) -> str:
         path = event.get("path")
         line = event.get("line")
         where = f" at {path}:{line}" if path else ""
-        body_preview = (event.get("body_preview") or "").strip()
-        snippet_lines = body_preview.splitlines()[:1]
-        snippet = snippet_lines[0][:160] if snippet_lines else ""
-        ellipsis = "…" if body_preview != snippet else ""
-        url = event.get("comment_url") or event.get("url", "")
+        snippet, ellipsis, url = _comment_snippet(event)
         return f"PR {tag} comment by {author}{where}: {snippet}{ellipsis} — {url}"
     if kind == "issue_comment":
         author = event.get("author") or "?"
-        body_preview = (event.get("body_preview") or "").strip()
-        snippet_lines = body_preview.splitlines()[:1]
-        snippet = snippet_lines[0][:160] if snippet_lines else ""
-        ellipsis = "…" if body_preview != snippet else ""
-        url = event.get("comment_url") or event.get("url", "")
+        snippet, ellipsis, url = _comment_snippet(event)
         return f"Issue {tag} comment by {author}: {snippet}{ellipsis} — {url}"
     if kind == "pr_review_submitted":
         author = event.get("author") or "?"
@@ -1135,7 +1136,6 @@ def _run_self_test() -> int:
           chans2,
           sorted({"#proj", "#issue-25", "#issue-14"}))
 
-    # format_event: pr_review_comment short body → no ellipsis, permalink appended
     check("review_comment_short",
           format_event({
               "kind": "pr_review_comment",
@@ -1146,7 +1146,6 @@ def _run_self_test() -> int:
           }),
           "PR org/repo#46 comment by alice: Looks good — https://github.com/org/repo/pull/46#issuecomment-111")
 
-    # format_event: pr_review_comment 161-char body → ellipsis + permalink
     long_body = "A" * 161
     check("review_comment_truncated",
           format_event({
@@ -1158,7 +1157,6 @@ def _run_self_test() -> int:
           }),
           f"PR org/repo#46 comment by alice: {'A' * 160}… — https://github.com/org/repo/pull/46#issuecomment-222")
 
-    # format_event: pr_review_comment multiline → ellipsis + permalink
     check("review_comment_multiline",
           format_event({
               "kind": "pr_review_comment",
@@ -1170,7 +1168,6 @@ def _run_self_test() -> int:
           }),
           "PR org/repo#46 comment by alice at src/foo.ts:10: Line one… — https://github.com/org/repo/pull/46#pullrequestreview-333")
 
-    # format_event: pr_conversation_comment short → no ellipsis, permalink appended
     check("conv_comment_short",
           format_event({
               "kind": "pr_conversation_comment",
@@ -1181,7 +1178,6 @@ def _run_self_test() -> int:
           }),
           "PR org/repo#46 comment by bob: Short comment — https://github.com/org/repo/pull/46#issuecomment-444")
 
-    # format_event: issue_comment short → no ellipsis, permalink appended
     check("issue_comment_short",
           format_event({
               "kind": "issue_comment",
@@ -1192,7 +1188,6 @@ def _run_self_test() -> int:
           }),
           "Issue org/repo#47 comment by carol: Hi there — https://github.com/org/repo/issues/47#issuecomment-555")
 
-    # format_event: issue_comment multiline → ellipsis + permalink
     check("issue_comment_multiline",
           format_event({
               "kind": "issue_comment",
