@@ -34,8 +34,6 @@ import IRC from 'irc-framework'
 import { MULTILINE_LINE_BYTES } from './constants.js'
 import {
   MAX_CHUNK_BODY,
-  INITIAL_BUFFER_MS,
-  EXTENDED_BUFFER_MS,
   IrcMessage,
   splitText,
   splitLineForMultiline,
@@ -45,6 +43,8 @@ import {
 } from './irc-lib.js'
 
 const SOURCE_NAME = 'roost-irc'
+const INITIAL_BUFFER_MS = 250
+const EXTENDED_BUFFER_MS = 2000
 const CAP_CHATHISTORY = 'chathistory'
 
 export interface McpServerConfig {
@@ -768,7 +768,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       const sender = cmds[0].nick
       if (sender === NICK) return
 
-      const text = reassembleMultilineBatch(event.commands)
+      const text = reassembleMultilineBatch(cmds)
       const isDirect = target === NICK
       const channel = isDirect ? sender : target
       const serverTimeMs = cmds[0].getServerTime?.()

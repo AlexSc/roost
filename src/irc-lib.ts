@@ -1,8 +1,6 @@
 import { MULTILINE_LINE_BYTES } from './constants.js'
 
 export const MAX_CHUNK_BODY = 300
-export const INITIAL_BUFFER_MS = 250
-export const EXTENDED_BUFFER_MS = 2000
 export const LEGACY_MARKER_RE = /^\[roost-split:[0-9a-f]{8}:\d+\/\d+\] /
 
 export interface IrcMessage {

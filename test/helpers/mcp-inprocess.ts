@@ -107,16 +107,14 @@ export async function startMcpInProcess(
         for (let i = fromCursor; i < notifications.length; i++) {
           if (pred(notifications[i])) { resolve(notifications[i]); return }
         }
-        const timer = setTimeout(() => {
-          const idx = waiters.findIndex(w => w.resolve === resolve)
+        let timer: ReturnType<typeof setTimeout>
+        const wrappedResolve = (n: ChannelNotification) => { clearTimeout(timer); resolve(n) }
+        timer = setTimeout(() => {
+          const idx = waiters.findIndex(w => w.resolve === wrappedResolve)
           if (idx !== -1) waiters.splice(idx, 1)
           reject(new Error(`waitForNotification timed out after ${timeoutMs}ms`))
         }, timeoutMs)
-        waiters.push({
-          pred,
-          resolve: (n) => { clearTimeout(timer); resolve(n) },
-          reject,
-        })
+        waiters.push({ pred, resolve: wrappedResolve, reject })
       })
     },
   }

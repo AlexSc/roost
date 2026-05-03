@@ -251,8 +251,8 @@ For coverage (line ≥ 85%, branch ≥ 75% globally):
 bun test --coverage
 ```
 
-Coverage only reflects files imported by tests. `src/irc-server.ts` runs as a
-subprocess via the MCP harness and won't appear — that's expected.
+Coverage includes `src/irc-server.ts` via the in-process tests
+(`test/irc-server-inprocess.test.ts`).
 
 ## Known limitations
 
