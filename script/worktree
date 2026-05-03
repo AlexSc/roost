@@ -49,19 +49,16 @@ fi
 
 # --- Resolve the base commit ---
 
-start_point=""
 if [ -n "$base" ]; then
   echo "Fetching origin/$base..."
-  git fetch origin "$base"
 
   # Try to fast-forward the local branch (works if not checked out elsewhere)
   if git fetch origin "$base:$base" 2>/dev/null; then
     echo "Fast-forwarded local $base"
   else
+    git fetch origin "$base"
     echo "Could not fast-forward local $base (may be checked out), using origin/$base"
   fi
-
-  start_point="origin/$base"
 fi
 
 echo ""
@@ -69,19 +66,17 @@ echo "Creating worktree:"
 echo "  Path:   $worktree_path"
 echo "  Branch: $branch"
 if [ -n "$base" ]; then
-  echo "  Base:   $start_point"
+  echo "  Base:   origin/$base"
 fi
 echo ""
 
 # Create the worktree — use existing branch if it exists, otherwise create it
 if git show-ref --verify --quiet "refs/heads/$branch"; then
   git worktree add "$worktree_path" "$branch"
+elif [ -n "$base" ]; then
+  git worktree add -b "$branch" "$worktree_path" "origin/$base"
 else
-  if [ -n "$start_point" ]; then
-    git worktree add -b "$branch" "$worktree_path" "$start_point"
-  else
-    git worktree add -b "$branch" "$worktree_path"
-  fi
+  git worktree add -b "$branch" "$worktree_path"
 fi
 
 # --- Dependencies & local config ---
