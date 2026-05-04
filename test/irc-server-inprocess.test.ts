@@ -57,8 +57,10 @@ describe.if(isErgoAvailable())('irc-server in-process (InMemoryTransport)', () =
 
   it('channel_list reflects joined channels', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-clist')
-    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-clist-a' } })
-    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-clist-b' } })
+    await Promise.all([
+      mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-clist-a' } }),
+      mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-clist-b' } }),
+    ])
     const result = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
     expect(toolText(result)).toContain('#ip-clist-a')
     expect(toolText(result)).toContain('#ip-clist-b')
@@ -217,8 +219,10 @@ describe.if(isErgoAvailable())('irc-server in-process (InMemoryTransport)', () =
   it('send reply includes unread nudge for other channels, omits if none', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-unread7')
     const peer = await connectPeer(ergo, 'ip-unread7-peer')
-    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread7-a' } })
-    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread7-b' } })
+    await Promise.all([
+      mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread7-a' } }),
+      mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread7-b' } }),
+    ])
     await peer.joinChannel('#ip-unread7-a')
     await peer.joinChannel('#ip-unread7-b')
 

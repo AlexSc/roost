@@ -15,8 +15,10 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
   it('empty lines preserved (consecutive \\n round-trip)', async () => {
     const sender = await startMcp(ergo, 'ml-ec1-s')
     const receiver = await startMcp(ergo, 'ml-ec1-r')
-    await sender.client.callTool({ name: 'channel_join', arguments: { channel: '#ml-ec1' } })
-    await receiver.client.callTool({ name: 'channel_join', arguments: { channel: '#ml-ec1' } })
+    await Promise.all([
+      sender.client.callTool({ name: 'channel_join', arguments: { channel: '#ml-ec1' } }),
+      receiver.client.callTool({ name: 'channel_join', arguments: { channel: '#ml-ec1' } }),
+    ])
 
     const text = 'hello\n\nworld'
     await sender.client.callTool({ name: 'channel_message', arguments: { channel: '#ml-ec1', text } })
@@ -30,8 +32,10 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
   it('trailing newline preserved', async () => {
     const sender = await startMcp(ergo, 'ml-ec2-s')
     const receiver = await startMcp(ergo, 'ml-ec2-r')
-    await sender.client.callTool({ name: 'channel_join', arguments: { channel: '#ml-ec2' } })
-    await receiver.client.callTool({ name: 'channel_join', arguments: { channel: '#ml-ec2' } })
+    await Promise.all([
+      sender.client.callTool({ name: 'channel_join', arguments: { channel: '#ml-ec2' } }),
+      receiver.client.callTool({ name: 'channel_join', arguments: { channel: '#ml-ec2' } }),
+    ])
 
     const text = 'hello\nworld\n'
     await sender.client.callTool({ name: 'channel_message', arguments: { channel: '#ml-ec2', text } })
@@ -62,8 +66,10 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
   it('message one byte over boundary sends as draft/multiline batch', async () => {
     const sender = await startMcp(ergo, 'ml-ec4-s')
     const receiver = await startMcp(ergo, 'ml-ec4-r')
-    await sender.client.callTool({ name: 'channel_join', arguments: { channel: '#ml-ec4' } })
-    await receiver.client.callTool({ name: 'channel_join', arguments: { channel: '#ml-ec4' } })
+    await Promise.all([
+      sender.client.callTool({ name: 'channel_join', arguments: { channel: '#ml-ec4' } }),
+      receiver.client.callTool({ name: 'channel_join', arguments: { channel: '#ml-ec4' } }),
+    ])
 
     const text = 'x'.repeat(MULTILINE_LINE_BYTES + 1) // one byte over — must split with concat
     const result = await sender.client.callTool({
@@ -84,8 +90,10 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
     // known: legacy path drops newlines on delivery (client.say pre-splits on \n); see #58
     const sender = await startMcp(ergo, 'ml-ec5-s')
     const receiver = await startMcp(ergo, 'ml-ec5-r')
-    await sender.client.callTool({ name: 'channel_join', arguments: { channel: '#ml-ec5' } })
-    await receiver.client.callTool({ name: 'channel_join', arguments: { channel: '#ml-ec5' } })
+    await Promise.all([
+      sender.client.callTool({ name: 'channel_join', arguments: { channel: '#ml-ec5' } }),
+      receiver.client.callTool({ name: 'channel_join', arguments: { channel: '#ml-ec5' } }),
+    ])
 
     const text = Array.from({ length: 201 }, (_, i) => `line${i}`).join('\n')
     const result = await sender.client.callTool({
@@ -103,8 +111,10 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
   it('mix of long and short logical lines reassembles correctly', async () => {
     const sender = await startMcp(ergo, 'ml-ec6-s')
     const receiver = await startMcp(ergo, 'ml-ec6-r')
-    await sender.client.callTool({ name: 'channel_join', arguments: { channel: '#ml-ec6' } })
-    await receiver.client.callTool({ name: 'channel_join', arguments: { channel: '#ml-ec6' } })
+    await Promise.all([
+      sender.client.callTool({ name: 'channel_join', arguments: { channel: '#ml-ec6' } }),
+      receiver.client.callTool({ name: 'channel_join', arguments: { channel: '#ml-ec6' } }),
+    ])
 
     // Two long lines (each needs concat-split) bracketing a short line
     const longA = 'a'.repeat(MULTILINE_LINE_BYTES + 150)

@@ -61,8 +61,10 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
   it('channel_list returns joined channels', async () => {
     const mcp = await startMcp(ergo, 'list-chan-mcp')
 
-    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#list-test-a' } })
-    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#list-test-b' } })
+    await Promise.all([
+      mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#list-test-a' } }),
+      mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#list-test-b' } }),
+    ])
 
     const result = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
     expect(result.isError).toBeFalsy()
