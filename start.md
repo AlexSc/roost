@@ -52,7 +52,11 @@ To work on an issue:
   - When worker proposes "X is fine for now" and you can already see a real gap, push back before approving the plan
 6. Once the agent posts a draft PR, spawn a reviewer agent and task it with using /simplify, and instructions to post its findings to the PR. The reviewer should be instructed to not make edits. The reviewer should prefix its comment with its name, [reviewer-N]. Even if the work was done with Sonnet, if the PR exceeds approximately 250 lines consider using Opus for review.
 7. Terminate the reviewer once it is done
-8. Once the worker agent addresses the findings, mark the PR as ready for review and tag @AlexSc for review on GitHub (`gh pr edit N --add-reviewer AlexSc`). If the human leaves CHANGES_REQUESTED and the worker pushes a fix, **re-request review the same way** — GitHub does not auto-rerequest a CHANGES_REQUESTED reviewer after new commits.
+8. Once the worker addresses reviewer findings, **you** (the lead-pm) mark the PR ready and add AlexSc as reviewer:
+   - `gh pr ready N --repo OWNER/REPO`
+   - `gh pr edit N --repo OWNER/REPO --add-reviewer AlexSc`
+
+   The worker should report "pushed" or "addressed" — workers do NOT mark the PR ready themselves. If the human leaves CHANGES_REQUESTED and the worker pushes a fix, **you** re-request review the same way. GitHub does not auto-rerequest a CHANGES_REQUESTED reviewer after new commits.
 9. Once the human approves the PR
   - Terminate the worker
   - Part the channel
