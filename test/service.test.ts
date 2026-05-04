@@ -65,6 +65,22 @@ describe.if(isTmuxAvailable())('roost service', () => {
     )
   })
 
+  test('start relaunches a service that has exited', async () => {
+    // /bin/true exits immediately; tmux closes its window on exit (default settings)
+    const { exitCode: e1 } = await roost('service', 'start', '/bin/true')
+    expect(e1).toBe(0)
+    // wait for the window to disappear
+    await Bun.sleep(400)
+    const windowsMid = await tmuxListWindows(SESSION)
+    expect(windowsMid).not.toContain('true')
+    // second start should create a fresh window, not no-op
+    const { exitCode: e2, stdout } = await roost('service', 'start', '/bin/true')
+    expect(e2).toBe(0)
+    expect(stdout).toContain('service true: started')
+    // cleanup
+    await roost('service', 'stop', 'true')
+  })
+
   test('status shows service as up', async () => {
     const { exitCode, stdout } = await roost('service', 'status')
     expect(exitCode).toBe(0)

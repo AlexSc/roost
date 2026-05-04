@@ -232,7 +232,8 @@ cmd_spawn() {
       exit 1
     fi
   fi
-  # Bare name (no /) resolves to ${ROOST_DIR}/prompts/<name>.md
+  # Bare name (no /) is a plugin builtin: resolves to ${ROOST_DIR}/prompts/<name>.md.
+  # For a local file, use ./name or an absolute path.
   if [ -n "${prompt_file}" ] && [[ "${prompt_file}" != */* ]]; then
     prompt_file="${ROOST_DIR}/prompts/${prompt_file}.md"
   fi
@@ -468,15 +469,13 @@ cmd_send() {
 
 SERVICE_SESSION="roost-services"
 
-# Check if a tmux window has a live foreground process (i.e. not just a shell at prompt).
+# Check if a tmux window has a live foreground process.
+# Uses kill -0 on pane_pid (the exec'd command's PID) — works for any script type.
 _service_is_alive() {
   local name="$1"
-  local current_cmd
-  current_cmd="$(tmux list-panes -t "${SERVICE_SESSION}:${name}" -F '#{pane_current_command}' 2>/dev/null | head -1)"
-  case "${current_cmd}" in
-    zsh|bash|sh|fish|dash|csh|tcsh|'') return 1 ;;
-    *) return 0 ;;
-  esac
+  local pane_pid
+  pane_pid="$(tmux list-panes -t "${SERVICE_SESSION}:${name}" -F '#{pane_pid}' 2>/dev/null | head -1)"
+  [ -n "${pane_pid}" ] && kill -0 "${pane_pid}" 2>/dev/null
 }
 
 cmd_service() {
