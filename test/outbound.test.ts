@@ -63,8 +63,10 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     const sender = await startMcp(ergo, 'out-mcp4')
     const receiver = await startMcp(ergo, 'out-mcp5')
 
-    await sender.client.callTool({ name: 'channel_join', arguments: { channel: '#out-ml' } })
-    await receiver.client.callTool({ name: 'channel_join', arguments: { channel: '#out-ml' } })
+    await Promise.all([
+      sender.client.callTool({ name: 'channel_join', arguments: { channel: '#out-ml' } }),
+      receiver.client.callTool({ name: 'channel_join', arguments: { channel: '#out-ml' } }),
+    ])
 
     const longText = 'a'.repeat(150) + '\n' + 'b'.repeat(150) + '\n' + 'c'.repeat(50)
     // 352 bytes total, two embedded newlines — forces draft/multiline batch
