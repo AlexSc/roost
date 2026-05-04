@@ -497,7 +497,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
         return { content: [{ type: 'text', text: lines.join('\n') }] }
       }
       case 'channel_list': {
-        const channels = await new Promise<string[] | null>((resolve) => {
+        const channels = await new Promise<string[] | false>((resolve) => {
           ircClient.whois(NICK, (event: { channels?: string }) => {
             if (!event.channels) { resolve([]); return }
             const list = event.channels
@@ -507,9 +507,9 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
               .sort()
             resolve(list)
           })
-          setTimeout(() => resolve(null), 5000).unref?.()
+          setTimeout(() => resolve(false), 5000).unref?.()
         })
-        if (channels === null) {
+        if (channels === false) {
           return { content: [{ type: 'text', text: 'whois timed out' }], isError: true }
         }
         if (channels.length === 0) {
