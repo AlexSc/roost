@@ -47,6 +47,7 @@ import subprocess
 import sys
 import tempfile
 import random
+import re
 import time
 import traceback
 from datetime import datetime, timezone
@@ -686,6 +687,15 @@ def _multiline_split_line(line: str) -> list[str]:
     return _utf8_split(line, MULTILINE_LINE_BYTES, boundary=False)
 
 
+# Matches: `:server CAP <nick> <sub> [*] :<caps>`
+# group 1 = subcommand, group 2 = "*" (non-final LS) or None, group 3 = caps string
+_RE_CAP = re.compile(r'^:\S+ CAP \S+ (\w+)(?: (\*))?(?:\s+:?(.*))?')
+_RE_001 = re.compile(r'^:\S+ 001 ')
+# Matches the draft/multiline cap token; group 1 = "key=val,…" params or None
+_RE_MULTILINE_CAP = re.compile(r'(?:^|\s)draft/multiline(?:=(\S+))?(?:\s|$)')
+_RE_MULTILINE_PARAMS = re.compile(r'max-bytes=(\d+)|max-lines=(\d+)')
+
+
 class IrcClient:
     def __init__(self, server: str, port: int, nick: str, default_channels: Iterable[str] = ()):
         self.server = server
@@ -720,44 +730,27 @@ class IrcClient:
                 if line.startswith("PING "):
                     self._send_raw("PONG " + line[5:])
                     continue
-                parts = line.split(" ", 4)
-                if len(parts) >= 4 and parts[1] == "CAP":
-                    subcommand = parts[3]
-                    rest = parts[4] if len(parts) > 4 else ""
-                    if subcommand == "LS":
-                        if rest.startswith("* "):
-                            caps_str = rest[2:].lstrip(":")
-                            is_last = False
-                        else:
-                            caps_str = rest.lstrip(":")
-                            is_last = True
-                        for token in caps_str.split():
-                            if token.startswith(CAP_MULTILINE):
-                                cap_eq = token[len(CAP_MULTILINE):]
-                                if cap_eq.startswith("="):
-                                    for param in cap_eq[1:].split(","):
-                                        if param.startswith("max-bytes="):
-                                            try:
-                                                self._multiline_max_bytes = int(param[10:])
-                                            except ValueError:
-                                                pass
-                                        elif param.startswith("max-lines="):
-                                            try:
-                                                self._multiline_max_lines = int(param[10:])
-                                            except ValueError:
-                                                pass
-                                if not _cap_req_sent:
-                                    self._send_raw(f"CAP REQ :{CAP_MULTILINE}")
-                                    _cap_req_sent = True
-                                break
-                        if is_last and not _cap_req_sent:
+                cap = _RE_CAP.match(line)
+                if cap:
+                    sub, is_cont, caps = cap.group(1), cap.group(2), cap.group(3) or ""
+                    if sub == "LS":
+                        ml = _RE_MULTILINE_CAP.search(caps)
+                        if ml and not _cap_req_sent:
+                            for mp in _RE_MULTILINE_PARAMS.finditer(ml.group(1) or ""):
+                                if mp.group(1):
+                                    self._multiline_max_bytes = int(mp.group(1))
+                                if mp.group(2):
+                                    self._multiline_max_lines = int(mp.group(2))
+                            self._send_raw(f"CAP REQ :{CAP_MULTILINE}")
+                            _cap_req_sent = True
+                        if is_cont is None and not _cap_req_sent:
                             self._send_raw("CAP END")
-                    elif subcommand == "ACK":
+                    elif sub == "ACK":
                         self._multiline_enabled = True
                         self._send_raw("CAP END")
-                    elif subcommand == "NAK":
+                    elif sub == "NAK":
                         self._send_raw("CAP END")
-                elif len(parts) >= 2 and parts[0].startswith(":") and parts[1] == "001":
+                elif _RE_001.match(line):
                     registered = True
                     break
         if not registered:
