@@ -10,7 +10,8 @@ var/
 tests/logs/
 coverage/
 
-.claude/
+.claude/*
+!.claude/commands/
 
 # Orchestrator runtime state (config.json is tracked)
 .orchestrator/state.json

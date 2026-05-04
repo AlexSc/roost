@@ -232,11 +232,6 @@ cmd_spawn() {
       exit 1
     fi
   fi
-  # Bare name (no /) is a plugin builtin: resolves to ${ROOST_DIR}/prompts/<name>.md.
-  # For a local file, use ./name or an absolute path.
-  if [ -n "${prompt_file}" ] && [[ "${prompt_file}" != */* ]]; then
-    prompt_file="${ROOST_DIR}/prompts/${prompt_file}.md"
-  fi
   if [ -n "${prompt_file}" ] && [ ! -f "${prompt_file}" ]; then
     echo "error: --prompt-file ${prompt_file} not found" >&2
     exit 1

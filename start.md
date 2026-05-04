@@ -11,7 +11,7 @@ The primary goal of the alpha milestone is to make Roost usable for development 
 ## Getting started
 
 - Read docs/ORCHESTRATOR.md
-- Spawn the watcher (it will start the dispatcher on boot): `roost spawn watcher --model haiku --channels '#leads-roost-dev' --prompt-file watcher --perm-irc --perm-target lead-pm`
+- Spawn the watcher (it will start the dispatcher on boot): `roost spawn watcher --model haiku --channels '#leads-roost-dev' --prompt '/watcher lead-pm alex' --perm-irc --perm-target lead-pm`
 
 ## Working In Roost
 
