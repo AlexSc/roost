@@ -344,5 +344,5 @@ describe.if(isErgoAvailable())('irc-server MCP tools (subprocess)', () => {
     expect(toolText(result)).toBe('parted #leave-test')
 
     await peer.waitForPart('#leave-test', 'leave-test-mcp', 10000)
-  })
+  }, 15000)
 })
