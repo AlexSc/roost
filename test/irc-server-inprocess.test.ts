@@ -230,7 +230,8 @@ describe.if(isErgoAvailable())('irc-server in-process (InMemoryTransport)', () =
     const reply = await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-unread7-a', text: 'hi' } })
     expect(toolText(reply)).toContain('sent to #ip-unread7-a')
     expect(toolText(reply)).toContain('#ip-unread7-b')
-    expect(toolText(reply)).toContain('unread')
+    expect(toolText(reply)).toContain('unread:')
+    expect(toolText(reply)).toContain('look at this')
 
     // Now send to B — reply should be silent (no other unread)
     const reply2 = await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-unread7-b', text: 'got it' } })

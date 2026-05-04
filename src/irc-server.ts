@@ -482,7 +482,10 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
         const { chunks, mode } = sendWithSplit(channel, text)
         unread.delete(channel)
         const unreadSuffix = unread.size > 0
-          ? `\nunread: ${[...unread.entries()].map(([ch, i]) => { const p = i.lastPreview.length > 40 ? i.lastPreview.slice(0, 37) + '...' : i.lastPreview; return `${ch} (${i.count}, last: ${i.lastSender}: "${p}")` }).join(', ')}`
+          ? '\nunread:\n' + [...unread.entries()].map(([ch, i]) => {
+              const raw = i.lastPreview.length > 40 ? i.lastPreview.slice(0, 37) + '...' : i.lastPreview
+              return `  ${ch} (${i.count}) ${i.lastSender}: "${raw.replaceAll('"', "'")}"`
+            }).join('\n')
           : ''
         const note =
           mode === 'multiline' ? ` (sent as draft/multiline batch, ${chunks} lines)`
@@ -497,7 +500,10 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
         const { chunks, mode } = sendWithSplit(nick, text)
         unread.delete(nick)
         const unreadSuffix = unread.size > 0
-          ? `\nunread: ${[...unread.entries()].map(([ch, i]) => { const p = i.lastPreview.length > 40 ? i.lastPreview.slice(0, 37) + '...' : i.lastPreview; return `${ch} (${i.count}, last: ${i.lastSender}: "${p}")` }).join(', ')}`
+          ? '\nunread:\n' + [...unread.entries()].map(([ch, i]) => {
+              const raw = i.lastPreview.length > 40 ? i.lastPreview.slice(0, 37) + '...' : i.lastPreview
+              return `  ${ch} (${i.count}) ${i.lastSender}: "${raw.replaceAll('"', "'")}"`
+            }).join('\n')
           : ''
         const note =
           mode === 'multiline' ? ` (sent as draft/multiline batch, ${chunks} lines)`
