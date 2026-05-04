@@ -208,7 +208,6 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
     return { chunks: wireLines.length, mode: 'multiline' }
   }
 
-  // Shared boilerplate: increment seq, inject source, fire the MCP notification.
   const pushNotification = (content: string, meta: Record<string, string>) => {
     const seq = ++receiveSeq
     mcp.notification({
