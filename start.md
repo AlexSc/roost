@@ -13,6 +13,16 @@ The primary goal of the alpha milestone is to make Roost usable for development 
 - Read docs/ORCHESTRATOR.md
 - Ensure the orchestrator is running in a tmux session
 
+## Working In Roost
+
+We ride ergo, which supports IRCv3 multiline. Don't worry about splitting across multiple messages.
+
+When the dispatcher relays a PR comment to the channel, the body is truncated to a single IRC line. Always fetch the full body before responding to the human's comment — use `gh pr view N --repo OWNER/REPO --comments` or `gh api repos/OWNER/REPO/pulls/N/comments`. Treat the dispatcher line as a notification, not the message.
+
+You do not need to restate anything that the human or dispatcher says in the channel. The worker is in the channel and will naturally see it. Workers are expected to do their own followup reading. You are expected to also do full readings. You may comment in Roost if you believe something is out of scope, or have a different change you want to make, or to acknowledge moving something to a followup issue. You may also remain silent.
+
+If you comment on GitHub, prefix your comment with your name [lead-pm]
+
 ## Working With A Team
 
 To work on an issue:
@@ -36,11 +46,11 @@ To work on an issue:
     - Instruct the agent to present its implementation plan in the channel first and wait for your approval before beginning.
     - Instruct the agent that once it's done it should open a _draft_ pr and post a link in the channel
     - Instruct the agent to prefix its comments on github with its name, [worker-N]
-5. Once the agent posts its plan, pressure test it.
+5. Once the agent posts its plan, pressure test it. This is where it's cheap to fix issues, take your time on this step. Do not be afraid to go for multiple rounds. At a minimum, ask
   - Does it believably resolve the issue?
   - Does it set the project up for downstream success, or is it a pending footgun?
-  This is where it's cheap to fix issues, take your time on this step. Do not be afraid to go for multiple rounds.
-6. Once the agent posts a draft PR, spawn a reviewer agent and task it with using /simplify, and instructions to post its findings to the PR. The reviewer should prefix its comment with its name, [reviewer-N]
+  - When worker proposes "X is fine for now" and you can already see a real gap, push back before approving the plan
+6. Once the agent posts a draft PR, spawn a reviewer agent and task it with using /simplify, and instructions to post its findings to the PR. The reviewer should be instructed to not make edits. The reviewer should prefix its comment with its name, [reviewer-N]. Even if the work was done with Sonnet, if the PR exceeds approximately 250 lines consider using Opus for review.
 7. Terminate the reviewer once it is done
 8. Once the worker agent addresses the findings, mark the PR as ready for review and tag @AlexSc for review on GitHub (`gh pr edit N --add-reviewer AlexSc`). If the human leaves CHANGES_REQUESTED and the worker pushes a fix, **re-request review the same way** — GitHub does not auto-rerequest a CHANGES_REQUESTED reviewer after new commits.
 9. Once the human approves the PR
@@ -49,10 +59,6 @@ To work on an issue:
   - Merge the PR using --merge
   - Pull main in the primary repo
   - Clean up the worktree
-
-You do not need to restate anything that the human or dispatcher says in the channel. The worker is in the channel and will naturally see it. You may remain silent. If you comment on GitHub, prefix your comment with your name [lead-pm]
-
-When the dispatcher relays a PR comment to the channel, the body is truncated to a single IRC line. Always fetch the full body before responding to the human's comment — use `gh pr view N --repo OWNER/REPO --comments` or `gh api repos/OWNER/REPO/pulls/N/comments`. Treat the dispatcher line as a notification, not the message.
 
 Run as many workers as you can.
 
