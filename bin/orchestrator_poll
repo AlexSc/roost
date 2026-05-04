@@ -66,6 +66,8 @@ SCHEMA_VERSION = 1
 # 300 is conservative-safe without knowing the server's prefix length at runtime.
 MULTILINE_LINE_BYTES = 300
 
+CAP_MULTILINE = "draft/multiline"
+
 
 class GhError(RuntimeError):
     pass
@@ -570,11 +572,15 @@ def _comment_snippet(event: dict) -> tuple[str, str, str]:
     return snippet, ellipsis, url
 
 
-def format_event(event: dict) -> str:
-    kind = event.get("kind") or "unknown"
+def _event_tag(event: dict) -> str:
     n = event.get("pr") or event.get("issue")
     repo = event.get("repo")
-    tag = f"{repo}#{n}" if (n is not None and repo) else (f"#{n}" if n is not None else "")
+    return f"{repo}#{n}" if (n is not None and repo) else (f"#{n}" if n is not None else "")
+
+
+def format_event(event: dict) -> str:
+    kind = event.get("kind") or "unknown"
+    tag = _event_tag(event)
 
     if kind == "pr_ready_for_review":
         return f"PR {tag} ready for review: {event.get('title', '')} — {event.get('url', '')}"
@@ -640,50 +646,44 @@ def format_event(event: dict) -> str:
 IRC_MAX_CHUNK_BODY = 300
 
 
-def _irc_split_text(text: str) -> list[str]:
-    if len(text.encode("utf-8")) <= IRC_MAX_CHUNK_BODY:
+def _utf8_split(text: str, limit: int, *, boundary: bool) -> list[str]:
+    """Split text into ≤limit-byte chunks. boundary=True seeks sentence/word breaks."""
+    if len(text.encode("utf-8")) <= limit:
         return [text]
     out: list[str] = []
     s = text
     while s:
-        if len(s.encode("utf-8")) <= IRC_MAX_CHUNK_BODY:
+        if len(s.encode("utf-8")) <= limit:
             out.append(s)
             break
-        end = min(len(s), IRC_MAX_CHUNK_BODY)
-        while end > 0 and len(s[:end].encode("utf-8")) > IRC_MAX_CHUNK_BODY:
+        end = min(len(s), limit)
+        while end > 0 and len(s[:end].encode("utf-8")) > limit:
             end -= 1
-        min_viable = max(1, end * 2 // 3)
-        split_at = end
-        for j in range(end, min_viable, -1):
-            if j < len(s) and s[j - 1] in ".!?" and (j == len(s) or s[j] in " \t\n"):
-                split_at = j
-                break
-        else:
+        if boundary:
+            min_viable = max(1, end * 2 // 3)
+            split_at = end
             for j in range(end, min_viable, -1):
-                if j < len(s) and s[j] in " \t":
+                if j < len(s) and s[j - 1] in ".!?" and (j == len(s) or s[j] in " \t\n"):
                     split_at = j
                     break
+            else:
+                for j in range(end, min_viable, -1):
+                    if j < len(s) and s[j] in " \t":
+                        split_at = j
+                        break
+        else:
+            split_at = end
         out.append(s[:split_at])
         s = s[split_at:]
     return out
 
 
+def _irc_split_text(text: str) -> list[str]:
+    return _utf8_split(text, IRC_MAX_CHUNK_BODY, boundary=True)
+
+
 def _multiline_split_line(line: str) -> list[str]:
-    """Split one logical line into ≤MULTILINE_LINE_BYTES-byte wire chunks."""
-    if len(line.encode("utf-8")) <= MULTILINE_LINE_BYTES:
-        return [line]
-    chunks: list[str] = []
-    remaining = line
-    while remaining:
-        if len(remaining.encode("utf-8")) <= MULTILINE_LINE_BYTES:
-            chunks.append(remaining)
-            break
-        end = MULTILINE_LINE_BYTES
-        while end > 0 and len(remaining[:end].encode("utf-8")) > MULTILINE_LINE_BYTES:
-            end -= 1
-        chunks.append(remaining[:end])
-        remaining = remaining[end:]
-    return chunks
+    return _utf8_split(line, MULTILINE_LINE_BYTES, boundary=False)
 
 
 class IrcClient:
@@ -695,6 +695,9 @@ class IrcClient:
         self.sock: socket.socket | None = None
         self._buffer = ""
         self._joined: set[str] = set()
+        self._reset_multiline_state()
+
+    def _reset_multiline_state(self) -> None:
         self._multiline_enabled = False
         self._multiline_max_bytes = 16384
         self._multiline_max_lines = 200
@@ -705,16 +708,13 @@ class IrcClient:
         self.sock = s
         self._buffer = ""
         self._joined = set()
-        self._multiline_enabled = False
-        self._multiline_max_bytes = 16384
-        self._multiline_max_lines = 200
+        self._reset_multiline_state()
         self._send_raw("CAP LS 302")
         self._send_raw(f"NICK {self.nick}")
         self._send_raw(f"USER {self.nick} 0 * :{self.nick}")
         deadline = time.time() + 10
         registered = False
         _cap_req_sent = False
-        _cap_end_sent = False
         while time.time() < deadline and not registered:
             for line in self._read_lines(timeout=1.0):
                 if line.startswith("PING "):
@@ -732,8 +732,8 @@ class IrcClient:
                             caps_str = rest.lstrip(":")
                             is_last = True
                         for token in caps_str.split():
-                            if token.startswith("draft/multiline"):
-                                cap_eq = token[len("draft/multiline"):]
+                            if token.startswith(CAP_MULTILINE):
+                                cap_eq = token[len(CAP_MULTILINE):]
                                 if cap_eq.startswith("="):
                                     for param in cap_eq[1:].split(","):
                                         if param.startswith("max-bytes="):
@@ -747,21 +747,16 @@ class IrcClient:
                                             except ValueError:
                                                 pass
                                 if not _cap_req_sent:
-                                    self._send_raw("CAP REQ :draft/multiline")
+                                    self._send_raw(f"CAP REQ :{CAP_MULTILINE}")
                                     _cap_req_sent = True
                                 break
-                        if is_last and not _cap_req_sent and not _cap_end_sent:
+                        if is_last and not _cap_req_sent:
                             self._send_raw("CAP END")
-                            _cap_end_sent = True
                     elif subcommand == "ACK":
                         self._multiline_enabled = True
-                        if not _cap_end_sent:
-                            self._send_raw("CAP END")
-                            _cap_end_sent = True
+                        self._send_raw("CAP END")
                     elif subcommand == "NAK":
-                        if not _cap_end_sent:
-                            self._send_raw("CAP END")
-                            _cap_end_sent = True
+                        self._send_raw("CAP END")
                 elif len(parts) >= 2 and parts[0].startswith(":") and parts[1] == "001":
                     registered = True
                     break
@@ -848,25 +843,19 @@ class IrcClient:
             self.pump(timeout=0.0)
 
     def comment_privmsg(self, channel: str, header: str, body: str, url: str, fallback: str) -> None:
-        """Send a comment as a draft/multiline batch when negotiated and within limits.
-
-        The batch contains: header line, body lines, permalink URL (last).
-        Non-multiline clients still see the URL as a regular PRIVMSG in the flood.
-        Falls back to privmsg(fallback) when multiline is not negotiated or the
-        body exceeds the server-advertised max-bytes / max-lines.
-        """
+        """Non-multiline clients still see the URL as a regular PRIVMSG in the flood."""
         if self._multiline_enabled:
-            logical_lines = [header] + (body.splitlines() if body else []) + [url]
+            logical_lines = [header] + body.splitlines() + [url]
             wire_lines: list[tuple[str, bool]] = []
             for logical in logical_lines:
                 chunks = _multiline_split_line(logical)
                 for i, chunk in enumerate(chunks):
                     wire_lines.append((chunk, i > 0))
-            total_bytes = sum(len(t.encode("utf-8")) for t, _ in wire_lines)
-            if len(wire_lines) <= self._multiline_max_lines and total_bytes <= self._multiline_max_bytes:
+            if (len(wire_lines) <= self._multiline_max_lines
+                    and len(wire_lines) * MULTILINE_LINE_BYTES <= self._multiline_max_bytes):
                 self.join(channel)
                 batch_id = f"{random.randint(0, 0xffffffff):08x}"
-                self._send_raw(f"BATCH +{batch_id} draft/multiline {channel}")
+                self._send_raw(f"BATCH +{batch_id} {CAP_MULTILINE} {channel}")
                 for text, is_concat in wire_lines:
                     tag = (f"batch={batch_id};draft/multiline-concat" if is_concat
                            else f"batch={batch_id}")
@@ -892,9 +881,7 @@ MULTILINE_COMMENT_KINDS = {
 def _format_comment_header(event: dict) -> str:
     """Header line for a comment event — same as format_event minus snippet and URL."""
     kind = event.get("kind") or ""
-    n = event.get("pr") or event.get("issue")
-    repo = event.get("repo")
-    tag = f"{repo}#{n}" if (n is not None and repo) else (f"#{n}" if n is not None else "")
+    tag = _event_tag(event)
     if kind in ("pr_review_comment", "pr_conversation_comment"):
         author = event.get("author") or "?"
         path = event.get("path")
@@ -946,15 +933,19 @@ def dispatch_events_irc(events: list[dict], irc: IrcClient, default_channel: str
             continue
         targets = _event_channels(ev, default_channel)
         kind = ev.get("kind", "")
+        if kind in MULTILINE_COMMENT_KINDS:
+            header = _format_comment_header(ev)
+            body = ev.get("body") or ""
+            url = ev.get("comment_url") or ev.get("review_url") or ev.get("url", "")
+            fallback = format_event(ev)
+        else:
+            text = format_event(ev)
         for target in dict.fromkeys(targets):  # de-dup, preserve order
             try:
                 if kind in MULTILINE_COMMENT_KINDS:
-                    header = _format_comment_header(ev)
-                    body = ev.get("body") or ""
-                    url = ev.get("comment_url") or ev.get("review_url") or ev.get("url", "")
-                    irc.comment_privmsg(target, header, body, url, format_event(ev))
+                    irc.comment_privmsg(target, header, body, url, fallback)
                 else:
-                    irc.privmsg(target, format_event(ev))
+                    irc.privmsg(target, text)
             except ConnectionError:
                 raise
             except Exception as e:
