@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.20"
+
+      - name: Cache bun deps
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: Install deps
+        run: bun install
+
+      - name: Cache ergo binary
+        uses: actions/cache@v4
+        with:
+          path: var/ergo-bin
+          key: ergo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bin/install-ergo') }}
+
+      - name: Install ergo
+        run: bin/install-ergo
+
+      - name: Test with coverage
+        run: bun test --coverage
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage/lcov.info
+          fail_ci_if_error: false
