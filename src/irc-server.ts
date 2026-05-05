@@ -380,7 +380,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       },
       {
         name: 'channel_list',
-        description: 'List all channels currently joined by this MCP instance. Served from a local cache (no network round-trip); the cache is kept current via JOIN/PART/KICK/QUIT events.',
+        description: 'List all channels currently joined by this MCP instance. Issues a live WHOIS query to the IRC server on every call for an authoritative result.',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -509,7 +509,21 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
         return { content: [{ type: 'text', text: lines.join('\n') }] }
       }
       case 'channel_list': {
-        const channels = [...channelUsers.keys()].sort()
+        const channels = await new Promise<string[] | false>((resolve) => {
+          ircClient.whois(NICK, (event: { channels?: string }) => {
+            if (!event.channels) { resolve([]); return }
+            const list = event.channels
+              .split(' ')
+              .map((ch: string) => ch.replace(/^[@+%&~]+/, ''))
+              .filter(Boolean)
+              .sort()
+            resolve(list)
+          })
+          setTimeout(() => resolve(false), 5000).unref?.()
+        })
+        if (channels === false) {
+          return { content: [{ type: 'text', text: 'whois timed out' }], isError: true }
+        }
         if (channels.length === 0) {
           return { content: [{ type: 'text', text: '(no channels joined)' }] }
         }
