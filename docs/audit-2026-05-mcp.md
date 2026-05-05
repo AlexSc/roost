@@ -26,7 +26,7 @@ splits them: ~480-LOC `src/irc-client.ts` (the full-featured IRC client) +
 ~300-400-LOC `src/mcp.ts` (a thin agent UI that translates between agents
 and the client). Total LOC stays roughly the same; the seam is what changes.
 
-**19 findings** (6 delete, 1 correctness, 12 clarify) plus the rearchitect
+**22 findings** (6 delete, 2 correctness, 14 clarify) plus the rearchitect
 proposal as its own deliverable.
 
 ## Categories
@@ -52,6 +52,10 @@ when it does. Present-tense instances within this scope:
   timers instead of pre-empting. Caller gets "timed out" when the truth is
   "we lost the socket." Same shape: the unexpected condition surfaces as a
   generic timeout.
+- **C2** — `server-time` cap is requested but not validated. If the server
+  doesn't honor it, replay-dedupe (#44) silently breaks — live and
+  chathistory paths produce different timestamps, fingerprints diverge,
+  duplicates flow through. Server contract violated, code proceeds anyway.
 - **L8** — `irc-permission-prompt` falls back to the terminal prompt
   whenever permbot is unreachable, the daemon times out, or the reply is
   unrecognized. That's the architecturally documented design, but for
@@ -70,11 +74,12 @@ when it does. Present-tense instances within this scope:
 | D1 | Collapse `channel_message`/`direct_message` handlers | delete | −15 | medium |
 | L1 | Lift `TOOL_SCHEMAS` to module-level constant | clarify | ~0 | medium |
 | C1 | `socket close` leaves resolvers on 5s timer | correctness | +2 | medium |
+| C2 | `server-time` cap requested but not validated | correctness | +6 | medium |
 | L2 | Three near-parallel emit functions | clarify | −5 | low |
 | L3 | `setTimeout(...).unref?.()` repeated 3x | clarify | −6 | low |
 | D2-D4 | `roost-permbot` dead state (`fileno`, `registered`, dlog gate) | delete | −6 | low |
 
-The remaining 10 are individually small (most −2 to −5 LOC) but consistent.
+The remaining 12 are individually small (most −2 to −5 LOC) but consistent.
 
 ---
 
@@ -331,6 +336,12 @@ spike before the extraction lands; not blocking the audit.
   them queryable from tests, future debug tools, etc. (No new API surface
   for end users — just doesn't disappear into the closure.)
 
+- **Self-event handling consolidates.** The `event.nick === NICK`
+  early-return appears at 8 sites today (irc-server.ts:607, 642, 670,
+  684, 701, 722, 757, 791). After extraction, `RoostIrcClient` either
+  branches once internally or routes self-events to a typed `self.*`
+  event surface; the MCP shim no longer repeats the predicate.
+
 ### Estimated effort
 
 S/M/L per extraction slice. Total: M-large, ~1-2 days mechanical, low
@@ -452,6 +463,43 @@ didn't ack."
 resolve every entry with `false` immediately. The resolver code already
 handles `false` correctly. Two-line fix.
 
+### C2. `server-time` cap requested but not validated — correctness · medium · +6 LOC
+
+**Location:** `src/irc-server.ts:558-575` (multiline check, present) vs
+`src/irc-server.ts:900` (server-time requested) vs `src/irc-server.ts:731,
+795` (consumers).
+
+The startup gate at lines 558-575 hard-fails (`process.exit(1)`) if
+`draft/multiline` isn't enabled. `server-time` — requested in the same
+`requestCap` call at line 900 — gets no parallel check. The replay-dedupe
+fingerprint at line 109 hashes `sender|ts|text`, and the `ts` source
+diverges by codepath:
+
+- live `'message'` handler (line 731):
+  `event.tags?.['time'] ?? new Date().toISOString()` — falls back to
+  client-arrival time if the time tag is missing.
+- chathistory replay (line 795):
+  `c.getServerTime?.()` — reads server-stored time.
+
+If `server-time` is silently disabled, the same message arriving live
+once and via chathistory backfill once produces two different `ts`
+values → two different fingerprints → dedupe fails → duplicate emitted.
+That's the exact #44 shape this code was added to prevent.
+
+Today ergo always honors `server-time` when requested, so this doesn't
+bite. Tomorrow's substrate change (Q6 in the rearchitect proposal) or a
+server-config drift would make it real.
+
+**Fix:** mirror the multiline check.
+```ts
+if (!enabled.includes('server-time')) {
+  process.stderr.write(
+    `roost-irc[${NICK}]: server-time cap NOT enabled — replay-dedupe (#44) would fail; exiting\n`,
+  )
+  process.exit(1)
+}
+```
+
 ### L5. `userlist` handler's `set.add(NICK)` is defensive-for-impossible — clarify · low · −1 LOC
 
 **Location:** `src/irc-server.ts:631`.
@@ -508,6 +556,18 @@ Edge of correctness — the agents acting on these notifications today
 don't care which path we pick, but the truthfulness gap will eventually
 matter.
 
+The same arbitrary anchoring leaks into the `unread` and `history` Maps:
+those key on `event.target` (or sender nick for DMs), and the nick
+handler only renames in `channelUsers`. If @alice DMs us then renames to
+@alex: `channel_history alice` returns the past DMs, `channel_history
+alex` returns empty, `channel_who` shows `alex`, `unread` is keyed under
+`alice`. All three Maps drift in different directions on every nick
+change. Same shape as the membership-event anchor problem — nick-change
+is a global event that the bookkeeping treats as scoped — and the fix
+covers both: rename the nick in *every* Map keyed on it, then either
+emit per-channel membership events or one global event with `channel:
+''`.
+
 ### L7. `mcp.notification(...).catch(() => {})` swallows silently — clarify · low · +2 LOC
 
 **Location:** `src/irc-server.ts:217`.
@@ -529,6 +589,67 @@ mcp.notification({...}).catch((err) => {
   }
 })
 ```
+
+### L13. Unread-suffix is an undocumented contract — clarify · low · ~0 LOC
+
+**Location:** `src/irc-server.ts:419-426` (channel_message),
+`:432-439` (direct_message), `:530-534` (channel_list);
+`unreadSuffix()` at `:98-101`; `emitUnreadSummary` at `:823-834`.
+
+`unread.set` happens silently inside `emitChannelEvent` (lines 227-229)
+on every non-historical inbound message. The unread *list* surfaces in
+the agent's view at four sites:
+
+- `channel_message` result trailer
+- `direct_message` result trailer
+- `channel_list` output (per-channel unread inline)
+- `emitUnreadSummary` (SIGUSR2 from PostCompact hook)
+
+None of these sites mention unread in their tool schema description
+(lines 300-402). The MCP `instructions` field (line 296) names the
+`event=unread-summary` event but not the per-tool suffix behavior.
+Agents only learn the "after sending, you also get a list of channels
+with unread activity" contract by observation. That's a meaningful
+agent-DX gap: the suffix is a deliberate nudge ("hey, while you're at
+it, check #foo too"), but it's invisible until the agent encounters it.
+
+**Fix shape (two valid options):**
+
+1. **Document it.** Add an explicit note to each tool's `description`
+   mentioning the unread-suffix behavior; expand the `instructions`
+   field to cover the per-tool suffix in addition to the SIGUSR2 event.
+2. **Scope it down.** Drop the suffix from per-tool results entirely;
+   rely on SIGUSR2 + a dedicated `unread_list` MCP tool. Removes the
+   cross-cutting bolt-on; agents query unread when they want to.
+
+Either way, "documented in zero places, surfaced in three" is the gap.
+
+### L14. Channel-name case-handling is inconsistent — clarify · low · ~0 LOC
+
+**Location:** `src/irc-server.ts:442` (channel_join lowercases on entry),
+`:462` (channel_leave lowercases on entry) vs `:728, 733-734` (history
+and emit-side use `event.target` directly, server-canonical case).
+
+`channelUsers` keys are lowercased at the boundary on join/leave.
+`history` and `unread` Maps key on `event.target` directly — whatever
+case the server replies with. On ergo today, channels are normalized
+lowercase server-side so the inconsistency is invisible. On any IRC
+server that preserves mixed-case (some bouncers, some non-conformant
+servers), `channelUsers.has('#FOO')` (lowercased to `#foo`) and
+`history.get('#FOO')` would disagree — `channel_who #FOO` and
+`channel_history #FOO` could give contradictory answers about whether
+we have any data for that channel.
+
+**Fix:** normalize at one boundary. Either lowercase every channel-name
+key on insert and every lookup, or accept canonical-case from the IRC
+layer and use it everywhere. Best done as part of the rearchitect —
+`RoostIrcClient` becomes the canonicalizer; the MCP shim trusts what
+it returns.
+
+Materially related to Q6 (substrate question) in the rearchitect
+proposal: if `irc-framework` is replaced or wrapped, the new substrate
+may have different case-canonicalization rules. The current code's
+brittleness is what makes that swap hard.
 
 ---
 
