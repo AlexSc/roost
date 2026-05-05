@@ -1,8 +1,7 @@
-# Roost simplify pass — MCP/IRC depth audit (May 2026)
+# Roost simplify pass — MCP/IRC layer (May 2026)
 
 Audit of the MCP server, IRC plumbing, perm-irc layer, and their test
-helpers. Originally part of #64; the orchestrator-side findings split
-to a separate PR against #5.
+helpers.
 
 **Scope:** ~1772 LOC across 9 files
 
@@ -18,20 +17,17 @@ to a separate PR against #5.
 | `bin/irc-permission-prompt` | 262 |
 | `bin/roost-permbot` | 318 |
 
-**Headline:** the original 5-finding pass on `src/irc-server.ts` framed it as
-"well-factored." That framing was wrong. The file has a tidy surface but
-mixes two distinct concerns — IRC client semantics and MCP server plumbing
-— in one 780-line closure. With the right lens (see [Rearchitect
-proposal](#rearchitect-proposal-ircclient-extraction)), the MCP shim should
-be ~300-400 LOC of mostly tool dispatch, and the IRC client should be its
-own ~480-LOC file. Total LOC is roughly the same; the seam is what changes.
+**Headline:** the codebase has three layers that should be three files —
+the IRC protocol layer, a fully-featured IRC client (almost weechat-minus-TUI),
+and an MCP UI for agents to interact with that client. Today layers 2 and 3
+are mashed into one 780-line closure in `src/irc-server.ts`. The
+[Rearchitect proposal](#rearchitect-proposal-ircclient-extraction) below
+splits them: ~480-LOC `src/irc-client.ts` (the full-featured IRC client) +
+~300-400-LOC `src/mcp.ts` (a thin agent UI that translates between agents
+and the client). Total LOC stays roughly the same; the seam is what changes.
 
-This pass: **19 findings** (6 delete, 1 correctness, 12 clarify) plus the
-rearchitect proposal as its own deliverable. Up from 10 in the original
-scope-flat first pass — the lens shift surfaced 5 new findings on
-`src/irc-server.ts` (C1, L4, L5, L6, L7) that the "this looks
-well-factored" framing missed, plus 4 on neighboring files in scope (L8,
-L9, L10, L11).
+**19 findings** (6 delete, 1 correctness, 12 clarify) plus the rearchitect
+proposal as its own deliverable.
 
 ## Categories
 
@@ -42,17 +38,15 @@ L9, L10, L11).
   abstractions, or repeats a shape often enough that extraction reads better.
 - **correctness** — live latent bugs, races, swallowed signals.
 
-When ambiguous between delete and clarify I preferred delete. (Lesson from
-the first pass: under-classified deletes initially, then over-corrected on
-one — `pollUntilIrcReady`'s "not ready" filter was *intentional* defensive
-code per its JSDoc. Now treating source comments as evidence, not noise.
-See L12.)
+When ambiguous between delete and clarify I preferred delete.
 
-## Meta-finding: silent fall-through, again
+## Meta-finding: silent fall-through
 
-The previous audit pass surfaced this pattern across closed issues
-#87/#92/#97/#100/#106. Within this scope (MCP/IRC + perm-irc), present-tense
-instances:
+A pattern that recurs across closed bugs #87/#92/#97/#100: code takes an
+unrecognized input, a stale cache, or an unexpected branch and proceeds as
+if everything is fine. Each fix was small; the shape kept reappearing
+because nothing in the codebase makes "this case shouldn't happen" loud
+when it does. Present-tense instances within this scope:
 
 - **C1** — `socket close` leaves pending join/part resolvers on their 5s
   timers instead of pre-empting. Caller gets "timed out" when the truth is
@@ -60,10 +54,10 @@ instances:
   generic timeout.
 - **L8** — `irc-permission-prompt` falls back to the terminal prompt
   whenever permbot is unreachable, the daemon times out, or the reply is
-  unrecognized. That's the architecturally documented design — but it's
-  the same shape that made #90 a phantom-bug: under unattended worker
-  spawn, "fall back to terminal" means "block forever, silently." The
-  fix shape varies (this one's nontrivial) but flagging it here.
+  unrecognized. That's the architecturally documented design, but for
+  unattended worker spawns (the common case) "fall back to terminal"
+  means "block forever, silently — no human is at that terminal." Fix
+  shape varies and is nontrivial; flagging it here.
 - **L4** — `multilineMaxLines` cap parser silently `continue`s on malformed
   values. Server contract says max-lines is a positive int; if it isn't,
   we keep the placeholder. Won't bite today; flagging the shape.
@@ -86,10 +80,22 @@ The remaining 10 are individually small (most −2 to −5 LOC) but consistent.
 
 ## Rearchitect proposal: IrcClient extraction
 
-The single biggest finding from re-reading `src/irc-server.ts` with the
-"what if we built this as a JS IRC client first, MCP shim second?" lens.
-Treated as a separate deliverable from the per-finding list because acting
-on it subsumes several of the findings.
+The single biggest finding in this audit. Treated as a separate
+deliverable from the per-finding list because acting on it subsumes
+several of the findings.
+
+The mental model that drives the proposal — three layers:
+
+- **The IRC protocol layer** — wire format, batches, caps. Owned by the
+  underlying library (today `irc-framework`).
+- **An IRC client we expect to be fairly full-featured** — almost akin
+  to weechat-minus-TUI. Owns history, users, replay-dedupe, multiline
+  assembly, unread tracking, presentation state.
+- **An MCP UI for agents** — translates between agents and the IRC
+  client. Thin and focused.
+
+Today layers 2 and 3 are mashed into one closure. The split below makes
+each its own file with the boundary the layering implies.
 
 **Scope note:** this proposal *is* the deliverable. Acting on it is
 per-slice execution work — not an alpha gate, not bundled with this PR.
@@ -124,16 +130,17 @@ A reader trying to add a new MCP tool today has to:
 
 ### Proposed split
 
-Three files (current `src/irc-server.ts` becomes the MCP shim):
+Three source files, mapping directly to the three layers above:
 
-| Proposed file | Responsibility | Est. LOC |
-|---|---|---|
-| `src/irc-client.ts` *(new)* | `RoostIrcClient` class — wraps `irc-framework`, owns IRC state, exposes typed methods + typed event surface | ~480 |
-| `src/irc-server.ts` *(rewritten)* | MCP shim — declares tools, dispatches to `RoostIrcClient`, bridges client events to `mcp.notification` | ~300-400 |
-| `src/irc-lib.ts` *(unchanged)* | pure functions: `splitLineForMultiline`, `findNaturalBoundary`, `newBatchId`, `reassembleMultilineBatch` | 74 |
+| Proposed file | Layer | Responsibility | Est. LOC |
+|---|---|---|---|
+| `src/irc-client.ts` *(new)* | full-featured client | `RoostIrcClient` class — wraps `irc-framework`, owns history, users, fingerprints, unread, multiline assembly. Typed methods + typed event surface. | ~480 |
+| `src/mcp.ts` *(replaces `src/irc-server.ts`)* | MCP UI | Declares tools, dispatches to `RoostIrcClient`, bridges client events to `mcp.notification`. | ~300-400 |
+| `src/irc-lib.ts` *(unchanged)* | protocol helpers | Pure functions: `splitLineForMultiline`, `findNaturalBoundary`, `newBatchId`, `reassembleMultilineBatch`. | 74 |
 
-`src/constants.ts` (3 lines) stays. `bin/roost-irc-server` (3 lines) stays
-as-is.
+`src/constants.ts` (3 lines) stays. `bin/roost-irc-server` (the 3-line
+launcher) updates to point at `src/mcp.ts`; `.mcp.json` references the
+launcher by name so no consumer-side change.
 
 ### Proposed `RoostIrcClient` interface
 
@@ -152,6 +159,8 @@ export interface RoostIrcClient {
   // State queries
   getHistory(key: string, limit?: number): IrcMessage[]
   getUsers(channel: string): string[]
+  getUnread(): Map<string, UnreadInfo>
+  ackUnread(key: string): void
 
   // Replay-dedupe (PreCompact handler)
   clearDedupeCache(): void
@@ -163,8 +172,8 @@ export interface RoostIrcClient {
 }
 ```
 
-`unread` tracking and `receiveSeq` stay in the MCP shim — see Open
-Questions.
+`receiveSeq` stays in the MCP shim (it numbers MCP notifications, not IRC
+events). See Open Questions.
 
 ### Move table — every closure binding accounted for
 
@@ -182,7 +191,7 @@ it lands; "Note" column flags subtleties or open questions.
 | 4 | irc-server.ts:67 | `part_resolvers` | → IrcClient internal | same |
 | 5 | irc-server.ts:72 | `multilineMaxLines` | → IrcClient internal | derived from cap negotiation |
 | 6 | irc-server.ts:76 | `history` Map | → IrcClient internal | exposed via `getHistory(key, limit)` |
-| 7 | irc-server.ts:89 | `unread` Map | **stays in MCP shim** | open Q below — could go either way |
+| 7 | irc-server.ts:89 | `unread` Map | → IrcClient internal | exposed via `getUnread()` / `ackUnread()` (see Q1) |
 | 8 | irc-server.ts:107 | `seenFingerprints` Map | → IrcClient internal | exposed via `clearDedupeCache()` |
 | 9 | irc-server.ts:138 | `receiveSeq` | **stays in MCP shim** | numbers MCP notifications, not IRC events |
 | 10 | irc-server.ts:149 | `channelUsers` Map | → IrcClient internal | exposed via `getUsers(channel)` |
@@ -192,7 +201,7 @@ it lands; "Note" column flags subtleties or open questions.
 | # | Today's location | Symbol | Verdict | Note |
 |---|---|---|---|---|
 | 11 | irc-server.ts:77-82 | `pushHistory(key, msg)` | → IrcClient private | mutates IRC state |
-| 12 | irc-server.ts:91-96 | `formatUnreadLine(...)` | → MCP shim helper | presentation, not IRC |
+| 12 | irc-server.ts:91-96 | `formatUnreadLine(...)` | → MCP shim helper | translates client's raw UnreadInfo → display string |
 | 13 | irc-server.ts:98-101 | `unreadSuffix()` | → MCP shim helper | composed with formatUnreadLine |
 | 14 | irc-server.ts:109 | `msgFingerprint(msg)` | → IrcClient private | dedupe key |
 | 15 | irc-server.ts:112-122 | `addFingerprint(msg)` | → IrcClient private | mutates seenFingerprints |
@@ -200,10 +209,10 @@ it lands; "Note" column flags subtleties or open questions.
 | 17 | irc-server.ts:150-157 | `ensureChannelSet(channel)` | → IrcClient private | mutates channelUsers |
 | 18 | irc-server.ts:159-210 | `sendMultiline(target, text)` | → IrcClient public method (`say`) | renamed |
 | 19 | irc-server.ts:212-218 | `pushNotification(content, meta)` | → MCP shim helper | calls mcp.notification |
-| 20 | irc-server.ts:221-249 | `emitChannelEvent(msg, extras)` | **splits**: IrcClient emits typed `message` event; MCP shim subscriber calls pushHistory→addFingerprint side-effects move to IrcClient, unread+pushNotification stay in shim | the conflated case from L2 |
+| 20 | irc-server.ts:221-249 | `emitChannelEvent(msg, extras)` | **splits**: IrcClient applies pushHistory + addFingerprint + unread bookkeeping internally, then emits typed `message` event; MCP shim subscriber calls pushNotification | the conflated case from L2 |
 | 21 | irc-server.ts:255-277 | `emitMembershipEvent(...)` | **splits**: IrcClient emits typed `membership` event; MCP shim subscriber formats summary + pushNotification | same shape |
 | 22 | irc-server.ts:281-285 | `emitSystemEvent(...)` | **splits**: IrcClient emits typed `system` event; MCP shim formats + pushNotification | same shape |
-| 23 | irc-server.ts:823-834 | `emitUnreadSummary` | → MCP shim method | uses `unread` (which stays in shim); SIGUSR2 wires to it |
+| 23 | irc-server.ts:823-834 | `emitUnreadSummary` | → MCP shim method | queries `client.getUnread()`, formats, pushes notification; SIGUSR2 wires to it |
 
 #### MCP server pieces
 
@@ -234,23 +243,22 @@ it lands; "Note" column flags subtleties or open questions.
 
 | # | Today's location | Symbol | Verdict |
 |---|---|---|---|
-| 39 | irc-server.ts:836 | `{ server, clearDedupeCache, emitUnreadSummary }` | shape changes — entrypoint constructs IrcClient, then MCP shim takes the client; `clearDedupeCache` becomes a method on IrcClient, `emitUnreadSummary` stays MCP-side |
+| 39 | irc-server.ts:836 | `{ server, clearDedupeCache, emitUnreadSummary }` | shape changes — entrypoint constructs `RoostIrcClient`, then `createMcpServer` takes the client; `clearDedupeCache` becomes a method on the client; `emitUnreadSummary` stays MCP-side and queries the client |
 
 ### Open questions
 
-Concrete decisions the implementer would have to make. Not faking answers.
+Concrete decisions the implementer would have to make. Q1 and Q4 have
+resolved verdicts; Q2/Q3/Q5/Q6 stay open.
 
-**Q1. Where does `unread` live?** Today it's mutated inside
-`emitChannelEvent` (alongside fingerprint addition). Two valid splits:
-
-- **(a)** keep `unread` in the MCP shim. The shim subscribes to client
-  `message` events and updates its own unread map. The MCP shim is the
-  view layer; unread is presentation state.
-- **(b)** move `unread` into the client. Some agent feature (a future
-  status-bar tool, a re-read-on-demand) might want to query unread without
-  going through MCP.
-
-Default to (a) — fewer cross-cutting concerns in the client. Easy to revisit.
+**Q1. Where does `unread` live? — resolved: in `RoostIrcClient`.** Today
+it's mutated inside `emitChannelEvent` alongside fingerprint addition.
+The decision follows from the three-layer model: a fairly full-featured
+IRC client (the weechat-minus-TUI middle layer) owns unread tracking
+because that's IRC-client state, not MCP-presentation state. The MCP
+shim queries via `getUnread()` / `ackUnread()` and formats for the
+notification surface. Knock-on benefit: future non-MCP consumers (a
+status-bar tool, a re-read-on-demand command) can query unread directly
+without going through the MCP layer.
 
 **Q2. Where does `receiveSeq` live?** It numbers `mcp.notification` calls
 to disambiguate same-millisecond timestamps. Pure MCP concern → stays in
@@ -264,8 +272,7 @@ when the orchestrator's TS rewrite (if it ever happens — see Q5) needs the
 same parsing.
 
 **Q4. Does `channelUsers` belong with the IRC client or as a separate
-state module?** Lead-pm's earlier scratch suggested `src/state.ts` for
-shared state. After tracing the references: every read of `channelUsers`
+state module?** After tracing the references: every read of `channelUsers`
 flows through `channel_who` (one MCP tool) and the membership-tracking
 event handlers (all IRC-layer). No external consumer wants this. **Verdict:
 stays inside IrcClient, no `src/state.ts`.** The state-extraction premise
@@ -278,6 +285,26 @@ has its own ~160 LOC in-file IrcClient (see `bin/orchestrator_poll`); the
 JS extraction makes a future TS port cheap, but the decision to do that is
 much bigger than "extract IrcClient." Flagging here so the option is on
 the radar; not arguing for it.
+
+**Q6. Is `irc-framework` the right substrate?** Open research question.
+The library forces `// @ts-expect-error — irc-framework lacks first-class
+type defs` at three sites today (`src/irc-server.ts:32`,
+`test/helpers/peer.ts:1`, `test/helpers/mcp-inprocess.ts:3`). Our
+IRCv3 needs span multiline batches, chathistory, server-time, labeled-
+response, and cap negotiation — most of which we hand-roll on top of the
+library's lower-level event surface (see `'batch end draft/multiline'`
+and `'batch end chathistory'` handlers, the manual cap parser at
+irc-server.ts:561-566, the fingerprint dedupe layered over chathistory
+replay). The question splits two ways:
+- *Can `irc-framework` do more of this lifting natively?* What v3
+  features does it surface as first-class events vs. as raw-line
+  passthrough we currently parse ourselves?
+- *Are there better-typed, more IRCv3-native alternatives?* (e.g.
+  `irc.js`/`irc-message`-family libs, or building directly on
+  `irc-framework`'s lower wire layer with our own typed wrapper.)
+Materially affects the rearchitect: `RoostIrcClient` is the right place
+to either consolidate the substrate work or swap libraries. Worth a
+spike before the extraction lands; not blocking the audit.
 
 ### What this unlocks
 
@@ -333,10 +360,8 @@ a green commit.
 
 ## Findings — `src/irc-server.ts` (911 LOC)
 
-Re-read with the rearchitect lens. Eight findings (vs. five in the first
-pass). Most are subsumed or motivated by the rearchitect proposal —
-flagging them individually so they survive a "we don't have time for the
-extraction" decision.
+Most are motivated by the rearchitect proposal — flagging them individually
+so they survive a "we don't have time for the extraction" decision.
 
 ### D1. `channel_message` and `direct_message` handlers duplicate — delete · medium · −15 LOC
 
@@ -509,9 +534,6 @@ mcp.notification({...}).catch((err) => {
 
 ## Findings — `bin/roost-permbot` (318 LOC)
 
-Three small deletes carried over from the first pass; one new clarify on
-the in-flight protocol shape.
-
 ### D2. `dlog` early-return is dead — delete · low · −2 LOC
 
 **Location:** `bin/roost-permbot:57-58`.
@@ -669,12 +691,6 @@ server side. A wording change to either drift the pair silently —
 **Fix:** export a shared `NOT_READY_SENTINEL` constant from
 `src/irc-server.ts` so server and test reference the same literal.
 
-**Self-correction note:** this was originally classified delete
-(`D12`) as "defensive-for-impossible." Lead-pm flagged that the JSDoc
-explicitly documents the design — the filter defends against tomorrow's
-error paths, not yesterday's. Reclassified to clarify. Lesson preserved
-here: source comments are evidence, not noise.
-
 ---
 
 ## Findings — `bin/roost-irc-server` (3 LOC)
@@ -688,11 +704,11 @@ Skipped — single-purpose PATH-resolvable launcher referenced from
 
 - **`src/constants.ts` ↔ `bin/orchestrator_poll` `MULTILINE_LINE_BYTES`
   duplication**: cross-language constant; comment in `orchestrator_poll`
-  documents the coupling. The orchestrator's findings live in the
-  separate beta PR.
+  documents the coupling. Out of scope: orchestrator code lives outside
+  this audit's MCP/IRC scope.
 - **`bin/orchestrator_poll`'s in-file Python `IrcClient`**: addressed in
-  the rearchitect proposal as "Q5 — out of scope for this audit, candidate
-  for a separate Python→TS migration issue."
+  Q5 of the rearchitect proposal as a separate Python→TS migration
+  decision, out of scope here.
 - **Adding new MCP tools**: orthogonal to this audit.
 
 ---
@@ -700,7 +716,7 @@ Skipped — single-purpose PATH-resolvable launcher referenced from
 ## Pattern issues — what shape enabled them, is it still here?
 
 Per-issue traceback. The recurring shape (silent fall-through) is
-discussed in [Meta-finding](#meta-finding-silent-fall-through-again).
+discussed in [Meta-finding](#meta-finding-silent-fall-through).
 
 - **#87 (permbot reply parser exact-match):** fixed in
   `bin/irc-permission-prompt:251-253` via first-token split. Shape was
@@ -721,10 +737,3 @@ discussed in [Meta-finding](#meta-finding-silent-fall-through-again).
 
 C1, L4, L8 in this audit are present-tense instances of the silent
 fall-through family.
-
-(#90 omitted — closed as "cannot reproduce — suspected fixed upstream"
-per the issue thread; the previous audit pass cited it as still-present,
-which was wrong.)
-
-(#106 was orchestrator/CLI scope and lives in the separate beta PR's
-pattern-issues section.)
