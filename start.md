@@ -56,11 +56,12 @@ To work on an issue:
     - Instruct the agent to present its implementation plan in the channel first and wait for your approval before beginning.
     - Instruct the agent that once it's done it should open a _draft_ pr and post a link in the channel
     - Instruct the agent to prefix its comments on github with its name, [worker-N]
+    - Instruct the agent to defer to you for marking PRs as ready for review, tagging reviewers, and creating followup issues
 5. Once the agent posts its plan, pressure test it. This is where it's cheap to fix issues, take your time on this step. Do not be afraid to go for multiple rounds. At a minimum, ask
   - Does it believably resolve the issue?
   - Does it set the project up for downstream success, or is it a pending footgun?
   - When worker proposes "X is fine for now" and you can already see a real gap, push back before approving the plan
-6. Once the agent posts a draft PR, spawn a reviewer agent and task it with using /simplify, and instructions to post its findings to the PR. The reviewer should be instructed to not make edits. The reviewer should prefix its comment with its name, [reviewer-N]. Even if the work was done with Sonnet, if the PR exceeds approximately 250 lines consider using Opus for review.
+6. Once the agent posts a draft PR, ask the watcher to watch it with `watch pr`. Then spawn a reviewer agent and task it with using /simplify, and instructions to post its findings to the PR. The reviewer should be instructed to not make edits. The reviewer should prefix its comment with its name, [reviewer-N]. Even if the work was done with Sonnet, if the PR exceeds approximately 250 lines consider using Opus for review.
 7. Terminate the reviewer once it is done
 8. Once the worker addresses reviewer findings, **you** (the lead-pm) mark the PR ready and add AlexSc as reviewer:
    - `gh pr ready N --repo OWNER/REPO`
@@ -73,6 +74,7 @@ To work on an issue:
   - Merge the PR using --merge
   - Pull main in the primary repo
   - Clean up the worktree
+  - Unwatch the issue and the PR by dm'ing watcher
 
 Run as many workers as you can.
 
