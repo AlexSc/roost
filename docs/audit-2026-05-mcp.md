@@ -91,6 +91,12 @@ The single biggest finding from re-reading `src/irc-server.ts` with the
 Treated as a separate deliverable from the per-finding list because acting
 on it subsumes several of the findings.
 
+**Scope note:** this proposal *is* the deliverable. Acting on it is
+per-slice execution work — not an alpha gate, not bundled with this PR.
+Severity "high" in the top-wins table reflects "biggest single finding
+in the audit," not "blocker." The slices below can land alpha, beta, or
+never; each is independently green.
+
 ### Current shape
 
 `createMcpServer(ircClient, config)` is a 780-line closure (lines 58-837)
