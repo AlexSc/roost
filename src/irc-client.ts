@@ -23,14 +23,15 @@ export interface MembershipExtras {
   newNick?: string
 }
 
+// camelCase — R2 translates to irc-framework's snake_case fields internally.
 export interface ConnectOpts {
   host: string
   port: number
   nick: string
   username?: string
   gecos?: string
-  auto_reconnect?: boolean
-  auto_reconnect_max_retries?: number
+  autoReconnect?: boolean
+  autoReconnectMaxRetries?: number
 }
 
 export interface RoostIrcClient {
@@ -40,11 +41,11 @@ export interface RoostIrcClient {
   join(channel: string, force?: boolean): Promise<boolean>
   leave(channel: string): Promise<boolean>
   say(target: string, text: string): { chunks: number; mode: 'single' | 'multiline' }
-  whoisChannels(nick?: string): Promise<string[] | false>
+  whoisChannels(): Promise<string[] | false>
 
   getHistory(key: string, limit?: number): IrcMessage[]
   getUsers(channel: string): string[]
-  getUnread(): Map<string, UnreadInfo>
+  getUnread(): ReadonlyMap<string, UnreadInfo>
   ackUnread(key: string): void
 
   clearDedupeCache(): void
