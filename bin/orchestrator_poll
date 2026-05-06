@@ -1045,7 +1045,23 @@ def _run_one_tick_collect(args: argparse.Namespace, config: dict) -> list[dict]:
 # Daemon
 # ---------------------------------------------------------------------------
 
+class _TeeStream:
+    def __init__(self, *streams):
+        self._streams = streams
+    def write(self, s):
+        for stream in self._streams:
+            stream.write(s)
+            stream.flush()
+    def flush(self):
+        for stream in self._streams:
+            stream.flush()
+
+
 def _run_daemon(args: argparse.Namespace) -> int:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    log_fp = open(STATE_DIR / "daemon.log", "a", buffering=1)
+    sys.stderr = _TeeStream(sys.__stderr__, log_fp)
+
     config = load_config()
     irc_cfg = config.get("irc") or {}
     nick = irc_cfg.get("nick")
