@@ -138,7 +138,6 @@ def main() -> None:
 
     # Queue of pending requests (client_sock, request_dict, queued_at)
     queue: "deque[tuple[socket.socket, dict, float]]" = deque()
-    # Currently in flight: InFlight or None
     in_flight: "InFlight | None" = None
     # Map client fd -> partial recv buffer
     client_bufs: "dict[int, bytes]" = {}
