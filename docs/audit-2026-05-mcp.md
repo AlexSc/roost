@@ -1,70 +1,36 @@
 # Roost simplify pass — MCP/IRC layer (May 2026)
 
 Audit of the MCP server, IRC plumbing, perm-irc layer, and their test
-helpers.
+helpers — 9 files, ~1772 LOC; ~half is `src/irc-server.ts` at 911.
 
-**Scope:** ~1772 LOC across 9 files
+**Headline:** three layers should be three files — the IRC protocol
+layer, a full-featured IRC client (almost weechat-minus-TUI), and an
+MCP UI for agents. Today layers 2 and 3 are mashed into one 780-line
+closure in `src/irc-server.ts`. The [Rearchitect
+proposal](#rearchitect-proposal-ircclient-extraction) splits them:
+~480-LOC `src/irc-client.ts` + ~300-400-LOC `src/mcp.ts`. Total LOC
+roughly the same; the seam is what changes.
 
-| File | LOC |
-|---|---|
-| `src/irc-server.ts` | 911 |
-| `src/irc-lib.ts` | 74 |
-| `src/constants.ts` | 3 |
-| `test/helpers/mcp.ts` | 38 |
-| `test/helpers/mcp-core.ts` | 100 |
-| `test/helpers/mcp-inprocess.ts` | 63 |
-| `bin/roost-irc-server` | 3 |
-| `bin/irc-permission-prompt` | 262 |
-| `bin/roost-permbot` | 318 |
-
-**Headline:** the codebase has three layers that should be three files —
-the IRC protocol layer, a fully-featured IRC client (almost weechat-minus-TUI),
-and an MCP UI for agents to interact with that client. Today layers 2 and 3
-are mashed into one 780-line closure in `src/irc-server.ts`. The
-[Rearchitect proposal](#rearchitect-proposal-ircclient-extraction) below
-splits them: ~480-LOC `src/irc-client.ts` (the full-featured IRC client) +
-~300-400-LOC `src/mcp.ts` (a thin agent UI that translates between agents
-and the client). Total LOC stays roughly the same; the seam is what changes.
-
-**22 findings** (6 delete, 2 correctness, 14 clarify) plus the rearchitect
-proposal as its own deliverable.
+**22 findings** (6 delete, 2 correctness, 14 clarify) plus the
+rearchitect proposal as its own deliverable.
 
 ## Categories
 
-- **delete** — dead code, duplicate code, defensive-for-impossible code,
-  speculative options or params with no callers, single-use wrappers that
-  earn their wrapper status only by name.
-- **clarify** — code that stays, but hides the happy path, leaks
-  abstractions, or repeats a shape often enough that extraction reads better.
-- **correctness** — live latent bugs, races, swallowed signals.
-
-When ambiguous between delete and clarify I preferred delete.
+**delete** — dead code, duplicate code, defensive-for-impossible code,
+speculative params with no callers, single-use wrappers earning their
+status only by name. **clarify** — code that stays but hides the happy
+path or repeats a shape often enough that extraction reads better.
+**correctness** — live latent bugs, races, swallowed signals. When
+ambiguous between delete and clarify I preferred delete.
 
 ## Meta-finding: silent fall-through
 
-A pattern that recurs across closed bugs #87/#92/#97/#100: code takes an
-unrecognized input, a stale cache, or an unexpected branch and proceeds as
-if everything is fine. Each fix was small; the shape kept reappearing
-because nothing in the codebase makes "this case shouldn't happen" loud
-when it does. Present-tense instances within this scope:
-
-- **C1** — `socket close` leaves pending join/part resolvers on their 5s
-  timers instead of pre-empting. Caller gets "timed out" when the truth is
-  "we lost the socket." Same shape: the unexpected condition surfaces as a
-  generic timeout.
-- **C2** — `server-time` cap is requested but not validated. If the server
-  doesn't honor it, replay-dedupe (#44) silently breaks — live and
-  chathistory paths produce different timestamps, fingerprints diverge,
-  duplicates flow through. Server contract violated, code proceeds anyway.
-- **L8** — `irc-permission-prompt` falls back to the terminal prompt
-  whenever permbot is unreachable, the daemon times out, or the reply is
-  unrecognized. That's the architecturally documented design, but for
-  unattended worker spawns (the common case) "fall back to terminal"
-  means "block forever, silently — no human is at that terminal." Fix
-  shape varies and is nontrivial; flagging it here.
-- **L4** — `multilineMaxLines` cap parser silently `continue`s on malformed
-  values. Server contract says max-lines is a positive int; if it isn't,
-  we keep the placeholder. Won't bite today; flagging the shape.
+A pattern that recurs across closed bugs #87/#92/#97/#100: code takes
+an unrecognized input, a stale cache, or an unexpected branch and
+proceeds as if everything is fine. Each fix was small; the shape kept
+reappearing because nothing in the codebase makes "this case shouldn't
+happen" loud when it does. Present-tense instances in scope: C1, C2,
+L4, L8 — see the per-finding section.
 
 ## Top wins (read these first)
 
@@ -79,39 +45,28 @@ when it does. Present-tense instances within this scope:
 | L3 | `setTimeout(...).unref?.()` repeated 3x | clarify | −6 | low |
 | D2-D4 | `roost-permbot` dead state (`fileno`, `registered`, dlog gate) | delete | −6 | low |
 
-The remaining 12 are individually small (most −2 to −5 LOC) but consistent.
-
 ---
 
 ## Rearchitect proposal: IrcClient extraction
 
-The single biggest finding in this audit. Treated as a separate
-deliverable from the per-finding list because acting on it subsumes
-several of the findings.
+The mental model — three layers:
 
-The mental model that drives the proposal — three layers:
-
-- **The IRC protocol layer** — wire format, batches, caps. Owned by the
-  underlying library (today `irc-framework`).
-- **An IRC client we expect to be fairly full-featured** — almost akin
-  to weechat-minus-TUI. Owns history, users, replay-dedupe, multiline
-  assembly, unread tracking, presentation state.
-- **An MCP UI for agents** — translates between agents and the IRC
-  client. Thin and focused.
-
-Today layers 2 and 3 are mashed into one closure. The split below makes
-each its own file with the boundary the layering implies.
+- **The IRC protocol layer** — wire format, batches, caps. Owned by
+  the library (today `irc-framework`).
+- **A full-featured IRC client** — almost weechat-minus-TUI. Owns
+  history, users, replay-dedupe, multiline assembly, unread, presentation.
+- **An MCP UI for agents** — translates between agents and the client.
+  Thin.
 
 **Scope note:** this proposal *is* the deliverable. Acting on it is
-per-slice execution work — not an alpha gate, not bundled with this PR.
-Severity "high" in the top-wins table reflects "biggest single finding
-in the audit," not "blocker." The slices below can land alpha, beta, or
-never; each is independently green.
+per-slice execution work — not an alpha gate, not bundled with this
+PR. The slices below can land alpha, beta, or never; each is
+independently green.
 
 ### Current shape
 
-`createMcpServer(ircClient, config)` is a 780-line closure (lines 58-837)
-that does five things at once:
+`createMcpServer(ircClient, config)` is a 780-line closure
+(irc-server.ts:58-837) that does five things at once:
 
 1. Holds IRC client state (history, user sets, fingerprints, resolvers,
    multiline cap, ready flag).
@@ -121,21 +76,13 @@ that does five things at once:
 4. Bridges IRC events to MCP notifications via three emit-helpers.
 5. Does send-side multiline batching.
 
-The seam between "IRC client" and "MCP server" is loose: `createMcpServer`
-takes `ircClient` as an arg, then mutates state that's MCP-internal
-(`unread` tracking, `mcp.notification` calls) inside IRC event handlers.
-The two layers are structurally entangled even though they're conceptually
-independent.
-
-A reader trying to add a new MCP tool today has to:
-- understand which closure variables are IRC state vs MCP state,
-- understand the multiline batching protocol to use `sendMultiline`,
-- understand which IRC events are meant to bridge to notifications and
-  which are internal-only.
+The seam is loose: `createMcpServer` takes `ircClient` as an arg, then
+mutates MCP-internal state (`unread`, `mcp.notification` calls) inside
+IRC event handlers. Layers entangled though conceptually independent.
 
 ### Proposed split
 
-Three source files, mapping directly to the three layers above:
+Three files, mapping to the three layers:
 
 | Proposed file | Layer | Responsibility | Est. LOC |
 |---|---|---|---|
@@ -177,14 +124,7 @@ export interface RoostIrcClient {
 }
 ```
 
-`receiveSeq` stays in the MCP shim (it numbers MCP notifications, not IRC
-events). See Open Questions.
-
 ### Move table — every closure binding accounted for
-
-Comprehensive, not curated. Every `let`/`const` and every IRC event handler
-in `createMcpServer` (lines 58-837) gets a row. "Verdict" column says where
-it lands; "Note" column flags subtleties or open questions.
 
 #### State variables
 
@@ -192,7 +132,7 @@ it lands; "Note" column flags subtleties or open questions.
 |---|---|---|---|---|
 | 1 | irc-server.ts:64 | `irc_ready` | → IrcClient internal | exposed via `isReady()` |
 | 2 | irc-server.ts:65 | `hasRegistered` | → IrcClient internal | drives reconnect-vs-initial-register branching |
-| 3 | irc-server.ts:66 | `join_resolvers` | → IrcClient internal | `join()` returns Promise; resolvers internal |
+| 3 | irc-server.ts:66 | `join_resolvers` | → IrcClient internal | `join()` returns Promise |
 | 4 | irc-server.ts:67 | `part_resolvers` | → IrcClient internal | same |
 | 5 | irc-server.ts:72 | `multilineMaxLines` | → IrcClient internal | derived from cap negotiation |
 | 6 | irc-server.ts:76 | `history` Map | → IrcClient internal | exposed via `getHistory(key, limit)` |
@@ -205,15 +145,15 @@ it lands; "Note" column flags subtleties or open questions.
 
 | # | Today's location | Symbol | Verdict | Note |
 |---|---|---|---|---|
-| 11 | irc-server.ts:77-82 | `pushHistory(key, msg)` | → IrcClient private | mutates IRC state |
+| 11 | irc-server.ts:77-82 | `pushHistory(key, msg)` | → IrcClient private | |
 | 12 | irc-server.ts:91-96 | `formatUnreadLine(...)` | → MCP shim helper | translates client's raw UnreadInfo → display string |
-| 13 | irc-server.ts:98-101 | `unreadSuffix()` | → MCP shim helper | composed with formatUnreadLine |
-| 14 | irc-server.ts:109 | `msgFingerprint(msg)` | → IrcClient private | dedupe key |
-| 15 | irc-server.ts:112-122 | `addFingerprint(msg)` | → IrcClient private | mutates seenFingerprints |
-| 16 | irc-server.ts:124-125 | `hasFingerprint(msg)` | → IrcClient private | reads seenFingerprints |
-| 17 | irc-server.ts:150-157 | `ensureChannelSet(channel)` | → IrcClient private | mutates channelUsers |
+| 13 | irc-server.ts:98-101 | `unreadSuffix()` | → MCP shim helper | |
+| 14 | irc-server.ts:109 | `msgFingerprint(msg)` | → IrcClient private | |
+| 15 | irc-server.ts:112-122 | `addFingerprint(msg)` | → IrcClient private | |
+| 16 | irc-server.ts:124-125 | `hasFingerprint(msg)` | → IrcClient private | |
+| 17 | irc-server.ts:150-157 | `ensureChannelSet(channel)` | → IrcClient private | |
 | 18 | irc-server.ts:159-210 | `sendMultiline(target, text)` | → IrcClient public method (`say`) | renamed |
-| 19 | irc-server.ts:212-218 | `pushNotification(content, meta)` | → MCP shim helper | calls mcp.notification |
+| 19 | irc-server.ts:212-218 | `pushNotification(content, meta)` | → MCP shim helper | |
 | 20 | irc-server.ts:221-249 | `emitChannelEvent(msg, extras)` | **splits**: IrcClient applies pushHistory + addFingerprint + unread bookkeeping internally, then emits typed `message` event; MCP shim subscriber calls pushNotification | the conflated case from L2 |
 | 21 | irc-server.ts:255-277 | `emitMembershipEvent(...)` | **splits**: IrcClient emits typed `membership` event; MCP shim subscriber formats summary + pushNotification | same shape |
 | 22 | irc-server.ts:281-285 | `emitSystemEvent(...)` | **splits**: IrcClient emits typed `system` event; MCP shim formats + pushNotification | same shape |
@@ -252,100 +192,59 @@ it lands; "Note" column flags subtleties or open questions.
 
 ### Open questions
 
-Concrete decisions the implementer would have to make. Q1 and Q4 have
-resolved verdicts; Q2/Q3/Q5/Q6 stay open.
+**Q1. Where does `unread` live? — resolved: in `RoostIrcClient`.** Per
+the three-layer model, unread is IRC-client state, not MCP presentation
+state. MCP shim queries via `getUnread()` / `ackUnread()`. Knock-on:
+future non-MCP consumers can query unread directly.
 
-**Q1. Where does `unread` live? — resolved: in `RoostIrcClient`.** Today
-it's mutated inside `emitChannelEvent` alongside fingerprint addition.
-The decision follows from the three-layer model: a fairly full-featured
-IRC client (the weechat-minus-TUI middle layer) owns unread tracking
-because that's IRC-client state, not MCP-presentation state. The MCP
-shim queries via `getUnread()` / `ackUnread()` and formats for the
-notification surface. Knock-on benefit: future non-MCP consumers (a
-status-bar tool, a re-read-on-demand command) can query unread directly
-without going through the MCP layer.
+**Q2. Where does `receiveSeq` live? — resolved: stays in MCP shim.**
+Numbers `mcp.notification` calls; pure MCP concern.
 
-**Q2. Where does `receiveSeq` live?** It numbers `mcp.notification` calls
-to disambiguate same-millisecond timestamps. Pure MCP concern → stays in
-shim. (No actual ambiguity here, just naming it.)
+**Q3. Should the multiline cap value be a typed object?** Today parsed
+string-split at irc-server.ts:561-566. A `MultilineCapValues` +
+`parseMultilineCap()` is a trivial extraction; helps if Q5 lands. Open.
 
-**Q3. Should the multiline cap value be a typed object?** Today it's
-parsed string-split style at irc-server.ts:561-566. Could be a small
-`MultilineCapValues = { maxBytes: number; maxLines: number }` type with
-a `parseMultilineCap(value: string)` function. Trivial extraction; helps
-when the orchestrator's TS rewrite (if it ever happens — see Q5) needs the
-same parsing.
+**Q4. Does `channelUsers` belong with IRC client or in a separate state
+module? — resolved: stays inside IrcClient.** Every read flows through
+`channel_who` or the membership handlers; no external consumer.
 
-**Q4. Does `channelUsers` belong with the IRC client or as a separate
-state module?** After tracing the references: every read of `channelUsers`
-flows through `channel_who` (one MCP tool) and the membership-tracking
-event handlers (all IRC-layer). No external consumer wants this. **Verdict:
-stays inside IrcClient, no `src/state.ts`.** The state-extraction premise
-was reasonable a priori; the actual references didn't justify it.
-
-**Q5. Should we consider migrating the orchestrator from Python to TS so
-both processes share the same `RoostIrcClient`?** Plausible but **out of
-scope for this audit** and warrants its own issue. The Python orchestrator
-has its own ~160 LOC in-file IrcClient (see `bin/orchestrator_poll`); the
-JS extraction makes a future TS port cheap, but the decision to do that is
-much bigger than "extract IrcClient." Flagging here so the option is on
-the radar; not arguing for it.
+**Q5. Should we migrate the orchestrator from Python to TS so both
+processes share `RoostIrcClient`?** Plausible but **out of scope** —
+warrants its own issue. The Python orchestrator has its own ~160 LOC
+in-file IrcClient (`bin/orchestrator_poll`); the JS extraction makes a
+future TS port cheap, but the decision is much bigger than "extract
+IrcClient." Flagging here; not arguing for it.
 
 **Q6. Is `irc-framework` the right substrate?** Open research question.
 The library forces `// @ts-expect-error — irc-framework lacks first-class
-type defs` at three sites today (`src/irc-server.ts:32`,
-`test/helpers/peer.ts:1`, `test/helpers/mcp-inprocess.ts:3`). Our
-IRCv3 needs span multiline batches, chathistory, server-time, labeled-
-response, and cap negotiation — most of which we hand-roll on top of the
-library's lower-level event surface (see `'batch end draft/multiline'`
-and `'batch end chathistory'` handlers, the manual cap parser at
+type defs` at three sites (`src/irc-server.ts:32`,
+`test/helpers/peer.ts:1`, `test/helpers/mcp-inprocess.ts:3`). Our IRCv3
+needs span multiline batches, chathistory, server-time, labeled-response,
+and cap negotiation — most of which we hand-roll on top of the library's
+lower-level event surface (see `'batch end draft/multiline'` /
+`'batch end chathistory'` handlers, the manual cap parser at
 irc-server.ts:561-566, the fingerprint dedupe layered over chathistory
-replay). The question splits two ways:
-- *Can `irc-framework` do more of this lifting natively?* What v3
-  features does it surface as first-class events vs. as raw-line
-  passthrough we currently parse ourselves?
-- *Are there better-typed, more IRCv3-native alternatives?* (e.g.
-  `irc.js`/`irc-message`-family libs, or building directly on
-  `irc-framework`'s lower wire layer with our own typed wrapper.)
-Materially affects the rearchitect: `RoostIrcClient` is the right place
-to either consolidate the substrate work or swap libraries. Worth a
-spike before the extraction lands; not blocking the audit.
+replay). Two sub-questions: *can `irc-framework` do more of this lifting
+natively?* and *are there better-typed, more IRCv3-native alternatives?*
+(e.g. `irc.js`/`irc-message`-family, or building on `irc-framework`'s
+lower wire layer with our own typed wrapper). Materially affects the
+rearchitect — `RoostIrcClient` is the right place to consolidate or
+swap. Worth a spike before extraction lands; not blocking the audit.
 
 ### What this unlocks
 
-- **Typed IRC surface.** The `// @ts-expect-error — irc-framework lacks
-  first-class type defs` annotation appears in three files today
-  (`src/irc-server.ts:32`, `test/helpers/peer.ts:1`,
-  `test/helpers/mcp-inprocess.ts:3`). After extraction, the typed surface
-  lives in `src/irc-client.ts`; the suppression appears once, inside
-  `RoostIrcClient`'s implementation.
-
-- **MCP shim becomes scannable.** Adding a new MCP tool today requires
-  understanding the closure's IRC state. After the split: add a method to
-  `RoostIrcClient`, add a 3-line wrapper to the MCP `CallTool` switch,
-  add tests. No closure spelunking.
-
-- **Direct `RoostIrcClient` testability.** `test/helpers/mcp-inprocess.ts`
-  today does `createMcpServer(ircClient, config)` and tests through MCP
-  tool calls. Post-split: tests can talk to `RoostIrcClient` directly for
-  IRC-level assertions, and through the MCP shim only for tool-surface
-  assertions. Each test asserts at the right layer.
-
+- **Typed IRC surface.** Three `// @ts-expect-error` sites today; after
+  extraction, the suppression appears once inside `RoostIrcClient`.
+- **MCP shim becomes scannable.** Adding a tool = method on client + 3-line
+  wrapper in the switch + tests. No closure spelunking.
+- **Direct `RoostIrcClient` testability.** Tests can assert at IRC-level
+  directly; MCP shim tested only for the tool surface.
 - **Replay-dedupe and history become inspectable.** Closure-scoped Maps
-  are inaccessible from outside today. Methods on `RoostIrcClient` make
-  them queryable from tests, future debug tools, etc. (No new API surface
-  for end users — just doesn't disappear into the closure.)
-
+  become methods — queryable from tests / debug tools.
 - **Self-event handling consolidates.** The `event.nick === NICK`
-  early-return appears at 8 sites today (irc-server.ts:607, 642, 670,
-  684, 701, 722, 757, 791). After extraction, `RoostIrcClient` either
-  branches once internally or routes self-events to a typed `self.*`
-  event surface; the MCP shim no longer repeats the predicate.
+  early-return at 8 sites collapses to one branch or a typed `self.*` surface.
 
 ### Estimated effort
-
-S/M/L per extraction slice. Total: M-large, ~1-2 days mechanical, low
-risk.
 
 | Slice | Effort | Risk | Notes |
 |---|---|---|---|
@@ -360,347 +259,167 @@ risk.
 | Rewrite MCP shim's CallTool switch as 1-3 line wrappers | M | low | |
 | Subscribe MCP shim to `RoostIrcClient` events; build typed `MessageMeta`/`MembershipExtras` | M | medium | the bridging is where bugs hide |
 | Update `test/helpers/mcp-inprocess.ts` to construct `RoostIrcClient` directly | S | low |  |
-| Run tests, hunt for closure-leak bugs (anything that accidentally captured a non-stable reference) | M | medium | |
-
-Tests-first migration possible: write the interface, make the existing
-`createMcpServer` *implement* `RoostIrcClient` by adding methods that read
-its closure state, then move state out one slice at a time. Each slice is
-a green commit.
+| Run tests, hunt for closure-leak bugs | M | medium | |
 
 ---
 
 ## Findings — `src/irc-server.ts` (911 LOC)
 
-Most are motivated by the rearchitect proposal — flagging them individually
-so they survive a "we don't have time for the extraction" decision.
-
 ### D1. `channel_message` and `direct_message` handlers duplicate — delete · medium · −15 LOC
 
-**Location:** `src/irc-server.ts:415-440`.
+`src/irc-server.ts:415-440`. Both call `sendMultiline`, `unread.delete`,
+build the same note/preview/suffix. Only the target arg name and prefix
+string differ.
 
-Both call `sendMultiline`, both `unread.delete(target)`, both build the
-same `note` / `preview` / `suffix` text. Differences: target arg name
-(`channel` vs `nick`), prefix string (`sent to` vs `DM to`).
-
-**Fix:** extract `formatSendResult(target, text, prefix)` shared by both.
-Becomes trivially short post-rearchitect (where the two cases are
-1-line wrappers around `client.say()`).
+**Fix:** subsumed by R (the two cases become 1-line wrappers around
+`client.say()`); if R doesn't land, extract `formatSendResult(target,
+text, prefix)` shared by both.
 
 ### L1. `TOOL_SCHEMAS` lifted to module-level constant — clarify · medium · ~0 LOC
 
-**Location:** `src/irc-server.ts:300-402`.
+`src/irc-server.ts:300-402`. 103 lines of static tool-schema JSON
+declared inline in the ListTools handler — ~13% of the function body
+referencing zero closure state.
 
-103 lines of static tool-schema JSON declared inline in the
-`ListToolsRequestSchema` handler inside `createMcpServer`. None of it
-references closure state. ~13% of the function body is JSON literal.
-
-**Fix:** lift to `const TOOL_SCHEMAS: Tool[] = [...]` at module scope.
-Handler becomes `async () => ({ tools: TOOL_SCHEMAS })`. Stronger after
-rearchitect — `TOOL_SCHEMAS` lives in the MCP shim file, where it
-visually centers the file's purpose.
+**Fix:** lift to `const TOOL_SCHEMAS: Tool[] = [...]` at module scope;
+handler becomes `async () => ({ tools: TOOL_SCHEMAS })`.
 
 ### L2. Three near-parallel emit functions — clarify · low · −5 LOC
 
-**Location:** `src/irc-server.ts:221-285` — `emitChannelEvent`,
-`emitMembershipEvent`, `emitSystemEvent`.
+`src/irc-server.ts:221-285` — `emitChannelEvent`, `emitMembershipEvent`,
+`emitSystemEvent` each build a meta record (channel/sender/isDirect/ts),
+call `pushNotification`, write a stderr trace.
 
-Each builds a meta record (channel/sender/isDirect/ts), calls
-`pushNotification`, writes a stderr trace. The bodies are different but
-the shape is consistent.
-
-**Fix (interim):** extract `buildBaseMeta(channel, sender, ts)` helper.
-Saves ~5 LOC, makes the shared shape visible.
-
-**Fix (rearchitect):** subsumed. The three emits become three event-bridge
-subscribers in the MCP shim, each ~6 lines, each declarative.
+**Fix:** subsumed by R (becomes three event-bridge subscribers in the
+MCP shim); if R doesn't land, extract a `buildBaseMeta` helper.
 
 ### L3. `setTimeout(...).unref?.()` idiom repeated 3x — clarify · low · −6 LOC
 
-**Location:** `src/irc-server.ts:452, 468, 522`.
+`src/irc-server.ts:452, 468, 522`. Each Promise-with-timeout repeats
+`setTimeout(() => resolve(false), 5000).unref?.()`.
 
-Each Promise-with-timeout repeats
-`setTimeout(() => resolve(false), 5000).unref?.()`. The `.unref?.()` is
-to keep the timer from holding the event loop open; the `?` chain handles
-environments where Bun/Node return non-Timer (browser-shape) timer ids.
-
-**Fix:** small `withTimeout<T>(operation: (resolve: ...) => void, ms: number)`
-helper. Subsumed by rearchitect — `join`/`leave` end up in
-`RoostIrcClient` as Promise-returning methods with the timeout internalized.
+**Fix:** subsumed by R (`join`/`leave` become Promise-returning methods
+on `RoostIrcClient` with timeout internalized); if R doesn't land,
+extract a `withTimeout` helper.
 
 ### L4. `multilineMaxLines` cap parser silently `continue`s on bad values — clarify · low · ~0 LOC
 
-**Location:** `src/irc-server.ts:561-566`.
+`src/irc-server.ts:561-566`. The parser `continue`s on non-finite or
+non-positive values, silently keeping the `100` placeholder. Won't bite
+today (we control both ends via ergo) but it's the silent-fall-through
+shape.
 
-```ts
-for (const kv of val.split(',')) {
-  const [k, v] = kv.split('=')
-  const n = Number(v)
-  if (!Number.isFinite(n) || n <= 0) continue
-  if (k === 'max-lines') multilineMaxLines = n
-}
-```
-
-If the server sends `draft/multiline=max-lines=0` or `=abc`, we silently
-keep the placeholder `100`. That works (sends still go through) but is the
-silent-fall-through shape. Won't bite today (we control both ends via
-ergo), but the parser is brittle.
-
-**Fix:** log a stderr warning when the value is malformed; or replace with
-a typed parser (Q3 in the rearchitect proposal).
+**Fix:** stderr warn on malformed values, or replace with a typed parser
+(Q3).
 
 ### C1. `socket close` leaves pending join/part resolvers on 5s timer — correctness · medium · +2 LOC
 
-**Location:** `src/irc-server.ts:813-817` (the `'socket close'` handler);
-resolvers at lines 446-453 (join), 463-468 (leave).
+`src/irc-server.ts:813-817` (`'socket close'` handler) + lines 446-453
+(join), 463-468 (leave). When the socket drops mid-`channel_join`, the
+resolver stays alive until its 5s timer fires; the caller gets
+`'join #foo timed out'` instead of "we lost the connection."
 
-When the IRC socket drops mid-`channel_join`, the resolver registered at
-`join_resolvers.get(channel)` stays alive. The 5s `setTimeout` eventually
-fires and the caller gets `{ isError: true, text: 'join #foo timed out' }`.
-That's misleading: the truth is "we lost the connection," not "the server
-didn't ack."
-
-**Fix:** in the `socket close` handler, walk both resolver maps and
-resolve every entry with `false` immediately. The resolver code already
-handles `false` correctly. Two-line fix.
+**Fix:** in `'socket close'`, walk both resolver maps and resolve each
+entry with `false` immediately. Resolver code already handles `false`.
 
 ### C2. `server-time` cap requested but not validated — correctness · medium · +6 LOC
 
-**Location:** `src/irc-server.ts:558-575` (multiline check, present) vs
-`src/irc-server.ts:900` (server-time requested) vs `src/irc-server.ts:731,
-795` (consumers).
+`src/irc-server.ts:558-575` (multiline gate, present) vs `:900`
+(server-time requested, unchecked) vs `:731, 795` (consumers). Live
+`'message'` falls back to `new Date().toISOString()` when the time tag
+is missing; chathistory replay reads `c.getServerTime?.()`. If
+`server-time` is silently disabled, the same message arriving live and
+via chathistory backfill yields two `ts` values → fingerprint mismatch
+→ dedupe fails → duplicate emitted. Exact #44 shape.
 
-The startup gate at lines 558-575 hard-fails (`process.exit(1)`) if
-`draft/multiline` isn't enabled. `server-time` — requested in the same
-`requestCap` call at line 900 — gets no parallel check. The replay-dedupe
-fingerprint at line 109 hashes `sender|ts|text`, and the `ts` source
-diverges by codepath:
-
-- live `'message'` handler (line 731):
-  `event.tags?.['time'] ?? new Date().toISOString()` — falls back to
-  client-arrival time if the time tag is missing.
-- chathistory replay (line 795):
-  `c.getServerTime?.()` — reads server-stored time.
-
-If `server-time` is silently disabled, the same message arriving live
-once and via chathistory backfill once produces two different `ts`
-values → two different fingerprints → dedupe fails → duplicate emitted.
-That's the exact #44 shape this code was added to prevent.
-
-Today ergo always honors `server-time` when requested, so this doesn't
-bite. Tomorrow's substrate change (Q6 in the rearchitect proposal) or a
-server-config drift would make it real.
-
-**Fix:** mirror the multiline check.
-```ts
-if (!enabled.includes('server-time')) {
-  process.stderr.write(
-    `roost-irc[${NICK}]: server-time cap NOT enabled — replay-dedupe (#44) would fail; exiting\n`,
-  )
-  process.exit(1)
-}
-```
+**Fix:** mirror the multiline gate — add `if (!enabled.includes('server-time'))
+{ stderr; process.exit(1) }`.
 
 ### L5. `userlist` handler's `set.add(NICK)` is defensive-for-impossible — clarify · low · −1 LOC
 
-**Location:** `src/irc-server.ts:631`.
+`src/irc-server.ts:631`. `userlist` fires post-`RPL_NAMREPLY/ENDOFNAMES`,
+which only fires after our JOIN succeeds — the server *guarantees*
+our nick is in `event.users`. The `set.add(NICK)` defends against a
+contradiction.
 
-```ts
-const set = new Set<string>()
-for (const u of event.users ?? []) {
-  if (u?.nick) set.add(u.nick)
-}
-set.add(NICK) // we're definitely there
-```
-
-The userlist event fires post-`RPL_NAMREPLY/ENDOFNAMES`, which is sent
-after our JOIN succeeds. Server-side membership *guarantees* our nick is
-in `event.users`. The `set.add(NICK)` defends against the server omitting
-us from a reply about a channel we're confirmed to be in.
-
-(There's a contemporaneous comment at lines 622-623 that calls this out
-but doesn't mark it obsolete.)
-
-**Fix:** drop the line and the comment. Trust the protocol.
+**Fix:** drop the line and the stale "we're definitely there" comment.
+Trust the protocol.
 
 ### L6. `'nick'` membership event anchors arbitrarily to "first shared channel" — clarify · low · ~0 LOC
 
-**Location:** `src/irc-server.ts:700-712`.
+`src/irc-server.ts:700-712`. A nick change is global, but we emit one
+membership event scoped to whichever channel iterates first in the Map
+— the meta says `channel: X` for an event that isn't per-channel. The
+same anchoring leaks into `unread` and `history` Maps: the nick handler
+only renames in `channelUsers`, so DM history/unread keyed on the old
+nick is stranded after a rename (`channel_history alice` returns the
+old DMs, `channel_history alex` is empty).
 
-```ts
-let firstChan: string | null = null
-for (const [chan, set] of channelUsers) {
-  if (set.delete(event.nick)) {
-    set.add(event.new_nick)
-    if (!firstChan) firstChan = chan
-  }
-}
-if (firstChan) {
-  emitMembershipEvent('nick', event.nick, firstChan, { newNick: event.new_nick })
-}
-```
-
-A nick change is global — the user is renamed in every channel they share
-with us. We emit one membership event "scoped to the first shared
-channel," which is a fiction (Maps iterate in insertion order; the
-anchored channel is whichever we joined first). The meta says
-`channel: X` for an event that's not really per-channel.
-
-**Fix (preferred):** emit one membership event per channel the user is in.
-Consumers that care can dedupe; the meta becomes truthful.
-
-**Fix (alternate):** emit one event with `channel: ''` and a typed `event:
-'nick'` flag — the system-event shape (irc-server.ts:281-285) has
-precedent for empty-channel meta on global events.
-
-Edge of correctness — the agents acting on these notifications today
-don't care which path we pick, but the truthfulness gap will eventually
-matter.
-
-The same arbitrary anchoring leaks into the `unread` and `history` Maps:
-those key on `event.target` (or sender nick for DMs), and the nick
-handler only renames in `channelUsers`. If @alice DMs us then renames to
-@alex: `channel_history alice` returns the past DMs, `channel_history
-alex` returns empty, `channel_who` shows `alex`, `unread` is keyed under
-`alice`. All three Maps drift in different directions on every nick
-change. Same shape as the membership-event anchor problem — nick-change
-is a global event that the bookkeeping treats as scoped — and the fix
-covers both: rename the nick in *every* Map keyed on it, then either
-emit per-channel membership events or one global event with `channel:
-''`.
+**Fix:** rename the nick in every Map keyed on it (`channelUsers`,
+`history`, `unread`); for the membership event, either emit one per
+shared channel or emit a single global event with `channel: ''` (the
+system-event shape at irc-server.ts:281-285 has precedent). Edge of
+correctness — agents don't care today, but truthfulness will matter.
 
 ### L7. `mcp.notification(...).catch(() => {})` swallows silently — clarify · low · +2 LOC
 
-**Location:** `src/irc-server.ts:217`.
+`src/irc-server.ts:217`. The empty catch matches any rejection — the
+inline comment names "transport teardown" but real bugs would also be
+swallowed.
 
-```ts
-mcp.notification({...}).catch(() => { /* transport closed during teardown */ })
-```
-
-The comment names the legit case. But the catch matches any rejection —
-including bugs we'd want to know about. The catch handler should at
-minimum log to stderr if the rejection is unexpected.
-
-**Fix:** narrow the catch to known-OK error shapes:
-```ts
-mcp.notification({...}).catch((err) => {
-  // Transport teardown is the only legit case; surface anything else.
-  if (!String(err).includes('Connection closed')) {
-    process.stderr.write(`roost-irc[${NICK}]: notification failed: ${err}\n`)
-  }
-})
-```
+**Fix:** narrow the catch — log to stderr unless the error message
+indicates the known-OK transport-closed shape.
 
 ### L13. Unread-suffix is an undocumented contract — clarify · low · ~0 LOC
 
-**Location:** `src/irc-server.ts:419-426` (channel_message),
-`:432-439` (direct_message), `:530-534` (channel_list);
-`unreadSuffix()` at `:98-101`; `emitUnreadSummary` at `:823-834`.
+`src/irc-server.ts:419-426, 432-439, 530-534, 823-834`. Unread surfaces
+to the agent at four sites (channel_message / direct_message result
+trailers, channel_list output, SIGUSR2 unread-summary) — and is
+mentioned in zero tool schema descriptions. The MCP `instructions`
+field (line 296) names only the SIGUSR2 event. Agents learn the
+"after sending you also get unread for other channels" nudge by
+observation.
 
-`unread.set` happens silently inside `emitChannelEvent` (lines 227-229)
-on every non-historical inbound message. The unread *list* surfaces in
-the agent's view at four sites:
-
-- `channel_message` result trailer
-- `direct_message` result trailer
-- `channel_list` output (per-channel unread inline)
-- `emitUnreadSummary` (SIGUSR2 from PostCompact hook)
-
-None of these sites mention unread in their tool schema description
-(lines 300-402). The MCP `instructions` field (line 296) names the
-`event=unread-summary` event but not the per-tool suffix behavior.
-Agents only learn the "after sending, you also get a list of channels
-with unread activity" contract by observation. That's a meaningful
-agent-DX gap: the suffix is a deliberate nudge ("hey, while you're at
-it, check #foo too"), but it's invisible until the agent encounters it.
-
-**Fix shape (two valid options):**
-
-1. **Document it.** Add an explicit note to each tool's `description`
-   mentioning the unread-suffix behavior; expand the `instructions`
-   field to cover the per-tool suffix in addition to the SIGUSR2 event.
-2. **Scope it down.** Drop the suffix from per-tool results entirely;
-   rely on SIGUSR2 + a dedicated `unread_list` MCP tool. Removes the
-   cross-cutting bolt-on; agents query unread when they want to.
-
-Either way, "documented in zero places, surfaced in three" is the gap.
+**Fix (pick one):** document the suffix in each tool's description and
+the `instructions` string; or scope unread to SIGUSR2 + a dedicated
+`unread_list` MCP tool, dropping the bolt-on suffix entirely.
 
 ### L14. Channel-name case-handling is inconsistent — clarify · low · ~0 LOC
 
-**Location:** `src/irc-server.ts:442` (channel_join lowercases on entry),
-`:462` (channel_leave lowercases on entry) vs `:728, 733-734` (history
-and emit-side use `event.target` directly, server-canonical case).
+`src/irc-server.ts:442, 462` lowercase channel keys on entry to
+`channelUsers`; `:728, 733-734` (history, unread, emit-side) use
+`event.target` server-case. Invisible on ergo (server normalizes
+lowercase); on a server that preserves mixed-case, `channel_who #FOO`
+and `channel_history #FOO` would disagree.
 
-`channelUsers` keys are lowercased at the boundary on join/leave.
-`history` and `unread` Maps key on `event.target` directly — whatever
-case the server replies with. On ergo today, channels are normalized
-lowercase server-side so the inconsistency is invisible. On any IRC
-server that preserves mixed-case (some bouncers, some non-conformant
-servers), `channelUsers.has('#FOO')` (lowercased to `#foo`) and
-`history.get('#FOO')` would disagree — `channel_who #FOO` and
-`channel_history #FOO` could give contradictory answers about whether
-we have any data for that channel.
-
-**Fix:** normalize at one boundary. Either lowercase every channel-name
-key on insert and every lookup, or accept canonical-case from the IRC
-layer and use it everywhere. Best done as part of the rearchitect —
-`RoostIrcClient` becomes the canonicalizer; the MCP shim trusts what
-it returns.
-
-Materially related to Q6 (substrate question) in the rearchitect
-proposal: if `irc-framework` is replaced or wrapped, the new substrate
-may have different case-canonicalization rules. The current code's
-brittleness is what makes that swap hard.
+**Fix:** normalize at one boundary — best done as part of R, where
+`RoostIrcClient` becomes the canonicalizer. Materially related to Q6:
+substrate swap may bring different canonicalization rules.
 
 ---
 
 ## Findings — `bin/roost-permbot` (318 LOC)
 
-### D2. `dlog` early-return is dead — delete · low · −2 LOC
+### D2-D4. Dead state — delete · low · −6 LOC
 
-**Location:** `bin/roost-permbot:57-58`.
+Three small dead bindings on the same wrapper class:
 
-`DEBUG_LOG = os.environ.get("ROOST_PERM_DEBUG_LOG") or os.path.join(...)`
-is truthy unconditionally. The `if not DEBUG_LOG: return` guard never
-fires.
-
-**Fix:** drop it.
-
-### D3. `IRC.fileno` method is unused — delete · low · −2 LOC
-
-**Location:** `bin/roost-permbot:75-76`.
-
-Defined on the `IRC` wrapper class; selectors register `irc.sock`
-directly (line 135), not the wrapper. Method never called.
-
-**Fix:** delete the method.
-
-### D4. `IRC.registered` state is unused — delete · low · −2 LOC
-
-**Location:** `bin/roost-permbot:73, 256`.
-
-`self.registered = False` set in `__init__`, set to `True` when the daemon
-sees `001`. Never read anywhere.
-
-**Fix:** delete both lines.
+- **D2.** `bin/roost-permbot:57-58` — `dlog` early-return is dead;
+  `DEBUG_LOG` is truthy unconditionally so `if not DEBUG_LOG: return`
+  never fires. Drop the guard.
+- **D3.** `bin/roost-permbot:75-76` — `IRC.fileno` method never called;
+  selectors register `irc.sock` directly (line 135). Delete the method.
+- **D4.** `bin/roost-permbot:73, 256` — `IRC.registered` set in
+  `__init__` and on `001`, never read. Delete both lines.
 
 ### L9. In-flight tuple shape is positional, not named — clarify · low · ~0 LOC
 
-**Location:** `bin/roost-permbot:140-141, 186, 271, 285`.
+`bin/roost-permbot:140-141, 186, 271, 285`. `in_flight = (client_sock,
+req, deadline)` is unpacked positionally at three sites. A future
+addition (queue-depth metric, request id) means rewriting every unpack.
 
-```python
-in_flight = None
-# ...
-in_flight = (client_sock, req, time.time() + timeout)
-# elsewhere:
-client_sock, _req, _deadline = in_flight  # 3 unpacks across the file
-```
-
-The deadline-vs-timestamp distinction is positional-only. A future
-addition (e.g. queue-depth metric, unique request id) means rewriting
-every unpack.
-
-**Fix:** use a `dataclass` (or `NamedTuple`) `InFlight(client_sock, req,
-deadline)`. ~3 lines added at top, all unpacks become attribute access.
+**Fix:** `dataclass`/`NamedTuple` `InFlight(client_sock, req, deadline)`;
+all unpacks become attribute access.
 
 ---
 
@@ -708,27 +427,17 @@ deadline)`. ~3 lines added at top, all unpacks become attribute access.
 
 ### L8. Fall-back-to-terminal is invisible to remote operators — clarify · low · ~0 LOC
 
-**Location:** `bin/irc-permission-prompt:39-40, 233, 248-249, 258`.
+`bin/irc-permission-prompt:39-40, 233, 248-249, 258`. The `emit("ask",
+reason)` path defers to Claude Code's local terminal prompt — fine for
+interactive use, but for an unattended worker spawn (the common case)
+the local terminal has no human watching, and the worker blocks
+indefinitely on a prompt nobody sees.
 
-The `emit("ask", reason)` path defers to Claude Code's local terminal
-prompt. That's the architecturally documented design — but for an
-unattended worker spawn (most production cases), the local terminal has
-no human watching. The result is a worker blocked indefinitely on a
-prompt nobody sees, with only stderr output naming the cause.
-
-This is the failure mode that made #90 a phantom bug to track down. It's
-present-tense in the code today; #90 closed because the *specific*
-secondary command-substitution gate was fixed upstream, not because the
-fallback semantics changed.
-
-**Fix:** when falling back to terminal, also DM the operator (if known via
-`ROOST_PERM_TARGET`) with the reason and the tool summary. Doesn't
-override the terminal prompt — but at least makes the failure visible to
-the same human who owns the worker. Touches the `emit("ask", ...)` path
-and adds an optional DM through the existing permbot socket.
-
-(Listed as low because the underlying behavior is documented; promotable
-to medium if oversight gaps recur.)
+**Fix:** when falling back to terminal, also DM the operator (if known
+via `ROOST_PERM_TARGET`) with the reason and tool summary. Doesn't
+override the terminal prompt; just makes the failure visible to the
+same human who owns the worker. Promotable to medium if oversight gaps
+recur.
 
 ---
 
@@ -736,81 +445,48 @@ to medium if oversight gaps recur.)
 
 ### D5. `startMcp` `extraEnv` parameter is unused — delete · low · −2 LOC
 
-**Location:** `test/helpers/mcp.ts:13, 24`.
-
-No test calls `startMcp` with a third argument. Speculative for a future
-test that wants to override env.
+`test/helpers/mcp.ts:13, 24`. No call site passes a third arg.
 
 **Fix:** drop the param.
 
 ### D6. `wireMcpClient` `clientName` parameter is cosmetic — delete · low · −3 LOC
 
-**Location:** `test/helpers/mcp-core.ts:32, 40`; call site
-`test/helpers/mcp-inprocess.ts:43` (`'roost-test-ip'`).
-
-Flows to `new Client({ name, version })` and surfaces only in the MCP
-initialize handshake. Not used by routing, not asserted in any test.
+`test/helpers/mcp-core.ts:32, 40` (call site `mcp-inprocess.ts:43`
+passes `'roost-test-ip'`). Surfaces only in the MCP initialize
+handshake, not asserted anywhere.
 
 **Fix:** drop the param, hardcode `'roost-test'`.
 
 ### L10. Two near-identical `startMcp` shapes — clarify · low · ~0 LOC
 
-**Location:** `test/helpers/mcp.ts` (out-of-process via stdio subprocess);
-`test/helpers/mcp-inprocess.ts` (in-process via InMemoryTransport).
+`test/helpers/mcp.ts` (subprocess via stdio) and `mcp-inprocess.ts`
+(in-process via InMemoryTransport) do the same five things in different
+order. Differences are real (process boundary vs in-process) but the
+shared shape isn't visible.
 
-Both helpers do the same five things: choose a default nick, set up
-transport, instantiate IRC client, request caps + connect, wire up the
-MCP client + waiters via `wireMcpClient`. The differences are real (one
-spawns a subprocess, the other constructs in-process) but the shared
-shape isn't visible.
+**Fix:** subsumed by R — both helpers construct `RoostIrcClient`
+directly post-extraction; if R doesn't land, status quo is fine.
 
-Post-rearchitect this becomes natural: both helpers construct a
-`RoostIrcClient` directly (the subprocess shape stays for tests that need
-process boundary, the in-process shape becomes the default), wire it to
-either an in-process MCP shim or a subprocess shim.
+### L11. `wireMcpClient`'s waiter cleanup uses identity comparison — clarify · low · ~0 LOC
 
-**Fix:** subsumed by the rearchitect. Without it, this is low-priority;
-the two helpers being parallel-but-different is a reasonable status quo.
+`test/helpers/mcp-core.ts:71-78`. The timeout's cleanup finds the
+waiter to splice via `w.resolve === wrappedResolve` — function
+identity, closed-over per-call. Works today; a refactor that memoized
+resolvers would silently break cleanup.
 
-### L11. `wireMcpClient`'s timeout/waiter cleanup uses identity comparison on `wrappedResolve` — clarify · low · ~0 LOC
-
-**Location:** `test/helpers/mcp-core.ts:71-78`.
-
-```ts
-const wrappedResolve = (n: ChannelNotification) => { clearTimeout(timer); resolve(n) }
-const timer = setTimeout(() => {
-  const idx = waiters.findIndex(w => w.resolve === wrappedResolve)
-  if (idx !== -1) waiters.splice(idx, 1)
-  reject(new Error(`waitForNotification timed out after ${timeoutMs}ms`))
-}, timeoutMs)
-waiters.push({ pred, resolve: wrappedResolve })
-```
-
-Function identity drives waiter cleanup. Works because `wrappedResolve`
-is closed-over per-call — but the dependency on identity is implicit. A
-refactor that, say, memoizes resolvers would silently break cleanup.
-
-**Fix:** assign each waiter a unique id (counter) at insert time; cleanup
-on timeout indexes by id. Or: accept the identity-comparison shape and
-add a `// identity-cleanup, see comment` comment.
+**Fix:** unique id (counter) at insert; cleanup indexes by id. Or
+accept the identity shape and add a comment naming it.
 
 ### L12. `pollUntilIrcReady` couples to a string-literal sentinel — clarify · low · ~0 LOC
 
-**Location:** `test/helpers/mcp-core.ts:96`; partner string at
-`src/irc-server.ts:409`.
+`test/helpers/mcp-core.ts:96` (`text.includes('not ready')`); partner
+string at `src/irc-server.ts:409` (`'IRC client not ready (still
+connecting).'`). The substring check is intentional — JSDoc documents
+the design — but a wording change on either side would silently mask
+real bring-up races.
 
-The `text.includes('not ready')` check is intentional — JSDoc on the
-function (lines 85-88) documents that future error types should
-short-circuit rather than loop until the deadline. Behavior is correct.
-
-What's worth flagging is the coupling: the literal `'not ready'` is a
-substring of `'IRC client not ready (still connecting).'` defined on the
-server side. A wording change to either drift the pair silently —
-`pollUntilIrcReady` would start treating the not-ready signal as
-"ready enough" and short-circuit, masking real bring-up races in tests.
-
-**Fix:** export a shared `NOT_READY_SENTINEL` constant from
-`src/irc-server.ts` so server and test reference the same literal.
+**Fix:** export a shared `NOT_READY_SENTINEL` from `src/irc-server.ts`
+so server and test reference the same literal.
 
 ---
 
@@ -823,38 +499,28 @@ Skipped — single-purpose PATH-resolvable launcher referenced from
 
 ## Skipped / out of scope
 
-- **`src/constants.ts` ↔ `bin/orchestrator_poll` `MULTILINE_LINE_BYTES`
-  duplication**: cross-language constant; comment in `orchestrator_poll`
-  documents the coupling. Out of scope: orchestrator code lives outside
-  this audit's MCP/IRC scope.
-- **`bin/orchestrator_poll`'s in-file Python `IrcClient`**: addressed in
-  Q5 of the rearchitect proposal as a separate Python→TS migration
-  decision, out of scope here.
-- **Adding new MCP tools**: orthogonal to this audit.
+- **`src/constants.ts` ↔ `bin/orchestrator_poll` `MULTILINE_LINE_BYTES`**:
+  cross-language constant, documented in `orchestrator_poll`'s comment.
+  Orchestrator outside MCP/IRC scope.
+- **`bin/orchestrator_poll`'s Python `IrcClient`**: see Q5.
+- **Adding new MCP tools**: orthogonal.
 
 ---
 
 ## Pattern issues — what shape enabled them, is it still here?
 
-Per-issue traceback. The recurring shape (silent fall-through) is
-discussed in [Meta-finding](#meta-finding-silent-fall-through).
-
-- **#87 (permbot reply parser exact-match):** fixed in
-  `bin/irc-permission-prompt:251-253` via first-token split. Shape was
-  "match whole reply against literal tokens"; now matches first
-  whitespace-delimited token. Shape gone.
+- **#87 (permbot reply parser exact-match):** fixed at
+  `bin/irc-permission-prompt:251-253` via first-token split. Shape gone.
 - **#92 (cache staleness on reconnect):** fixed by reconnect cache
-  invalidation + auto-rejoin (`src/irc-server.ts:582-595`). The local
-  cache *can still drift* between disconnect detection and reconnect, but
-  `channel_list` now goes to the server (PR #108) instead of reading the
-  cache. Shape mostly addressed.
-- **#97 (deny reason not propagated):** fixed in
-  `bin/irc-permission-prompt:251-258` — first token decides allow/deny,
-  rest becomes the message. Shape gone.
-- **#100 (channel_leave fire-and-forget):** fixed in
-  `src/irc-server.ts:461-475`, mirrors `channel_join` resolver pattern.
-  Shape gone. (C1 in this audit is a sibling: the resolver pattern is
-  correct, but neither resolver pre-empts on socket close.)
+  invalidation + auto-rejoin (`src/irc-server.ts:582-595`); `channel_list`
+  goes to the server (PR #108). Shape mostly gone — local cache can
+  still briefly drift between disconnect detection and reconnect.
+- **#97 (deny reason not propagated):** fixed at
+  `bin/irc-permission-prompt:251-258` — first token decides, rest
+  becomes the message. Shape gone.
+- **#100 (channel_leave fire-and-forget):** fixed at
+  `src/irc-server.ts:461-475`. Shape gone. C1 is a sibling — resolver
+  pattern is correct but doesn't pre-empt on socket close.
 
-C1, L4, L8 in this audit are present-tense instances of the silent
-fall-through family.
+Live present-tense instances of silent fall-through in this audit:
+**C1, C2, L4, L8.**
