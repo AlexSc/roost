@@ -23,7 +23,6 @@ export interface MembershipExtras {
   newNick?: string
 }
 
-// camelCase — R2 translates to irc-framework's snake_case fields internally.
 export interface ConnectOpts {
   host: string
   port: number
