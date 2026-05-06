@@ -34,16 +34,25 @@ export interface ConnectOpts {
 }
 
 export interface RoostIrcClient {
+  // Fire-and-forget: MCP starts serving before IRC connects (returns isError until isReady()).
+  // Use isReady() + on('system') to track connection state.
   connect(opts: ConnectOpts): void
   isReady(): boolean
 
+  // force bypasses the already-joined cache; use to recover wedged state without restarting.
   join(channel: string, force?: boolean): Promise<boolean>
   leave(channel: string): Promise<boolean>
+  // Synchronous socket write — no protocol-level delivery ack for PRIVMSG.
   say(target: string, text: string): { chunks: number; mode: 'single' | 'multiline' }
   whoisChannels(): Promise<string[] | false>
 
+  // Served from local cache — no network round-trip. Note: on a freshly-joined channel
+  // these lag the join ack; NAMES (getUsers) and chathistory (getHistory) arrive via
+  // events after join() resolves.
   getHistory(key: string, limit?: number): IrcMessage[]
   getUsers(channel: string): string[]
+  // R2 increments on every non-historical inbound message; MCP reads this to build
+  // the unread suffix on tool responses.
   getUnread(): ReadonlyMap<string, UnreadInfo>
   ackUnread(key: string): void
 
