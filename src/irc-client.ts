@@ -1,5 +1,4 @@
-// Types-only seam between the IRC client layer and the MCP layer (R1).
-// No runtime code — implementation lives in R2.
+// Pure types — typed seam between the IRC client layer and the MCP layer.
 
 import type { IrcMessage } from './irc-lib.js'
 export type { IrcMessage }
@@ -51,7 +50,7 @@ export interface RoostIrcClient {
   // events after join() resolves.
   getHistory(key: string, limit?: number): IrcMessage[]
   getUsers(channel: string): string[]
-  // incremented on each inbound non-historical message; reset by ackUnread.
+  // Incremented on every non-historical inbound message; tool handlers read this to build the unread suffix.
   getUnread(): ReadonlyMap<string, UnreadInfo>
   ackUnread(key: string): void
 
