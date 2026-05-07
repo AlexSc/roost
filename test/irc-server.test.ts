@@ -8,7 +8,7 @@ import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { startMcp } from './helpers/mcp.js'
 import { connectPeer } from './helpers/peer.js'
-import { toolText, sleep } from './helpers/tool.js'
+import { toolText } from './helpers/tool.js'
 import { createMcpServer } from '../src/irc-server.js'
 import type { RoostIrcClient, ClientConfig } from '../src/irc-client.js'
 
@@ -504,8 +504,7 @@ describe('pushNotification error handling', () => {
 
     const stderrSpy = spyOn(process.stderr, 'write').mockImplementation((() => true) as typeof process.stderr.write)
     try {
-      emitUnreadSummary()
-      await sleep(50)
+      await emitUnreadSummary()
       const errorCalls = stderrSpy.mock.calls.filter(([s]) => typeof s === 'string' && s.includes('pushNotification error'))
       expect(errorCalls).toHaveLength(0)
     } finally {
@@ -521,8 +520,7 @@ describe('pushNotification error handling', () => {
     const notifSpy = spyOn(server, 'notification').mockRejectedValue(new Error('kaboom unexpected'))
     const stderrSpy = spyOn(process.stderr, 'write').mockImplementation((() => true) as typeof process.stderr.write)
     try {
-      emitUnreadSummary()
-      await sleep(50)
+      await emitUnreadSummary()
       const errorCalls = stderrSpy.mock.calls.filter(([s]) => typeof s === 'string' && s.includes('kaboom unexpected'))
       expect(errorCalls).toHaveLength(1)
     } finally {
