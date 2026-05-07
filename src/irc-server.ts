@@ -281,7 +281,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
         }
       }
       case 'channel_leave': {
-        const channel = String(args.channel ?? '')
+        const channel = String(args.channel ?? '').toLowerCase()
         const ok = await client.leave(channel)
         return {
           content: [
