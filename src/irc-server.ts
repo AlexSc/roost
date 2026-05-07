@@ -33,6 +33,11 @@ import type { RoostIrcClient, ClientConfig, UnreadInfo } from './irc-client.js'
 
 const SOURCE_NAME = 'roost-irc'
 
+const REPLY_REMINDER = 'Substantive replies should be posted to IRC.'
+// 1/7 — midpoint of the 1/5–1/10 range from #136. Random rate avoids the
+// pattern-match-and-ignore failure mode of a fixed cadence.
+const REMINDER_PROBABILITY = 1 / 7
+
 // Re-export ClientConfig under the legacy name for callers that import McpServerConfig.
 export type { ClientConfig as McpServerConfig } from './irc-client.js'
 
@@ -136,12 +141,9 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
   // millisecond timestamp (the original bug behind reassembly).
   let receiveSeq = 0
 
-  // Inbound chat message counter — the first arriving message always carries
-  // the IRC-reply reminder; subsequent messages carry it with probability
-  // REMINDER_PROBABILITY. Historical replay does not count.
-  let inboundMessageCount = 0
-  const REPLY_REMINDER = 'Substantive replies should be posted to IRC.'
-  const REMINDER_PROBABILITY = 1 / 7
+  // Tracks whether any non-historical inbound message has been emitted in
+  // this session — gates the always-attach-on-first-message behavior.
+  let firstMessageSeen = false
 
   // ---- MCP server --------------------------------------------------------
 
@@ -194,11 +196,11 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
 
     let content = msg.text
     if (!meta.historical) {
-      inboundMessageCount++
-      if (inboundMessageCount === 1 || Math.random() < REMINDER_PROBABILITY) {
+      if (!firstMessageSeen || Math.random() < REMINDER_PROBABILITY) {
         content = `${msg.text}\n\n${REPLY_REMINDER}`
         metaRecord.reminder = 'true'
       }
+      firstMessageSeen = true
     }
 
     pushNotification(content, metaRecord)
