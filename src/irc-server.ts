@@ -163,7 +163,6 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
           type: 'object',
           properties: {
             channel: { type: 'string', description: 'Channel name including "#".' },
-            force: { type: 'boolean', description: 'Force JOIN even if cache says already joined. Use to recover a wedged cache without restarting the MCP.' },
           },
           required: ['channel'],
         },
@@ -272,7 +271,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
       }
       case 'channel_join': {
         const channel = String(args.channel ?? '').toLowerCase()
-        const ok = await client.join(channel, Boolean(args.force))
+        const ok = await client.join(channel)
         return {
           content: [
             { type: 'text', text: ok ? `joined ${channel}` : `join ${channel} timed out` },

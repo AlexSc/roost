@@ -46,8 +46,7 @@ export interface RoostIrcClient {
   connect(opts: ConnectOpts): void
   isReady(): boolean
 
-  // force bypasses the already-joined cache; use to recover wedged state without restarting.
-  join(channel: string, force?: boolean): Promise<boolean>
+  join(channel: string): Promise<boolean>
   leave(channel: string): Promise<boolean>
   // Synchronous socket write — no protocol-level delivery ack for PRIVMSG.
   say(target: string, text: string): { chunks: number; mode: 'single' | 'multiline' }

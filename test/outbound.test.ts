@@ -97,16 +97,6 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     expect(toolText(r2)).toContain('joined #ip-out-cache')
   })
 
-  it('channel_join: force=true bypasses cache and re-sends IRC JOIN', async () => {
-    const mcp = await startMcpInProcess(ergo, 'ip-out-force1')
-
-    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-out-force' } })
-
-    const r = await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-out-force', force: true } })
-    expect(r.isError).toBeFalsy()
-    expect(toolText(r)).toContain('joined #ip-out-force')
-  })
-
   it('channel_history: returns recent messages in order', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-out-mcp6')
     const peer = await connectPeer(ergo, 'ip-out-peer6')
