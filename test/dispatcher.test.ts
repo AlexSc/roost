@@ -4,7 +4,7 @@ const DISPATCHER = `${import.meta.dir}/../bin/orchestrator_poll`
 
 describe('orchestrator_poll --self-test', () => {
   it('passes all self-tests', async () => {
-    const proc = Bun.spawn(['python3', DISPATCHER, '--self-test'], {
+    const proc = Bun.spawn([DISPATCHER, '--self-test'], {
       stdout: 'pipe',
       stderr: 'pipe',
     })
