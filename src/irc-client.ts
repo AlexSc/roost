@@ -9,6 +9,14 @@ export interface UnreadInfo {
   lastPreview: string
 }
 
+export interface ClientConfig {
+  nick: string
+  autoJoin: string[]
+  historySize: number
+  joinHistoryLines: number
+  joinHistoryMinutes: number
+}
+
 // Extras attached to inbound message events (buffered = reassembled multiline batch).
 export interface MessageMeta {
   buffered?: boolean
@@ -55,6 +63,9 @@ export interface RoostIrcClient {
   ackUnread(key: string): void
 
   clearDedupeCache(): void
+
+  // Returns true if the local cache shows we are currently in the channel.
+  isJoined(channel: string): boolean
 
   on(event: 'message',    handler: (msg: IrcMessage, meta: MessageMeta) => void): void
   on(event: 'membership', handler: (kind: 'join' | 'leave' | 'nick', nick: string, channel: string, extras: MembershipExtras) => void): void

@@ -1,7 +1,6 @@
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { afterAll } from 'bun:test'
-// @ts-expect-error — irc-framework lacks first-class type defs
-import IRC from 'irc-framework'
+import { RoostIrcClientImpl } from '../../src/irc-client-impl.js'
 import { createMcpServer } from '../../src/irc-server.js'
 import type { ErgoContext } from './ergo.js'
 import { wireMcpClient, pollUntilIrcReady, type McpHandle, type ChannelNotification } from './mcp-core.js'
@@ -28,28 +27,27 @@ export async function startMcpInProcess(
 ): Promise<McpInProcessContext> {
   const clientNick = nick ?? `ip-mcp${++instanceCounter}`
 
-  const ircClient = new IRC.Client()
-  const { server, emitUnreadSummary } = createMcpServer(ircClient, {
+  const clientConfig = {
     nick: clientNick,
     autoJoin: [],
     historySize: options?.historySize ?? 50,
     joinHistoryLines: options?.joinHistoryLines ?? 20,
     joinHistoryMinutes: options?.joinHistoryMinutes ?? 30,
-  })
+  }
+
+  const ircClient = new RoostIrcClientImpl(clientConfig)
+  const { server, emitUnreadSummary } = createMcpServer(ircClient, clientConfig)
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   await server.connect(serverTransport)
 
   const handle = await wireMcpClient(clientTransport, clientNick)
 
-  ircClient.requestCap(['draft/multiline', 'labeled-response', 'chathistory'])
   ircClient.connect({
     host: ergo.host,
     port: ergo.port,
     nick: clientNick,
-    username: clientNick,
-    gecos: clientNick,
-    auto_reconnect: false,
+    autoReconnect: false,
   })
 
   await pollUntilIrcReady(handle)

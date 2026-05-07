@@ -29,185 +29,37 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
-// @ts-expect-error — irc-framework lacks first-class type defs
-import IRC from 'irc-framework'
-import { MULTILINE_LINE_BYTES } from './constants.js'
-import {
-  IrcMessage,
-  splitLineForMultiline,
-  newBatchId,
-  reassembleMultilineBatch,
-} from './irc-lib.js'
+import type { RoostIrcClient, ClientConfig, UnreadInfo } from './irc-client.js'
 
 const SOURCE_NAME = 'roost-irc'
-const CAP_CHATHISTORY = 'chathistory'
 
-export interface McpServerConfig {
-  nick: string
-  autoJoin: string[]
-  historySize: number
-  joinHistoryLines: number
-  joinHistoryMinutes: number
-}
+// Re-export ClientConfig under the legacy name for callers that import McpServerConfig.
+export type { ClientConfig as McpServerConfig } from './irc-client.js'
 
-// Wire the MCP server and IRC event handlers. Does NOT connect to any
-// transport or start the IRC connection — the caller does both after
+// Wire the MCP server and subscribe to typed IRC events. Does NOT connect to
+// any transport or start the IRC connection — the caller does both after
 // createMcpServer returns. Call order: createMcpServer → server.connect(transport)
-// → ircClient.requestCap/connect.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function createMcpServer(ircClient: any, config: McpServerConfig): { server: Server; clearDedupeCache: () => void; emitUnreadSummary: () => void } {
-  const { nick: NICK, autoJoin: AUTO_JOIN, historySize: HISTORY_SIZE,
-    joinHistoryLines: JOIN_HISTORY_LINES, joinHistoryMinutes: JOIN_HISTORY_MINUTES } = config
-
-  // ---- IRC client wiring -------------------------------------------------
-
-  let irc_ready = false
-  let hasRegistered = false
-  const join_resolvers = new Map<string, Array<(ok: boolean) => void>>()
-  const part_resolvers = new Map<string, Array<(ok: boolean) => void>>()
-
-  // Max lines per draft/multiline batch, from the cap value
-  // (`draft/multiline=max-bytes=16384,max-lines=200`). Pre-negotiation
-  // placeholder; overwritten on registration.
-  let multilineMaxLines = 100
-
-  // Per-channel ring buffer of recent messages — gives us
-  // channel_history without needing a bouncer.
-  const history: Map<string, IrcMessage[]> = new Map()
-  const pushHistory = (key: string, msg: IrcMessage) => {
-    const buf = history.get(key) ?? []
-    buf.push(msg)
-    while (buf.length > HISTORY_SIZE) buf.shift()
-    history.set(key, buf)
-  }
-
-  interface UnreadInfo {
-    count: number
-    lastSender: string
-    lastPreview: string
-  }
-  const unread: Map<string, UnreadInfo> = new Map()
-
-  const formatUnreadLine = (ch: string, info: UnreadInfo, previewLength = 40): string => {
-    const raw = info.lastPreview.length > previewLength
-      ? info.lastPreview.slice(0, previewLength - 3) + '...'
-      : info.lastPreview
-    return `${ch} (${info.count}) ${info.lastSender}: "${raw.replaceAll('"', "'")}"`
-  }
-
-  const unreadSuffix = (): string => {
-    if (unread.size === 0) return ''
-    return '\nunread:\n' + [...unread.entries()].map(([ch, i]) => `  ${formatUnreadLine(ch, i)}`).join('\n')
-  }
-
-  // ---- Replay dedupe (issue #44) -----------------------------------------
-
-  // Per-channel seen-fingerprint sets. Each channel's set is capped at
-  // HISTORY_SIZE; eviction uses Set insertion order (oldest first).
-  const seenFingerprints = new Map<string, Set<string>>()
-
-  const msgFingerprint = (msg: IrcMessage): string =>
-    `${msg.sender}|${msg.ts}|${msg.text}`
-
-  const addFingerprint = (msg: IrcMessage) => {
-    let set = seenFingerprints.get(msg.channel)
-    if (!set) {
-      set = new Set()
-      seenFingerprints.set(msg.channel, set)
-    }
-    const fp = msgFingerprint(msg)
-    if (set.has(fp)) return
-    set.add(fp)
-    while (set.size > HISTORY_SIZE) set.delete(set.values().next().value!)
-  }
-
-  const hasFingerprint = (msg: IrcMessage): boolean =>
-    seenFingerprints.get(msg.channel)?.has(msgFingerprint(msg)) ?? false
-
-  // ---- Send-side splitting -----------------------------------------------
-  //
-  // Outbound long messages are sent as a draft/multiline batch:
-  // `BATCH +<id> draft/multiline <target>` followed by tagged PRIVMSGs
-  // and `BATCH -<id>`. The receiving MCP listens for
-  // `batch end draft/multiline` and emits a single channel event.
-  // Lossless: explicit \n's round-trip via the draft/multiline-concat tag.
+// → ircClient.connect.
+export function createMcpServer(client: RoostIrcClient, config: ClientConfig): { server: Server; clearDedupeCache: () => void; emitUnreadSummary: () => void } {
+  const { nick: NICK, autoJoin: AUTO_JOIN } = config
 
   // Per-MCP monotonic receive counter — gives downstream consumers a
   // strictly-monotonic ordering even when two events resolve to the same
   // millisecond timestamp (the original bug behind reassembly).
   let receiveSeq = 0
 
-  // ---- Per-channel user tracking -----------------------------------------
-  //
-  // irc-framework's client.channel(name).users is populated lazily and was
-  // observed empty at runtime (probed 2026-04-28). We track our own
-  // per-channel user set keyed by channel name, populated from the
-  // userlist event (RPL_NAMREPLY after we JOIN) and kept current via
-  // JOIN / PART / KICK / QUIT / NICK events. channel_who reads from this
-  // directly; membership-change events also push channel notifications
-  // so agents on the channel see comings and goings in real time.
-  const channelUsers: Map<string, Set<string>> = new Map()
-  const ensureChannelSet = (channel: string): Set<string> => {
-    let set = channelUsers.get(channel)
-    if (!set) {
-      set = new Set()
-      channelUsers.set(channel, set)
-    }
-    return set
-  }
+  // ---- MCP server --------------------------------------------------------
 
-  const sendMultiline = (target: string, text: string): { chunks: number; mode: 'single' | 'multiline' } => {
-    // Single-line, single-chunk fast path: no batch overhead.
-    if (text.length <= MULTILINE_LINE_BYTES && !text.includes('\n')) {
-      ircClient.say(target, text)
-      return { chunks: 1, mode: 'single' }
-    }
-
-    const id = newBatchId()
-    // Logical lines split on the source text's own newlines. An empty
-    // logical line (consecutive \n's) is preserved as a zero-length PRIVMSG
-    // body — receiver re-joins with \n separators, restoring the blank.
-    const logicalLines = text.split('\n')
-    const wireLines: Array<{ body: string; concat: boolean }> = []
-    for (const line of logicalLines) {
-      const chunks = splitLineForMultiline(line)
-      chunks.forEach((chunk, idx) => {
-        // Continuation chunks of one logical line concat onto the previous;
-        // the first chunk of each logical line takes the default \n join.
-        wireLines.push({ body: chunk, concat: idx > 0 })
-      })
-    }
-
-    if (wireLines.length > multilineMaxLines) {
-      process.stderr.write(
-        `roost-irc[${NICK}]: multiline target=${target} would emit ${wireLines.length} lines, exceeds server max ${multilineMaxLines}; sending anyway\n`,
-      )
-    }
-
-    ircClient.raw('BATCH', `+${id}`, 'draft/multiline', target)
-    for (const { body, concat } of wireLines) {
-      // Construct the wire line ourselves: irc-framework's IrcMessage
-      // serializer drops the trailing-param `:` marker for empty bodies,
-      // which the multiline spec explicitly permits — empty lines map to
-      // empty paragraphs and must round-trip.
-      //
-      // Tag name is `draft/multiline-concat` — NO `+` prefix, even
-      // though IRCv3 reserves `+` for client-only tags. Ergo's
-      // caps/constants.go calls it `draft/multiline-concat` flat; with
-      // a `+` prefix it'd be treated as an unrelated client tag, get
-      // stripped on relay, and the receiver would default-newline-join
-      // continuation chunks (verified 2026-04-28).
-      const tagStr = concat
-        ? `batch=${id};draft/multiline-concat`
-        : `batch=${id}`
-      ircClient.connection.write(`@${tagStr} PRIVMSG ${target} :${body}`)
-    }
-    ircClient.raw('BATCH', `-${id}`)
-    process.stderr.write(
-      `roost-irc[${NICK}]: multiline outbound to ${target} as batch ${id} (${wireLines.length} lines, ${text.length} bytes)\n`,
-    )
-    return { chunks: wireLines.length, mode: 'multiline' }
-  }
+  const mcp = new Server(
+    { name: SOURCE_NAME, version: '0.0.1' },
+    {
+      capabilities: {
+        tools: {},
+        experimental: { 'claude/channel': {} },
+      },
+      instructions: `roost IRC MCP. You are connected to IRC as nick "${NICK}". Outbound: use channel_message, direct_message, channel_join, channel_leave, channel_who, channel_history, channel_list, channel_ack. Inbound: IRC traffic arrives as <channel source="roost-irc"> events with sender, channel, and isDirect attributes. After compaction a special event with event=unread-summary lists channels with pending unread messages — check those channels. Auto-joined: ${AUTO_JOIN.join(', ') || '(none)'}.`,
+    },
+  )
 
   const pushNotification = (content: string, meta: Record<string, string>) => {
     const seq = ++receiveSeq
@@ -217,47 +69,40 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
     }).catch(() => { /* transport closed during teardown */ })
   }
 
-  // Helper: format an inbound IRC message as a channel-event payload.
-  const emitChannelEvent = (
-    msg: IrcMessage,
-    extras: { buffered?: boolean; chunkCount?: number; historical?: boolean } = {},
-  ) => {
-    addFingerprint(msg)
-    if (!extras.historical) {
-      const prev = unread.get(msg.channel)
-      unread.set(msg.channel, { count: (prev?.count ?? 0) + 1, lastSender: msg.sender, lastPreview: msg.text })
-    }
-    const meta: Record<string, string> = {
+  const formatUnreadLine = (ch: string, info: UnreadInfo, previewLength = 40): string => {
+    const raw = info.lastPreview.length > previewLength
+      ? info.lastPreview.slice(0, previewLength - 3) + '...'
+      : info.lastPreview
+    return `${ch} (${info.count}) ${info.lastSender}: "${raw.replaceAll('"', "'")}"`
+  }
+
+  const unreadSuffix = (): string => {
+    const unread = client.getUnread()
+    if (unread.size === 0) return ''
+    return '\nunread:\n' + [...unread.entries()].map(([ch, i]) => `  ${formatUnreadLine(ch, i)}`).join('\n')
+  }
+
+  // ---- Typed event subscriptions -----------------------------------------
+
+  client.on('message', (msg, meta) => {
+    const metaRecord: Record<string, string> = {
       sender: msg.sender,
       channel: msg.channel,
       isDirect: String(msg.isDirect),
       ts: msg.ts,
     }
-    if (extras.buffered) {
-      meta.buffered = 'true'
-      if (extras.chunkCount && extras.chunkCount > 1) {
-        meta.chunkCount = String(extras.chunkCount)
-      }
+    if (meta.buffered) {
+      metaRecord.buffered = 'true'
+      if (meta.chunkCount && meta.chunkCount > 1) metaRecord.chunkCount = String(meta.chunkCount)
     }
-    if (extras.historical) {
-      meta.historical = 'true'
-    }
-    pushNotification(msg.text, meta)
+    if (meta.historical) metaRecord.historical = 'true'
+    pushNotification(msg.text, metaRecord)
     process.stderr.write(
-      `roost-irc[${NICK}]: <- ${msg.isDirect ? 'DM from' : `${msg.channel} <`}${msg.sender}> ${msg.text.length > 120 ? msg.text.slice(0, 117) + '...' : msg.text}${extras.buffered ? ` [BUFFERED x${extras.chunkCount}]` : ''}${extras.historical ? ' [HISTORY]' : ''}\n`,
+      `roost-irc[${NICK}]: <- ${msg.isDirect ? 'DM from' : `${msg.channel} <`}${msg.sender}> ${msg.text.length > 120 ? msg.text.slice(0, 117) + '...' : msg.text}${meta.buffered ? ` [BUFFERED x${meta.chunkCount}]` : ''}${meta.historical ? ' [HISTORY]' : ''}\n`,
     )
-  }
+  })
 
-  // Emit a JOIN/LEAVE/NICK membership event into the host session as a
-  // channel notification. event="join" / event="leave" / event="nick"
-  // distinguishes from regular messages. Content is a short
-  // human-readable summary; meta carries structured fields.
-  const emitMembershipEvent = (
-    kind: 'join' | 'leave' | 'nick',
-    nick: string,
-    channel: string,
-    extras: { reason?: string; newNick?: string } = {},
-  ) => {
+  client.on('membership', (kind, nick, channel, extras) => {
     const ts = new Date().toISOString()
     const meta: Record<string, string> = {
       sender: nick,
@@ -274,28 +119,15 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       : `${nick} left ${channel}${extras.reason ? ` (${extras.reason})` : ''}`
     pushNotification(summary, meta)
     process.stderr.write(`roost-irc[${NICK}]: <- [${kind}] ${summary}\n`)
-  }
+  })
 
-  // Emit a synthetic system event (e.g. disconnected, reconnected) as a
-  // channel notification. Not scoped to a channel — channel/sender are empty.
-  const emitSystemEvent = (event: 'disconnected' | 'reconnected', content: string) => {
+  client.on('system', (kind, content) => {
     const ts = new Date().toISOString()
-    pushNotification(content, { event, channel: '', sender: '', isDirect: 'false', ts })
-    process.stderr.write(`roost-irc[${NICK}]: [${event}] ${content}\n`)
-  }
+    pushNotification(content, { event: kind, channel: '', sender: '', isDirect: 'false', ts })
+    process.stderr.write(`roost-irc[${NICK}]: [${kind}] ${content}\n`)
+  })
 
-  // ---- MCP server --------------------------------------------------------
-
-  const mcp = new Server(
-    { name: SOURCE_NAME, version: '0.0.1' },
-    {
-      capabilities: {
-        tools: {},
-        experimental: { 'claude/channel': {} },
-      },
-      instructions: `roost IRC MCP. You are connected to IRC as nick "${NICK}". Outbound: use channel_message, direct_message, channel_join, channel_leave, channel_who, channel_history, channel_list, channel_ack. Inbound: IRC traffic arrives as <channel source="roost-irc"> events with sender, channel, and isDirect attributes. After compaction a special event with event=unread-summary lists channels with pending unread messages — check those channels. Auto-joined: ${AUTO_JOIN.join(', ') || '(none)'}.`,
-    },
-  )
+  // ---- Tool definitions --------------------------------------------------
 
   mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
@@ -404,7 +236,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
   mcp.setRequestHandler(CallToolRequestSchema, async req => {
     const { name, arguments: args = {} } = req.params
 
-    if (!irc_ready) {
+    if (!client.isReady()) {
       return {
         content: [{ type: 'text', text: 'IRC client not ready (still connecting).' }],
         isError: true,
@@ -415,8 +247,8 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       case 'channel_message': {
         const channel = String(args.channel ?? '')
         const text = String(args.text ?? '')
-        const { chunks, mode } = sendMultiline(channel, text)
-        unread.delete(channel)
+        const { chunks, mode } = client.say(channel, text)
+        client.ackUnread(channel)
         const suffix = unreadSuffix()
         const note =
           mode === 'multiline' ? ` (sent as draft/multiline batch, ${chunks} lines)`
@@ -428,8 +260,8 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       case 'direct_message': {
         const nick = String(args.nick ?? '')
         const text = String(args.text ?? '')
-        const { chunks, mode } = sendMultiline(nick, text)
-        unread.delete(nick)
+        const { chunks, mode } = client.say(nick, text)
+        client.ackUnread(nick)
         const suffix = unreadSuffix()
         const note =
           mode === 'multiline' ? ` (sent as draft/multiline batch, ${chunks} lines)`
@@ -440,17 +272,10 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       }
       case 'channel_join': {
         const channel = String(args.channel ?? '').toLowerCase()
-        if (!args.force && channelUsers.has(channel)) {
+        if (!args.force && client.isJoined(channel)) {
           return { content: [{ type: 'text', text: `already in ${channel}` }] }
         }
-        const ok = await new Promise<boolean>((resolve) => {
-          const list = join_resolvers.get(channel) ?? []
-          list.push(resolve)
-          join_resolvers.set(channel, list)
-          ircClient.join(channel)
-          // Time out after 5s.
-          setTimeout(() => resolve(false), 5000).unref?.()
-        })
+        const ok = await client.join(channel)
         return {
           content: [
             { type: 'text', text: ok ? `joined ${channel}` : `join ${channel} timed out` },
@@ -460,13 +285,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       }
       case 'channel_leave': {
         const channel = String(args.channel ?? '').toLowerCase()
-        const ok = await new Promise<boolean>((resolve) => {
-          const list = part_resolvers.get(channel) ?? []
-          list.push(resolve)
-          part_resolvers.set(channel, list)
-          ircClient.part(channel)
-          setTimeout(() => resolve(false), 5000).unref?.()
-        })
+        const ok = await client.leave(channel)
         return {
           content: [
             { type: 'text', text: ok ? `parted ${channel}` : `part ${channel} timed out` },
@@ -476,8 +295,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       }
       case 'channel_who': {
         const channel = String(args.channel ?? '')
-        const set = channelUsers.get(channel)
-        const users = set ? [...set].sort() : []
+        const users = client.getUsers(channel)
         return {
           content: [
             {
@@ -492,9 +310,8 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       case 'channel_history': {
         const key = String(args.channel ?? '')
         const limit = Number(args.limit ?? 20)
-        unread.delete(key)
-        const buf = history.get(key) ?? []
-        const slice = buf.slice(-limit)
+        client.ackUnread(key)
+        const slice = client.getHistory(key, limit)
         if (slice.length === 0) {
           return {
             content: [
@@ -509,24 +326,14 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
         return { content: [{ type: 'text', text: lines.join('\n') }] }
       }
       case 'channel_list': {
-        const channels = await new Promise<string[] | false>((resolve) => {
-          ircClient.whois(NICK, (event: { channels?: string }) => {
-            if (!event.channels) { resolve([]); return }
-            const list = event.channels
-              .split(' ')
-              .map((ch: string) => ch.replace(/^[@+%&~]+/, ''))
-              .filter(Boolean)
-              .sort()
-            resolve(list)
-          })
-          setTimeout(() => resolve(false), 5000).unref?.()
-        })
+        const channels = await client.whoisChannels()
         if (channels === false) {
           return { content: [{ type: 'text', text: 'whois timed out' }], isError: true }
         }
         if (channels.length === 0) {
           return { content: [{ type: 'text', text: '(no channels joined)' }] }
         }
+        const unread = client.getUnread()
         const lines = channels.map(ch => {
           const info = unread.get(ch)
           return info ? formatUnreadLine(ch, info, 80) : ch
@@ -535,7 +342,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       }
       case 'channel_ack': {
         const channel = String(args.channel ?? '')
-        unread.delete(channel)
+        client.ackUnread(channel)
         return { content: [{ type: 'text', text: `acked ${channel}` }] }
       }
       default:
@@ -546,282 +353,8 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
     }
   })
 
-  // ---- IRC event handlers ------------------------------------------------
-
-  ircClient.on('registered', () => {
-    irc_ready = true
-    process.stderr.write(`roost-irc[${NICK}]: registered with the IRC server\n`)
-    // After registration, the cap.enabled set is final. Inspect it for
-    // draft/multiline and parse the limits from the cap value.
-    const enabled = ircClient.network?.cap?.enabled ?? []
-    const available: Map<string, string> = ircClient.network?.cap?.available ?? new Map()
-    if (enabled.includes('draft/multiline')) {
-      const val = available.get('draft/multiline') || ''
-      // val format: "max-bytes=16384,max-lines=200"
-      for (const kv of val.split(',')) {
-        const [k, v] = kv.split('=')
-        const n = Number(v)
-        if (!Number.isFinite(n) || n <= 0) continue
-        if (k === 'max-lines') multilineMaxLines = n
-      }
-      process.stderr.write(
-        `roost-irc[${NICK}]: draft/multiline enabled (max-lines=${multilineMaxLines})\n`,
-      )
-    } else {
-      process.stderr.write(
-        `roost-irc[${NICK}]: draft/multiline NOT enabled (server caps: ${enabled.join(',') || '(none)'}) — exiting, server must support draft/multiline\n`,
-      )
-      process.exit(1)
-    }
-    process.stderr.write(
-      enabled.includes(CAP_CHATHISTORY)
-        ? `roost-irc[${NICK}]: chathistory cap active — will replay up to ${JOIN_HISTORY_LINES} msgs / ${JOIN_HISTORY_MINUTES}min on join\n`
-        : `roost-irc[${NICK}]: chathistory cap NOT active — no history replay on join\n`,
-    )
-
-    if (hasRegistered) {
-      // Reconnect: snapshot channels we were in, clear stale cache, rejoin all.
-      // Two JOINs for the same channel (e.g. a concurrent channel_join call) are
-      // idempotent on ergo — benign if it races.
-      const snapshot = [...channelUsers.keys()].sort()
-      channelUsers.clear()
-      const content = snapshot.length > 0
-        ? `[roost] reconnected to IRC — rejoining: ${snapshot.join(', ')}`
-        : '[roost] reconnected to IRC'
-      emitSystemEvent('reconnected', content)
-      for (const ch of snapshot) {
-        ircClient.join(ch)
-        process.stderr.write(`roost-irc[${NICK}]: reconnect-rejoining ${ch}\n`)
-      }
-      return
-    }
-
-    hasRegistered = true
-    for (const ch of AUTO_JOIN) {
-      ircClient.join(ch)
-      process.stderr.write(`roost-irc[${NICK}]: auto-joining ${ch}\n`)
-    }
-  })
-
-  ircClient.on('join', (event: { nick: string; channel: string }) => {
-    if (event.nick === NICK) {
-      process.stderr.write(`roost-irc[${NICK}]: joined ${event.channel}\n`)
-      // Reset our user set for this channel — userlist (NAMES) will populate it.
-      channelUsers.set(event.channel, new Set([NICK]))
-      const list = join_resolvers.get(event.channel)
-      if (list?.length) {
-        for (const r of list) r(true)
-        join_resolvers.delete(event.channel)
-      }
-      return
-    }
-    ensureChannelSet(event.channel).add(event.nick)
-    emitMembershipEvent('join', event.nick, event.channel)
-  })
-
-  // userlist fires after RPL_NAMREPLY/ENDOFNAMES (post-JOIN). Replace the
-  // channel's user set with the authoritative server-side membership.
-  ircClient.on(
-    'userlist',
-    (event: { channel: string; users: Array<{ nick: string }> }) => {
-      const set = new Set<string>()
-      for (const u of event.users ?? []) {
-        if (u?.nick) set.add(u.nick)
-      }
-      set.add(NICK) // we're definitely there
-      channelUsers.set(event.channel, set)
-      process.stderr.write(
-        `roost-irc[${NICK}]: userlist for ${event.channel}: ${set.size} nicks (${[...set].sort().join(', ')})\n`,
-      )
-    },
-  )
-
-  ircClient.on(
-    'part',
-    (event: { nick: string; channel: string; message?: string }) => {
-      if (event.nick === NICK) {
-        const list = part_resolvers.get(event.channel)
-        if (list?.length) {
-          for (const r of list) r(true)
-          part_resolvers.delete(event.channel)
-        }
-        channelUsers.delete(event.channel)
-        return
-      }
-      channelUsers.get(event.channel)?.delete(event.nick)
-      emitMembershipEvent('leave', event.nick, event.channel, {
-        reason: event.message ? `parted: ${event.message}` : 'parted',
-      })
-    },
-  )
-
-  // irc-framework KICK shape: event.nick = kicker, event.kicked = victim,
-  // event.channel, event.message (kick reason). We emit a leave for the
-  // kicked user.
-  ircClient.on(
-    'kick',
-    (event: {
-      nick?: string
-      kicked: string
-      channel: string
-      message?: string
-    }) => {
-      const victim = event.kicked
-      if (victim === NICK) {
-        channelUsers.delete(event.channel)
-        return
-      }
-      channelUsers.get(event.channel)?.delete(victim)
-      emitMembershipEvent('leave', victim, event.channel, {
-        reason: `kicked${event.message ? ': ' + event.message : ''}`,
-      })
-    },
-  )
-
-  // QUIT has no channel scope — remove the nick from every channel we
-  // track and emit a leave for each one.
-  ircClient.on('quit', (event: { nick: string; message?: string }) => {
-    if (event.nick === NICK) {
-      channelUsers.clear()
-      return
-    }
-    for (const [chan, set] of channelUsers) {
-      if (set.delete(event.nick)) {
-        emitMembershipEvent('leave', event.nick, chan, {
-          reason: event.message ? `quit: ${event.message}` : 'quit',
-        })
-      }
-    }
-  })
-
-  // NICK change — rename in every channel set, then emit a single
-  // nick-change event scoped to the first shared channel (one event is
-  // enough; the change is global to that user).
-  ircClient.on('nick', (event: { nick: string; new_nick: string }) => {
-    if (event.nick === NICK) return // our own nick change — uninteresting to us
-    let firstChan: string | null = null
-    for (const [chan, set] of channelUsers) {
-      if (set.delete(event.nick)) {
-        set.add(event.new_nick)
-        if (!firstChan) firstChan = chan
-      }
-    }
-    if (firstChan) {
-      emitMembershipEvent('nick', event.nick, firstChan, { newNick: event.new_nick })
-    }
-  })
-
-  ircClient.on('message', (event: {
-    nick: string
-    target: string
-    message: string
-    type: 'privmsg' | 'notice' | 'action' | string
-    batch?: { id: string; type: string; params: string[] }
-    tags?: Record<string, string>
-  }) => {
-    if (event.nick === NICK) return // don't loop our own messages back
-    // draft/multiline and chathistory batch members are handled in their
-    // respective batch-end handlers below — skip here to avoid double-emit.
-    if (event.batch?.type === 'draft/multiline') return
-    if (event.batch?.type === CAP_CHATHISTORY) return
-    const isDirect = event.target === NICK
-    const channel = isDirect ? event.nick : event.target
-    // Use server-time tag when available (server-time cap) so the fingerprint
-    // matches what ergo records and replays in chathistory batches.
-    const ts = event.tags?.['time'] ?? new Date().toISOString()
-
-    const msg: IrcMessage = { channel, sender: event.nick, text: event.message, ts, isDirect }
-    pushHistory(channel, msg)
-    emitChannelEvent(msg)
-  })
-
-  // Reassemble a draft/multiline batch into a single channel event.
-  ircClient.on(
-    'batch end draft/multiline',
-    (event: {
-      id: string
-      params: string[]
-      commands: Array<{
-        command: string
-        params: string[]
-        nick: string
-        tags: Record<string, unknown>
-        getServerTime?: () => number | undefined
-      }>
-    }) => {
-      const target = event.params[0]
-      if (!target) return
-      const cmds = event.commands.filter(c => c.command === 'PRIVMSG')
-      if (cmds.length === 0) return
-      const sender = cmds[0].nick
-      if (sender === NICK) return
-
-      const text = reassembleMultilineBatch(cmds)
-      const isDirect = target === NICK
-      const channel = isDirect ? sender : target
-      const serverTimeMs = cmds[0].getServerTime?.()
-      const ts = (serverTimeMs ? new Date(serverTimeMs) : new Date()).toISOString()
-      const msg: IrcMessage = { channel, sender, text, ts, isDirect }
-      pushHistory(channel, msg)
-      emitChannelEvent(msg, { buffered: cmds.length > 1, chunkCount: cmds.length })
-    },
-  )
-
-  // Emit chathistory backfill as individual channel events marked historical=true.
-  ircClient.on(
-    'batch end chathistory',
-    (event: {
-      id: string
-      params: string[]
-      commands: Array<{
-        command: string
-        params: string[]
-        nick: string
-        tags: Record<string, unknown>
-        getServerTime?: () => number | undefined
-      }>
-    }) => {
-      const target = event.params[0]
-      if (!target) return
-      const cutoffMs = JOIN_HISTORY_MINUTES > 0 ? Date.now() - JOIN_HISTORY_MINUTES * 60_000 : 0
-      const batch: IrcMessage[] = []
-      for (const c of event.commands) {
-        if (c.command !== 'PRIVMSG') continue
-        const sender = c.nick
-        if (!sender || sender === NICK) continue
-        const text = c.params[c.params.length - 1] ?? ''
-        const isDirect = target === NICK
-        const channel = isDirect ? sender : target
-        const serverTimeMs = c.getServerTime?.()
-        if (cutoffMs > 0 && serverTimeMs !== undefined && serverTimeMs < cutoffMs) continue
-        const ts = (serverTimeMs ? new Date(serverTimeMs) : new Date()).toISOString()
-        batch.push({ channel, sender, text, ts, isDirect })
-      }
-      // Take the most-recent N (ergo sends oldest-first).
-      const limited = JOIN_HISTORY_LINES > 0 ? batch.slice(-JOIN_HISTORY_LINES) : batch
-      for (const msg of limited) {
-        if (hasFingerprint(msg)) {
-          process.stderr.write(`roost-irc[${NICK}]: chathistory dedup skip ${msg.sender}@${msg.channel} ${msg.ts}\n`)
-          continue
-        }
-        pushHistory(msg.channel, msg)
-        emitChannelEvent(msg, { historical: true })
-      }
-    },
-  )
-
-  ircClient.on('socket close', () => {
-    process.stderr.write(`roost-irc[${NICK}]: socket closed\n`)
-    irc_ready = false
-    emitSystemEvent('disconnected', '[roost] disconnected from IRC — channel state may be stale until reconnect')
-  })
-
-  ircClient.on('socket error', (err: Error) => {
-    process.stderr.write(`roost-irc[${NICK}]: socket error: ${err.message}\n`)
-  })
-
   const emitUnreadSummary = () => {
-    const entries = [...unread.entries()]
+    const entries = [...client.getUnread().entries()]
     let text: string
     if (entries.length === 0) {
       text = '[roost] all caught up — no unread messages'
@@ -833,12 +366,14 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
     process.stderr.write(`roost-irc[${NICK}]: unread summary emitted (${entries.length} channels with unread)\n`)
   }
 
-  return { server: mcp, clearDedupeCache: () => seenFingerprints.clear(), emitUnreadSummary }
+  return { server: mcp, clearDedupeCache: () => client.clearDedupeCache(), emitUnreadSummary }
 }
 
 // ---- Entrypoint (only runs when executed directly) ----------------------
 
 if (import.meta.main) {
+  const { RoostIrcClientImpl } = await import('./irc-client-impl.js')
+
   const env = (k: string, def?: string) => process.env[k] ?? def
   const numericEnv = (k: string, def: number) => Number(env(k, String(def)))
   const required = (k: string): string => {
@@ -870,14 +405,16 @@ if (import.meta.main) {
     }
   }
 
-  const ircClient = new IRC.Client()
-  const { server: mcp, clearDedupeCache, emitUnreadSummary } = createMcpServer(ircClient, {
+  const clientConfig: ClientConfig = {
     nick: NICK,
     autoJoin: AUTO_JOIN,
     historySize: numericEnv('ROOST_IRC_HISTORY', 50),
     joinHistoryLines: numericEnv('ROOST_IRC_JOIN_HISTORY_LINES', 20),
     joinHistoryMinutes: numericEnv('ROOST_IRC_JOIN_HISTORY_MINUTES', 30),
-  })
+  }
+
+  const ircClient = new RoostIrcClientImpl(clientConfig)
+  const { server: mcp, clearDedupeCache, emitUnreadSummary } = createMcpServer(ircClient, clientConfig)
 
   // SIGUSR1: PreCompact hook fires this to clear the seen-set. Next backfill
   // after reconnect re-delivers messages compacted out of the agent's context.
@@ -891,21 +428,14 @@ if (import.meta.main) {
   await mcp.connect(new StdioServerTransport())
   process.stderr.write(`roost-irc[${NICK}]: MCP transport up at ${new Date().toISOString()}\n`)
 
-  // Ask the server for the IRCv3 caps we need beyond irc-framework's
-  // defaults. labeled-response isn't strictly required for multiline, but
-  // it pairs well with future features (await-able send confirmations).
-  // server-time: ergo stamps every message with @time; we use this timestamp
-  // in replay-dedupe fingerprints so live-message and chathistory-replay
-  // fingerprints match (both keyed on server time, not client-arrival time).
-  ircClient.requestCap(['draft/multiline', 'labeled-response', CAP_CHATHISTORY, 'server-time'])
   ircClient.connect({
     host: SERVER,
     port: PORT,
     nick: NICK,
     username: NICK,
     gecos: REALNAME,
-    auto_reconnect: true,
-    auto_reconnect_max_retries: 10,
+    autoReconnect: true,
+    autoReconnectMaxRetries: 10,
   })
   process.stderr.write(`roost-irc[${NICK}]: connecting to ${SERVER}:${PORT}...\n`)
 }
