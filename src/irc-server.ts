@@ -194,19 +194,23 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
     }
     if (meta.historical) metaRecord.historical = 'true'
 
-    let content = msg.text
-    if (!meta.historical) {
-      if (!firstMessageSeen || Math.random() < REMINDER_PROBABILITY) {
-        content = `${msg.text}\n\n${REPLY_REMINDER}`
-        metaRecord.reminder = 'true'
-      }
-      firstMessageSeen = true
-    }
-
-    pushNotification(content, metaRecord)
+    pushNotification(msg.text, metaRecord)
     process.stderr.write(
       `roost-irc[${NICK}]: <- ${msg.isDirect ? 'DM from' : `${msg.channel} <`}${msg.sender}> ${msg.text.length > 120 ? msg.text.slice(0, 117) + '...' : msg.text}${meta.buffered ? ` [BUFFERED x${meta.chunkCount}]` : ''}${meta.historical ? ' [HISTORY]' : ''}\n`,
     )
+
+    if (!meta.historical) {
+      if (!firstMessageSeen || Math.random() < REMINDER_PROBABILITY) {
+        pushNotification(REPLY_REMINDER, {
+          event: 'reminder',
+          channel: msg.channel,
+          sender: '',
+          isDirect: String(msg.isDirect),
+          ts: msg.ts,
+        })
+      }
+      firstMessageSeen = true
+    }
   })
 
   client.on('membership', (kind, nick, channel, extras) => {

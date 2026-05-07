@@ -241,33 +241,39 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
 
   // ---- Reply reminder (issue #136) ---------------------------------------
 
-  it('first inbound channel message carries the reply reminder', async () => {
+  it('first inbound channel message triggers a reminder followup notification', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-rem1')
     const peer = await connectPeer(ergo, 'ip-rem1-peer')
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-rem1' } })
     await peer.joinChannel('#ip-rem1')
 
     peer.say('#ip-rem1', 'first message')
-    const n = await mcp.waitForNotification(
-      n => n.meta.channel === '#ip-rem1' && n.content.startsWith('first message'),
+    const msg = await mcp.waitForNotification(
+      n => n.meta.channel === '#ip-rem1' && n.content === 'first message',
     )
-    expect(n.content).toContain('Substantive replies should be posted to IRC.')
-    expect(n.meta.reminder).toBe('true')
+    expect(msg.meta.event).toBeUndefined()
+
+    const reminder = await mcp.waitForNotification(n => n.meta.event === 'reminder')
+    expect(reminder.content).toBe('Substantive replies should be posted to IRC.')
+    expect(reminder.meta.channel).toBe('#ip-rem1')
+    expect(Number(reminder.meta.seq)).toBeGreaterThan(Number(msg.meta.seq))
   })
 
-  it('first inbound DM carries the reply reminder', async () => {
+  it('first inbound DM triggers a reminder followup notification', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-rem2')
     const peer = await connectPeer(ergo, 'ip-rem2-peer')
 
     peer.say('ip-rem2', 'dm hello')
-    const n = await mcp.waitForNotification(
-      n => n.meta.isDirect === 'true' && n.content.startsWith('dm hello'),
+    const msg = await mcp.waitForNotification(
+      n => n.meta.isDirect === 'true' && n.content === 'dm hello',
     )
-    expect(n.content).toContain('Substantive replies should be posted to IRC.')
-    expect(n.meta.reminder).toBe('true')
+    const reminder = await mcp.waitForNotification(n => n.meta.event === 'reminder')
+    expect(reminder.content).toBe('Substantive replies should be posted to IRC.')
+    expect(reminder.meta.isDirect).toBe('true')
+    expect(Number(reminder.meta.seq)).toBeGreaterThan(Number(msg.meta.seq))
   })
 
-  it('historical replay messages do not carry the reply reminder', async () => {
+  it('historical replay does not emit a reminder notification', async () => {
     const peer = await connectPeer(ergo, 'ip-rem3-peer')
     const mcp = await startMcpInProcess(ergo, 'ip-rem3')
 
@@ -276,11 +282,10 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await sleep(200)
 
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-rem3-backfill' } })
-    const n = await mcp.waitForNotification(
-      n => n.meta.historical === 'true' && n.content === 'historical-1',
-    )
-    expect(n.content).not.toContain('Substantive replies should be posted to IRC.')
-    expect(n.meta.reminder).toBeUndefined()
+    await mcp.waitForNotification(n => n.meta.historical === 'true' && n.content === 'historical-1')
+    await sleep(100)
+
+    expect(mcp.notifications.find(n => n.meta.event === 'reminder')).toBeUndefined()
   })
 
   it('historical replay does not consume the first-message reminder slot', async () => {
@@ -295,30 +300,32 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await mcp.waitForNotification(n => n.meta.historical === 'true' && n.content === 'historical-first')
 
     peer.say('#ip-rem4', 'live-after-historical')
-    const live = await mcp.waitForNotification(
-      n => n.meta.channel === '#ip-rem4' && n.content.startsWith('live-after-historical'),
+    await mcp.waitForNotification(
+      n => n.meta.channel === '#ip-rem4' && n.content === 'live-after-historical',
     )
-    expect(live.content).toContain('Substantive replies should be posted to IRC.')
-    expect(live.meta.reminder).toBe('true')
+    const reminder = await mcp.waitForNotification(n => n.meta.event === 'reminder')
+    expect(reminder.content).toBe('Substantive replies should be posted to IRC.')
   })
 
-  it('subsequent message gets reminder when Math.random() < probability', async () => {
+  it('subsequent message emits reminder when Math.random() < probability', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-rem5')
     const peer = await connectPeer(ergo, 'ip-rem5-peer')
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-rem5' } })
     await peer.joinChannel('#ip-rem5')
 
     peer.say('#ip-rem5', 'first')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-rem5' && n.content.startsWith('first'))
+    const firstReminder = await mcp.waitForNotification(n => n.meta.event === 'reminder')
 
     const spy = spyOn(Math, 'random').mockReturnValue(0.01)
     try {
       peer.say('#ip-rem5', 'second-low-rand')
-      const n = await mcp.waitForNotification(
-        n => n.meta.channel === '#ip-rem5' && n.content.startsWith('second-low-rand'),
+      await mcp.waitForNotification(n => n.meta.channel === '#ip-rem5' && n.content === 'second-low-rand')
+      const secondReminder = await mcp.waitForNotification(
+        n => n.meta.event === 'reminder',
+        5000,
+        firstReminder.cursor,
       )
-      expect(n.content).toContain('Substantive replies should be posted to IRC.')
-      expect(n.meta.reminder).toBe('true')
+      expect(secondReminder.content).toBe('Substantive replies should be posted to IRC.')
     } finally {
       spy.mockRestore()
     }
@@ -331,16 +338,20 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await peer.joinChannel('#ip-rem6')
 
     peer.say('#ip-rem6', 'first')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-rem6' && n.content.startsWith('first'))
+    const firstReminder = await mcp.waitForNotification(n => n.meta.event === 'reminder')
 
     const spy = spyOn(Math, 'random').mockReturnValue(0.99)
     try {
       peer.say('#ip-rem6', 'second-high-rand')
-      const n = await mcp.waitForNotification(
+      const msg = await mcp.waitForNotification(
         n => n.meta.channel === '#ip-rem6' && n.content === 'second-high-rand',
       )
-      expect(n.content).not.toContain('Substantive replies should be posted to IRC.')
-      expect(n.meta.reminder).toBeUndefined()
+      await sleep(100)
+      const laterReminders = mcp.notifications.filter(
+        n => n.meta.event === 'reminder' && Number(n.meta.seq) > Number(firstReminder.meta.seq),
+      )
+      expect(laterReminders).toHaveLength(0)
+      expect(msg.content).toBe('second-high-rand')
     } finally {
       spy.mockRestore()
     }
