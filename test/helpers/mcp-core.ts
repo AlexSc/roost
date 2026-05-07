@@ -1,6 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import { sleep } from './tool.js'
+import { sleep, suppressLateRejection } from './tool.js'
 
 export interface ChannelNotification {
   content: string
@@ -63,7 +63,7 @@ export async function wireMcpClient(
     notifications,
     waiterCount: () => waiters.length,
     waitForNotification(pred, timeoutMs = 5000, fromCursor = 0) {
-      return new Promise((resolve, reject) => {
+      return suppressLateRejection(new Promise((resolve, reject) => {
         for (let i = fromCursor; i < notifications.length; i++) {
           if (pred(notifications[i])) { resolve(notifications[i]); return }
         }
@@ -74,7 +74,7 @@ export async function wireMcpClient(
           reject(new Error(`waitForNotification timed out after ${timeoutMs}ms`))
         }, timeoutMs)
         waiters.push({ pred, resolve: wrappedResolve })
-      })
+      }))
     },
   }
 }
