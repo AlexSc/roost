@@ -29,7 +29,7 @@ We ride ergo, which supports IRCv3 multiline. Don't worry about splitting across
 
 When the dispatcher relays a PR comment to the channel, the body is truncated to a single IRC line. Always fetch the full body before responding to the human's comment — use `gh pr view N --repo OWNER/REPO --comments` or `gh api repos/OWNER/REPO/pulls/N/comments`. Treat the dispatcher line as a notification, not the message.
 
-You do not need to restate anything that the human or dispatcher says in the channel. The worker is in the channel and will naturally see it. Workers are expected to do their own followup reading. You are expected to also do full readings. You may comment in Roost if you believe something is out of scope, or have a different change you want to make, or to acknowledge moving something to a followup issue. You may also remain silent.
+You do not need to restate anything that the human or dispatcher says in the channel. You do not need to restate PR review comments in the channel. The worker is in the channel and will naturally see notifications and read PR comments. Workers are expected to do their own followup reading. You are expected to also do full readings. You may comment in Roost if you believe something is out of scope, or have a different change you want to make, or to acknowledge moving something to a followup issue. You may also remain silent.
 
 If you comment on GitHub, prefix your comment with your name [lead-pm]
 
@@ -37,13 +37,13 @@ If you comment on GitHub, prefix your comment with your name [lead-pm]
 
 To work on an issue:
 1. Join #issue-<N> on Roost
-2. Add the issue to the watch list in .orchestrator/config.json
+2. Message the watcher to watch the issue
 3. Create a new branch and worktree for the issue. Install dependencies in the worktree (bun or yarn)
 
    Before continuing: read the issue. If the body is < ~3 sentences or scope-ambiguous, ask the human in #leads-roost-dev for a one-line clarification before spawning the worker — much cheaper than a full PR rewrite after the worker builds the wrong thing.
 
 4. Start a new agent with Roost using
-  - Model: Sonnet
+  - Model: Consider the issue complexity. For routine work, use Sonnet. For advanced work, anything requiring considerable design or cross cutting concerns, use Opus.
   - Name: worker-<N>
   - CWD: The worktree you created
   - Joined to #issue-<N>
