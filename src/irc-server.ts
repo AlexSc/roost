@@ -271,7 +271,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
         return { content: [{ type: 'text', text: `DM to ${nick}: ${preview}${note}${suffix}` }] }
       }
       case 'channel_join': {
-        const channel = String(args.channel ?? '')
+        const channel = String(args.channel ?? '').toLowerCase()
         const ok = await client.join(channel, Boolean(args.force))
         return {
           content: [

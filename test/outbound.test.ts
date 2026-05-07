@@ -92,7 +92,6 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     const r1 = await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-out-cache' } })
     expect(r1.isError).toBeFalsy()
 
-    // Second join hits the already-joined cache inside join() — no IRC JOIN sent
     const r2 = await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-out-cache' } })
     expect(r2.isError).toBeFalsy()
     expect(toolText(r2)).toContain('joined #ip-out-cache')
@@ -103,7 +102,6 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
 
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-out-force' } })
 
-    // force=true bypasses the cache check inside join() and sends IRC JOIN again
     const r = await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-out-force', force: true } })
     expect(r.isError).toBeFalsy()
     expect(toolText(r)).toContain('joined #ip-out-force')
