@@ -61,6 +61,23 @@ describe('channelUsers cache cleared on disconnect', () => {
   })
 })
 
+describe('cap-missing system event on registration', () => {
+  it('emits cap-missing when server-time is absent', () => {
+    const client = makeClient()
+    client.irc.network = { cap: { enabled: ['draft/multiline'], available: new Map() } }
+
+    const events: Array<{ kind: string; content: unknown }> = []
+    client.on('system', (kind: string, content: unknown) => events.push({ kind, content }))
+
+    client.handleRegistered()
+
+    expect(events).toHaveLength(1)
+    expect(events[0].kind).toBe('cap-missing')
+    expect(events[0].content).toContain('server-time')
+    expect(client.ircReady).toBe(false)
+  })
+})
+
 describe('socket close pre-empts pending join/part resolvers', () => {
   it('join resolver resolves false immediately on socket close', async () => {
     const client = makeClient()

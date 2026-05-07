@@ -290,6 +290,12 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   private handleRegistered(): void {
     this.log('registered with the IRC server')
     if (!this.parseMultilineCap()) return
+    const enabled: string[] = this.irc.network?.cap?.enabled ?? []
+    if (!enabled.includes('server-time')) {
+      this.log(`server-time NOT enabled (server caps: ${enabled.join(',') || '(none)'})`)
+      this.emitSystem('cap-missing', 'server-time cap not enabled by server')
+      return
+    }
     this.ircReady = true
     this.logChathistoryCap()
     if (this.hasRegistered) {
