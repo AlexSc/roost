@@ -20,6 +20,9 @@ import type {
 
 const CAP_CHATHISTORY = 'chathistory'
 
+const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const buildMentionRegex = (nick: string) => new RegExp(`\\b${escapeRegex(nick)}\\b`, 'i')
+
 // ---- IRC event shapes ------------------------------------------------------
 
 interface JoinEvent { nick: string; channel: string }
@@ -49,6 +52,7 @@ interface BatchEndEvent { id: string; params: string[]; commands: BatchCommand[]
 
 export class RoostIrcClientImpl implements RoostIrcClient {
   private readonly nick: string
+  private readonly nickMentionRegex: RegExp
   private readonly historySize: number
   private readonly joinHistoryLines: number
   private readonly joinHistoryMinutes: number
@@ -74,6 +78,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
 
   constructor(config: ClientConfig) {
     this.nick = config.nick
+    this.nickMentionRegex = buildMentionRegex(config.nick)
     this.historySize = config.historySize
     this.joinHistoryLines = config.joinHistoryLines
     this.joinHistoryMinutes = config.joinHistoryMinutes
@@ -245,7 +250,15 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     this.addFingerprint(msg)
     if (!historical) {
       const prev = this.unread.get(msg.channel)
-      this.unread.set(msg.channel, { count: (prev?.count ?? 0) + 1, lastSender: msg.sender, lastPreview: msg.text })
+      const isMention = this.nickMentionRegex.test(msg.text)
+      this.unread.set(msg.channel, {
+        count: (prev?.count ?? 0) + 1,
+        lastSender: msg.sender,
+        lastPreview: msg.text,
+        mentionCount: (prev?.mentionCount ?? 0) + (isMention ? 1 : 0),
+        lastMentionSender: isMention ? msg.sender : (prev?.lastMentionSender ?? ''),
+        lastMentionPreview: isMention ? msg.text : (prev?.lastMentionPreview ?? ''),
+      })
     }
   }
 
