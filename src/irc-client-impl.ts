@@ -16,6 +16,7 @@ import type {
   UnreadInfo,
   SystemKind,
   SystemContent,
+  JoinResult,
 } from './irc-client.js'
 
 const CAP_CHATHISTORY = 'chathistory'
@@ -63,7 +64,8 @@ export class RoostIrcClientImpl implements RoostIrcClient {
 
   private ircReady = false
   private hasRegistered = false
-  private readonly joinResolvers = new Map<string, Array<(ok: boolean) => void>>()
+  private readonly joinResolvers = new Map<string, Array<(result: JoinResult) => void>>()
+  private readonly namesTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly partResolvers = new Map<string, Array<(ok: boolean) => void>>()
   private multilineMaxLines = 100
   private readonly history = new Map<string, IrcMessage[]>()
@@ -106,15 +108,15 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   isReady(): boolean { return this.ircReady }
   isJoined(channel: string): boolean { return this.channelUsers.has(channel.toLowerCase()) }
 
-  async join(channel: string): Promise<boolean> {
+  async join(channel: string): Promise<JoinResult> {
     channel = channel.toLowerCase()
-    if (this.channelUsers.has(channel)) return true
-    return new Promise<boolean>((resolve) => {
+    if (this.channelUsers.has(channel)) return { ok: true, members: this.getUsers(channel) }
+    return new Promise<JoinResult>((resolve) => {
       const list = this.joinResolvers.get(channel) ?? []
       list.push(resolve)
       this.joinResolvers.set(channel, list)
       this.irc.join(channel)
-      setTimeout(() => resolve(false), 5000).unref?.()
+      setTimeout(() => resolve({ ok: false, members: [] }), 5000).unref?.()
     })
   }
 
@@ -375,10 +377,21 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     if (event.nick === this.nick) {
       this.log(`joined ${channel}`)
       this.channelUsers.set(channel, new Set([this.nick]))
-      const list = this.joinResolvers.get(channel)
-      if (list?.length) {
-        for (const r of list) r(true)
-        this.joinResolvers.delete(channel)
+      // Defer resolution until handleUserlist fires with the complete NAMES list.
+      // Guard with a 2s timeout in case the server never sends NAMES.
+      if (this.joinResolvers.has(channel)) {
+        const timer = setTimeout(() => {
+          this.namesTimers.delete(channel)
+          const list = this.joinResolvers.get(channel)
+          if (list?.length) {
+            this.log(`NAMES timeout for ${channel} — resolving with self only`)
+            const members = this.getUsers(channel)
+            for (const r of list) r({ ok: true, members })
+            this.joinResolvers.delete(channel)
+          }
+        }, 2000)
+        timer.unref?.()
+        this.namesTimers.set(channel, timer)
       }
       return
     }
@@ -393,7 +406,18 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       if (u?.nick) set.add(u.nick)
     }
     this.channelUsers.set(channel, set)
-    this.log(`userlist for ${channel}: ${set.size} nicks (${[...set].sort().join(', ')})`)
+    const members = this.getUsers(channel)
+    this.log(`userlist for ${channel}: ${members.length} nicks (${members.join(', ')})`)
+    const timer = this.namesTimers.get(channel)
+    if (timer !== undefined) {
+      clearTimeout(timer)
+      this.namesTimers.delete(channel)
+    }
+    const list = this.joinResolvers.get(channel)
+    if (list?.length) {
+      for (const r of list) r({ ok: true, members })
+      this.joinResolvers.delete(channel)
+    }
   }
 
   private handlePart(event: PartEvent): void {
@@ -540,7 +564,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       this.channelUsers.clear()
     }
     // Pre-empt pending resolvers; stale setTimeouts still fire but calling resolve() again is a no-op.
-    for (const list of this.joinResolvers.values()) for (const r of list) r(false)
+    for (const list of this.joinResolvers.values()) for (const r of list) r({ ok: false, members: [] })
     this.joinResolvers.clear()
     for (const list of this.partResolvers.values()) for (const r of list) r(false)
     this.partResolvers.clear()

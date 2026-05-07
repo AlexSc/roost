@@ -48,22 +48,25 @@ export type SystemKind = 'disconnected' | 'reconnected' | 'cap-missing' | 'regis
 // string for disconnected/reconnected/cap-missing; { nick } for registered; { code } for registration-failed
 export type SystemContent = string | { code?: number; nick?: string }
 
+export interface JoinResult {
+  ok: boolean
+  members: string[]
+}
+
 export interface RoostIrcClient {
   // Fire-and-forget: MCP starts serving before IRC connects (returns isError until isReady()).
   // Use isReady() + on('system') to track connection state.
   connect(opts: ConnectOpts): void
   isReady(): boolean
 
-  join(channel: string): Promise<boolean>
+  join(channel: string): Promise<JoinResult>
   leave(channel: string): Promise<boolean>
   // Synchronous socket write — no protocol-level delivery ack for PRIVMSG.
   say(target: string, text: string): { chunks: number; mode: 'single' | 'multiline' }
   quit(): void
   whoisChannels(): Promise<string[] | null>
 
-  // Served from local cache — no network round-trip. Note: on a freshly-joined channel
-  // these lag the join ack; NAMES (getUsers) and chathistory (getHistory) arrive via
-  // events after join() resolves.
+  // Served from local cache — no network round-trip.
   getHistory(key: string, limit?: number): IrcMessage[]
   getUsers(channel: string): string[]
   // Incremented on every non-historical inbound message; tool handlers read this to build the unread suffix.
