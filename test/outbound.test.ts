@@ -86,6 +86,17 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     expect(n.content).toBe(longText)
   })
 
+  it('channel_join: cache hit — second join returns ok without IRC round-trip', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-out-cache1')
+
+    const r1 = await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-out-cache' } })
+    expect(r1.isError).toBeFalsy()
+
+    const r2 = await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-out-cache' } })
+    expect(r2.isError).toBeFalsy()
+    expect(toolText(r2)).toContain('joined #ip-out-cache')
+  })
+
   it('channel_history: returns recent messages in order', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-out-mcp6')
     const peer = await connectPeer(ergo, 'ip-out-peer6')

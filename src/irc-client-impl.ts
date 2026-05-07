@@ -97,6 +97,8 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   isJoined(channel: string): boolean { return this.channelUsers.has(channel) }
 
   async join(channel: string): Promise<boolean> {
+    channel = channel.toLowerCase()
+    if (this.channelUsers.has(channel)) return true
     return new Promise<boolean>((resolve) => {
       const list = this.joinResolvers.get(channel) ?? []
       list.push(resolve)
@@ -107,6 +109,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   }
 
   async leave(channel: string): Promise<boolean> {
+    channel = channel.toLowerCase()
     return new Promise<boolean>((resolve) => {
       const list = this.partResolvers.get(channel) ?? []
       list.push(resolve)
