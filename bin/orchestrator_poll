@@ -1070,7 +1070,7 @@ def _run_daemon(args: argparse.Namespace) -> int:
     project_channel = irc_cfg.get("project_channel") or "#general"
     server = irc_cfg.get("server", "127.0.0.1")
     port = int(irc_cfg.get("port", 6667))
-    interval = max(15, int(irc_cfg.get("interval_seconds", 60)))
+    interval = max(5, int(irc_cfg.get("interval_seconds", 60)))
 
     initial_channels = _initial_irc_channels(config, project_channel)
     sys.stderr.write(

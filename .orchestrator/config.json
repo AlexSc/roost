@@ -6,8 +6,8 @@
     "project_channel": "#leads-roost-dev",
     "server": "127.0.0.1",
     "port": 6667,
-    "interval_seconds": 60
+    "interval_seconds": 10
   },
   "watched_prs": [],
-  "watched_issues": []
+  "watched_issues": [119, 138]
 }
