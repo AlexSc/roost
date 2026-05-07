@@ -60,3 +60,32 @@ describe('channelUsers cache cleared on disconnect', () => {
     expect(client.pendingRejoinChannels).toEqual([])
   })
 })
+
+describe('socket close pre-empts pending join/part resolvers', () => {
+  it('join resolver resolves false immediately on socket close', async () => {
+    const client = makeClient()
+    const p = new Promise<boolean>(resolve => {
+      client.joinResolvers.set('#chan', [resolve])
+    })
+    client.handleSocketClose()
+    expect(await p).toBe(false)
+  })
+
+  it('part resolver resolves false immediately on socket close', async () => {
+    const client = makeClient()
+    const p = new Promise<boolean>(resolve => {
+      client.partResolvers.set('#chan', [resolve])
+    })
+    client.handleSocketClose()
+    expect(await p).toBe(false)
+  })
+
+  it('resolver maps are empty after socket close', () => {
+    const client = makeClient()
+    client.joinResolvers.set('#a', [() => {}])
+    client.partResolvers.set('#b', [() => {}])
+    client.handleSocketClose()
+    expect(client.joinResolvers.size).toBe(0)
+    expect(client.partResolvers.size).toBe(0)
+  })
+})
