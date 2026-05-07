@@ -51,6 +51,7 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
       port: ergo.port,
       nick: peerNick,
       auto_reconnect: false,
+      enable_echomessage: true,
     })
   })
 

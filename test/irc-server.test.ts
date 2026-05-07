@@ -7,7 +7,7 @@ import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { startMcp } from './helpers/mcp.js'
 import { connectPeer } from './helpers/peer.js'
-import { toolText, sleep } from './helpers/tool.js'
+import { toolText } from './helpers/tool.js'
 
 describe.if(isErgoAvailable())('irc-server MCP tools', () => {
   let ergo: ErgoContext
@@ -88,7 +88,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
 
     peer.say('#ip-inbound1', 'ping from peer')
     const n = await mcp.waitForNotification(
-      n => n.meta.channel === '#ip-inbound1' && n.content.startsWith('ping from peer'),
+      n => n.meta.channel === '#ip-inbound1' && n.content === 'ping from peer',
     )
     expect(n.meta.sender).toBe('ip-inbound1-peer')
     expect(n.meta.isDirect).toBe('false')
@@ -113,9 +113,9 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await peer.joinChannel('#ip-hist1')
 
     peer.say('#ip-hist1', 'msg-a')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-hist1' && n.content.startsWith('msg-a'))
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-hist1' && n.content === 'msg-a')
     peer.say('#ip-hist1', 'msg-b')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-hist1' && n.content.startsWith('msg-b'))
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-hist1' && n.content === 'msg-b')
 
     const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-hist1' } })
     const text = toolText(hist)
@@ -138,7 +138,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await peer.joinChannel('#ip-unread1')
 
     peer.say('#ip-unread1', 'hello unread world')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread1' && n.content.startsWith('hello unread world'))
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread1' && n.content === 'hello unread world')
 
     const list = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
     expect(toolText(list)).toContain('(1)')
@@ -153,7 +153,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await peer.joinChannel('#ip-unread2')
 
     peer.say('#ip-unread2', 'you there?')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread2' && n.content.startsWith('you there?'))
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread2' && n.content === 'you there?')
 
     await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-unread2', text: 'yes' } })
 
@@ -168,7 +168,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await peer.joinChannel('#ip-unread3')
 
     peer.say('#ip-unread3', 'did you see this?')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread3' && n.content.startsWith('did you see this?'))
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread3' && n.content === 'did you see this?')
 
     await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-unread3' } })
 
@@ -183,7 +183,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await peer.joinChannel('#ip-unread4')
 
     peer.say('#ip-unread4', 'ack this')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread4' && n.content.startsWith('ack this'))
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread4' && n.content === 'ack this')
 
     const ack = await mcp.client.callTool({ name: 'channel_ack', arguments: { channel: '#ip-unread4' } })
     expect(ack.isError).toBeFalsy()
@@ -206,7 +206,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
 
     // Send a message, then trigger summary → should name the channel
     peer.say('#ip-unread5', 'pending message')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread5' && n.content.startsWith('pending message'))
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread5' && n.content === 'pending message')
 
     mcp.emitUnreadSummary()
     const nDirty = await mcp.waitForNotification(n => n.meta.event === 'unread-summary', 5000, cursor)
@@ -225,7 +225,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
 
     // Message arrives in B while agent is "focused" on A
     peer.say('#ip-unread7-b', 'look at this')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread7-b' && n.content.startsWith('look at this'))
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread7-b' && n.content === 'look at this')
 
     // Sending to A should report B as unread in the reply
     const reply = await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-unread7-a', text: 'hi' } })
@@ -273,38 +273,30 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     expect(Number(reminder.meta.seq)).toBeGreaterThan(Number(msg.meta.seq))
   })
 
-  it('historical replay does not emit a reminder notification', async () => {
-    const peer = await connectPeer(ergo, 'ip-rem3-peer')
-    const mcp = await startMcpInProcess(ergo, 'ip-rem3')
-
-    await peer.joinChannel('#ip-rem3-backfill')
-    peer.say('#ip-rem3-backfill', 'historical-1')
-    await sleep(200)
-
-    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-rem3-backfill' } })
-    await mcp.waitForNotification(n => n.meta.historical === 'true' && n.content === 'historical-1')
-    await sleep(100)
-
-    expect(mcp.notifications.find(n => n.meta.event === 'reminder')).toBeUndefined()
-  })
-
-  it('historical replay does not consume the first-message reminder slot', async () => {
+  it('historical replay does not emit a reminder, and does not consume the first-message slot', async () => {
     const peer = await connectPeer(ergo, 'ip-rem4-peer')
     const mcp = await startMcpInProcess(ergo, 'ip-rem4')
 
     await peer.joinChannel('#ip-rem4')
+    // Wait on peer's own echo (echo-message cap) — guarantees ergo has stored
+    // the message in chathistory before mcp joins. Avoids a wall-clock sleep.
+    const echoSeen = peer.waitForMessage('#ip-rem4', m => m.nick === 'ip-rem4-peer' && m.text === 'historical-first')
     peer.say('#ip-rem4', 'historical-first')
-    await sleep(200)
+    await echoSeen
 
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-rem4' } })
     await mcp.waitForNotification(n => n.meta.historical === 'true' && n.content === 'historical-first')
 
     peer.say('#ip-rem4', 'live-after-historical')
-    await mcp.waitForNotification(
+    const live = await mcp.waitForNotification(
       n => n.meta.channel === '#ip-rem4' && n.content === 'live-after-historical',
     )
     const reminder = await mcp.waitForNotification(n => n.meta.event === 'reminder')
     expect(reminder.content).toBe('Substantive replies should be posted to IRC.')
+    expect(Number(reminder.meta.seq)).toBeGreaterThan(Number(live.meta.seq))
+
+    // No reminder fired for the historical message — only one reminder total.
+    expect(mcp.notifications.filter(n => n.meta.event === 'reminder')).toHaveLength(1)
   })
 
   it('subsequent message emits reminder when Math.random() < probability', async () => {
@@ -346,12 +338,19 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
       const msg = await mcp.waitForNotification(
         n => n.meta.channel === '#ip-rem6' && n.content === 'second-high-rand',
       )
-      await sleep(100)
+      // Fence: a peer leave generates a membership notification (no reminder).
+      // Once the leave arrives, any reminder for second-high-rand would have
+      // landed before it.
+      await peer.leaveChannel('#ip-rem6')
+      const leaveNotif = await mcp.waitForNotification(
+        n => n.meta.event === 'leave' && n.meta.sender === 'ip-rem6-peer',
+      )
       const laterReminders = mcp.notifications.filter(
         n => n.meta.event === 'reminder' && Number(n.meta.seq) > Number(firstReminder.meta.seq),
       )
       expect(laterReminders).toHaveLength(0)
       expect(msg.content).toBe('second-high-rand')
+      expect(Number(leaveNotif.meta.seq)).toBeGreaterThan(Number(msg.meta.seq))
     } finally {
       spy.mockRestore()
     }
