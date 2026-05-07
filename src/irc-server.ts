@@ -173,13 +173,12 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
   }
 
   const formatUnreadLine = (ch: string, info: UnreadInfo, previewLength = 40): string => {
-    const [sender, preview] = info.mentionCount > 0
+    const hasMention = info.mentionCount > 0
+    const [sender, preview] = hasMention
       ? [info.lastMentionSender, info.lastMentionPreview]
       : [info.lastSender, info.lastPreview]
     const raw = preview.length > previewLength ? preview.slice(0, previewLength - 3) + '...' : preview
-    const count = info.mentionCount > 0
-      ? `${info.mentionCount} mention, ${info.count} total`
-      : String(info.count)
+    const count = hasMention ? `${info.mentionCount} mention, ${info.count} total` : String(info.count)
     return `${ch} (${count}) ${sender}: "${raw.replaceAll('"', "'")}"`
   }
 
