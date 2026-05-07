@@ -33,6 +33,11 @@ import type { RoostIrcClient, ClientConfig, UnreadInfo } from './irc-client.js'
 
 const SOURCE_NAME = 'roost-irc'
 
+const REPLY_REMINDER = 'Substantive replies should be posted to IRC.'
+// 1/7 — midpoint of the 1/5–1/10 range from #136. Random rate avoids the
+// pattern-match-and-ignore failure mode of a fixed cadence.
+const REMINDER_PROBABILITY = 1 / 7
+
 // Re-export ClientConfig under the legacy name for callers that import McpServerConfig.
 export type { ClientConfig as McpServerConfig } from './irc-client.js'
 
@@ -136,6 +141,10 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
   // millisecond timestamp (the original bug behind reassembly).
   let receiveSeq = 0
 
+  // Tracks whether any non-historical inbound message has been emitted in
+  // this session — gates the always-attach-on-first-message behavior.
+  let firstMessageSeen = false
+
   // ---- MCP server --------------------------------------------------------
 
   const mcp = new Server(
@@ -184,10 +193,24 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
       if (meta.chunkCount && meta.chunkCount > 1) metaRecord.chunkCount = String(meta.chunkCount)
     }
     if (meta.historical) metaRecord.historical = 'true'
+
     pushNotification(msg.text, metaRecord)
     process.stderr.write(
       `roost-irc[${NICK}]: <- ${msg.isDirect ? 'DM from' : `${msg.channel} <`}${msg.sender}> ${msg.text.length > 120 ? msg.text.slice(0, 117) + '...' : msg.text}${meta.buffered ? ` [BUFFERED x${meta.chunkCount}]` : ''}${meta.historical ? ' [HISTORY]' : ''}\n`,
     )
+
+    if (!meta.historical) {
+      if (!firstMessageSeen || Math.random() < REMINDER_PROBABILITY) {
+        pushNotification(REPLY_REMINDER, {
+          event: 'reminder',
+          channel: msg.channel,
+          sender: '',
+          isDirect: String(msg.isDirect),
+          ts: msg.ts,
+        })
+      }
+      firstMessageSeen = true
+    }
   })
 
   client.on('membership', (kind, nick, channel, extras) => {

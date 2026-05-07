@@ -2,7 +2,7 @@
  * irc-server.ts tests via InMemoryTransport. Imports createMcpServer directly
  * so the server runs in the test process and appears in the coverage report.
  */
-import { describe, it, expect, beforeAll } from 'bun:test'
+import { describe, it, expect, beforeAll, spyOn } from 'bun:test'
 import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { startMcp } from './helpers/mcp.js'
@@ -237,6 +237,123 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     // Now send to B — reply should be silent (no other unread)
     const reply2 = await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-unread7-b', text: 'got it' } })
     expect(toolText(reply2)).not.toContain('unread:')
+  })
+
+  // ---- Reply reminder (issue #136) ---------------------------------------
+
+  it('first inbound channel message triggers a reminder followup notification', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-rem1')
+    const peer = await connectPeer(ergo, 'ip-rem1-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-rem1' } })
+    await peer.joinChannel('#ip-rem1')
+
+    peer.say('#ip-rem1', 'first message')
+    const msg = await mcp.waitForNotification(
+      n => n.meta.channel === '#ip-rem1' && n.content === 'first message',
+    )
+    expect(msg.meta.event).toBeUndefined()
+
+    const reminder = await mcp.waitForNotification(n => n.meta.event === 'reminder')
+    expect(reminder.content).toBe('Substantive replies should be posted to IRC.')
+    expect(reminder.meta.channel).toBe('#ip-rem1')
+    expect(Number(reminder.meta.seq)).toBeGreaterThan(Number(msg.meta.seq))
+  })
+
+  it('first inbound DM triggers a reminder followup notification', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-rem2')
+    const peer = await connectPeer(ergo, 'ip-rem2-peer')
+
+    peer.say('ip-rem2', 'dm hello')
+    const msg = await mcp.waitForNotification(
+      n => n.meta.isDirect === 'true' && n.content === 'dm hello',
+    )
+    const reminder = await mcp.waitForNotification(n => n.meta.event === 'reminder')
+    expect(reminder.content).toBe('Substantive replies should be posted to IRC.')
+    expect(reminder.meta.isDirect).toBe('true')
+    expect(Number(reminder.meta.seq)).toBeGreaterThan(Number(msg.meta.seq))
+  })
+
+  it('historical replay does not emit a reminder, and does not consume the first-message slot', async () => {
+    const peer = await connectPeer(ergo, 'ip-rem4-peer')
+    const mcp = await startMcpInProcess(ergo, 'ip-rem4')
+
+    await peer.joinChannel('#ip-rem4')
+    // Wait on peer's own echo (echo-message cap) — guarantees ergo has stored
+    // the message in chathistory before mcp joins. Avoids a wall-clock sleep.
+    const echoSeen = peer.waitForMessage('#ip-rem4', m => m.nick === 'ip-rem4-peer' && m.text === 'historical-first')
+    peer.say('#ip-rem4', 'historical-first')
+    await echoSeen
+
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-rem4' } })
+    await mcp.waitForNotification(n => n.meta.historical === 'true' && n.content === 'historical-first')
+
+    peer.say('#ip-rem4', 'live-after-historical')
+    const live = await mcp.waitForNotification(
+      n => n.meta.channel === '#ip-rem4' && n.content === 'live-after-historical',
+    )
+    const reminder = await mcp.waitForNotification(n => n.meta.event === 'reminder')
+    expect(reminder.content).toBe('Substantive replies should be posted to IRC.')
+    expect(Number(reminder.meta.seq)).toBeGreaterThan(Number(live.meta.seq))
+
+    // No reminder fired for the historical message — only one reminder total.
+    expect(mcp.notifications.filter(n => n.meta.event === 'reminder')).toHaveLength(1)
+  })
+
+  it('subsequent message emits reminder when Math.random() < probability', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-rem5')
+    const peer = await connectPeer(ergo, 'ip-rem5-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-rem5' } })
+    await peer.joinChannel('#ip-rem5')
+
+    peer.say('#ip-rem5', 'first')
+    const firstReminder = await mcp.waitForNotification(n => n.meta.event === 'reminder')
+
+    const spy = spyOn(Math, 'random').mockReturnValue(0.01)
+    try {
+      peer.say('#ip-rem5', 'second-low-rand')
+      await mcp.waitForNotification(n => n.meta.channel === '#ip-rem5' && n.content === 'second-low-rand')
+      const secondReminder = await mcp.waitForNotification(
+        n => n.meta.event === 'reminder',
+        5000,
+        firstReminder.cursor,
+      )
+      expect(secondReminder.content).toBe('Substantive replies should be posted to IRC.')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('subsequent message skips reminder when Math.random() >= probability', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-rem6')
+    const peer = await connectPeer(ergo, 'ip-rem6-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-rem6' } })
+    await peer.joinChannel('#ip-rem6')
+
+    peer.say('#ip-rem6', 'first')
+    const firstReminder = await mcp.waitForNotification(n => n.meta.event === 'reminder')
+
+    const spy = spyOn(Math, 'random').mockReturnValue(0.99)
+    try {
+      peer.say('#ip-rem6', 'second-high-rand')
+      const msg = await mcp.waitForNotification(
+        n => n.meta.channel === '#ip-rem6' && n.content === 'second-high-rand',
+      )
+      // Fence: a peer leave generates a membership notification (no reminder).
+      // Once the leave arrives, any reminder for second-high-rand would have
+      // landed before it.
+      await peer.leaveChannel('#ip-rem6')
+      const leaveNotif = await mcp.waitForNotification(
+        n => n.meta.event === 'leave' && n.meta.sender === 'ip-rem6-peer',
+      )
+      const laterReminders = mcp.notifications.filter(
+        n => n.meta.event === 'reminder' && Number(n.meta.seq) > Number(firstReminder.meta.seq),
+      )
+      expect(laterReminders).toHaveLength(0)
+      expect(msg.content).toBe('second-high-rand')
+      expect(Number(leaveNotif.meta.seq)).toBeGreaterThan(Number(msg.meta.seq))
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('historical replay does not count as unread', async () => {
