@@ -495,6 +495,11 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       this.pendingRejoinChannels = [...this.channelUsers.keys()].sort()
       this.channelUsers.clear()
     }
+    // Pre-empt pending resolvers; stale setTimeouts still fire but calling resolve() again is a no-op.
+    for (const list of this.joinResolvers.values()) for (const r of list) r(false)
+    this.joinResolvers.clear()
+    for (const list of this.partResolvers.values()) for (const r of list) r(false)
+    this.partResolvers.clear()
     this.ircReady = false
     this.emitSystem('disconnected', '[roost] disconnected from IRC')
   }
