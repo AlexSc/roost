@@ -195,6 +195,30 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     expect(toolText(list)).not.toMatch(/\(\d+\)/)
   })
 
+  it('channel_ack response includes unread suffix for other channels, omits if none', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-unread8')
+    const peer = await connectPeer(ergo, 'ip-unread8-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread8-a' } })
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread8-b' } })
+    await peer.joinChannel('#ip-unread8-a')
+    await peer.joinChannel('#ip-unread8-b')
+
+    // Message arrives in B while agent reads A
+    peer.say('#ip-unread8-b', 'check this out')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread8-b' && n.content === 'check this out')
+
+    // Acking A should report B as unread
+    const ack = await mcp.client.callTool({ name: 'channel_ack', arguments: { channel: '#ip-unread8-a' } })
+    expect(toolText(ack)).toContain('acked #ip-unread8-a')
+    expect(toolText(ack)).toContain('unread:')
+    expect(toolText(ack)).toContain('#ip-unread8-b')
+    expect(toolText(ack)).toContain('check this out')
+
+    // Acking B clears the last unread — no suffix
+    const ack2 = await mcp.client.callTool({ name: 'channel_ack', arguments: { channel: '#ip-unread8-b' } })
+    expect(toolText(ack2)).not.toContain('unread:')
+  })
+
   it('emitUnreadSummary emits notification with channel+preview; all-caught-up when none', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-unread5')
     const peer = await connectPeer(ergo, 'ip-unread5-peer')
