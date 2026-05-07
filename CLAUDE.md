@@ -21,6 +21,8 @@ Requires ergo (IRCv3 server). Install with `bin/install-ergo` or set `ERGO_BIN` 
 
 **Never pipe `bun test` through `tail`, `head`, or `grep`.** The shell returns the *last* command's exit code, which is always 0 for those filters — so `bun test ... | tail -N` reports success even when bun failed. The pipe also buffers the entire run until exit, masking hangs. If you need to trim noisy output, write the full result to a file and read it: `bun test ... > /tmp/out 2>&1; echo "exit=$?"; tail -N /tmp/out`. The exit code is the only honest signal.
 
+**Bun-specific footgun (issue #170, upstream report TBD):** when an unhandled promise rejection arrives from a test the runner has already abandoned, bun 1.2.20 deadlocks the runner (no subsequent test runs, process never exits). Any test helper that resolves/rejects via a `setTimeout(reject, ...)` race against the user's `await` will hit this if the user's await is ever aborted (test timeout, prior failure, etc.). Wrap such promises with `suppressLateRejection` from `test/helpers/tool.ts`: it pre-attaches a no-op `.catch()` so an abandoned rejection is silently absorbed, while a still-active `await` still throws normally. The existing wait-style helpers in `test/helpers/mcp-core.ts` and `test/helpers/peer.ts` already use it.
+
 ## Worktrees
 
 Use `script/worktree <branch> [--from <base>] [path]` to bootstrap a new worktree — it creates the sibling worktree, runs `bun install`, and copies `.claude/settings.local.json` from the main worktree so spawned workers don't hit a permission-prompt flood.

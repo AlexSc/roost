@@ -2,6 +2,7 @@
 import IRC from 'irc-framework'
 import { afterAll } from 'bun:test'
 import type { ErgoContext } from './ergo.js'
+import { suppressLateRejection } from './tool.js'
 
 let peerCounter = 0
 
@@ -42,7 +43,7 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
 
   const client = new IRC.Client()
 
-  await new Promise<void>((resolve, reject) => {
+  await suppressLateRejection(new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error(`peer ${peerNick} connect timed out`)), 5000)
     client.on('registered', () => { clearTimeout(timeout); resolve() })
     client.on('close', () => reject(new Error('peer connection closed during connect')))
@@ -53,7 +54,7 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
       auto_reconnect: false,
       enable_echomessage: true,
     })
-  })
+  }))
 
   const messageWaiters: Array<{
     channel: string
@@ -78,7 +79,7 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
   })
 
   const waitForPart = (channel: string, nick: string, timeoutMs = 5000): Promise<void> =>
-    new Promise((resolve, reject) => {
+    suppressLateRejection(new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         client.removeListener('part', onPart)
         reject(new Error(`waitForPart ${nick} in ${channel} timed out after ${timeoutMs}ms`))
@@ -91,13 +92,13 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
         }
       }
       client.on('part', onPart)
-    })
+    }))
 
   return {
     nick: peerNick,
 
     joinChannel(channel) {
-      return new Promise((resolve, reject) => {
+      return suppressLateRejection(new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(
           () => reject(new Error(`joinChannel ${channel} timed out`)),
           5000,
@@ -111,7 +112,7 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
         }
         client.on('join', onJoin)
         client.join(channel)
-      })
+      }))
     },
 
     leaveChannel(channel) {
@@ -128,7 +129,7 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
     },
 
     changeNick(newNick, timeoutMs = 5000) {
-      return new Promise((resolve, reject) => {
+      return suppressLateRejection(new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
           client.removeListener('nick', onNick)
           reject(new Error(`changeNick to ${newNick} timed out`))
@@ -142,13 +143,13 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
         }
         client.on('nick', onNick)
         client.changeNick(newNick)
-      })
+      }))
     },
 
     waitForPart,
 
     waitForMessage(channel, pred, timeoutMs = 5000) {
-      return new Promise((resolve, reject) => {
+      return suppressLateRejection(new Promise<PeerMessage>((resolve, reject) => {
         const timer = setTimeout(() => {
           const idx = messageWaiters.findIndex(w => w.resolve === resolve)
           if (idx !== -1) messageWaiters.splice(idx, 1)
@@ -161,7 +162,7 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
           resolve: (msg) => { clearTimeout(timer); resolve(msg) },
           reject,
         })
-      })
+      }))
     },
   }
 }
