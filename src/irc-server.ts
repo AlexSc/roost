@@ -46,7 +46,7 @@ export type { ClientConfig as McpServerConfig } from './irc-client.js'
 const TOOL_SCHEMAS = [
   {
     name: 'channel_message',
-    description: 'Post a message to a channel (e.g., "#roost"). The channel must already be joined.',
+    description: 'Post a message to a channel (e.g., "#roost"). The channel must already be joined. Response includes a trailing \'unread:\' summary listing other channels with pending messages.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -58,7 +58,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'direct_message',
-    description: 'Send a private message (DM) to another nick.',
+    description: "Send a private message (DM) to another nick. Response includes a trailing 'unread:' summary listing other channels with pending messages.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -115,12 +115,12 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'channel_list',
-    description: 'List all channels currently joined by this MCP instance. Issues a live WHOIS query to the IRC server on every call for an authoritative result.',
+    description: "List all channels currently joined by this MCP instance. Issues a live WHOIS query to the IRC server on every call for an authoritative result. Response includes a trailing 'unread:' summary listing other channels with pending messages.",
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
     name: 'channel_ack',
-    description: "Mark a channel (or DM peer nick) as read, clearing its unread count. Only needed when you read a channel's messages but have nothing to say in response. Posting any message to a channel (channel_message / direct_message) implicitly acks it.",
+    description: "Mark a channel (or DM peer nick) as read, clearing its unread count. Only needed when you read a channel's messages but have nothing to say in response. Posting any message to a channel (channel_message / direct_message) implicitly acks it. Response includes a trailing 'unread:' summary listing other channels with pending messages.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -156,7 +156,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
         tools: {},
         experimental: { 'claude/channel': {} },
       },
-      instructions: `roost IRC MCP. You are connected to IRC as nick "${NICK}". Outbound: use channel_message, direct_message, channel_join, channel_leave, channel_who, channel_history, channel_list, channel_ack. Inbound: IRC traffic arrives as <channel source="roost-irc"> events with sender, channel, and isDirect attributes. After compaction a special event with event=unread-summary lists channels with pending unread messages — check those channels. Auto-joined: ${AUTO_JOIN.join(', ') || '(none)'}.`,
+      instructions: `roost IRC MCP. You are connected to IRC as nick "${NICK}". Outbound: use channel_message, direct_message, channel_join, channel_leave, channel_who, channel_history, channel_list, channel_ack. Inbound: IRC traffic arrives as <channel source="roost-irc"> events with sender, channel, and isDirect attributes. After compaction a special event with event=unread-summary lists channels with pending unread messages — check those channels. channel_message, direct_message, channel_list, and channel_ack responses include a trailing 'unread:' block listing other channels with pending messages. Auto-joined: ${AUTO_JOIN.join(', ') || '(none)'}.`,
     },
   )
 
@@ -317,7 +317,8 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
       case 'channel_ack': {
         const ch = args.channel as string
         client.ackUnread(ch)
-        return { content: [{ type: 'text', text: `acked ${ch}` }] }
+        const suffix = unreadSuffix()
+        return { content: [{ type: 'text', text: `acked ${ch}${suffix}` }] }
       }
       default:
         return {
