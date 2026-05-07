@@ -36,6 +36,94 @@ const SOURCE_NAME = 'roost-irc'
 // Re-export ClientConfig under the legacy name for callers that import McpServerConfig.
 export type { ClientConfig as McpServerConfig } from './irc-client.js'
 
+const TOOL_SCHEMAS = [
+  {
+    name: 'channel_message',
+    description: 'Post a message to a channel (e.g., "#roost"). The channel must already be joined.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', description: 'Channel name including the leading "#".' },
+        text: { type: 'string', description: 'Message text.' },
+      },
+      required: ['channel', 'text'],
+    },
+  },
+  {
+    name: 'direct_message',
+    description: 'Send a private message (DM) to another nick.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        nick: { type: 'string', description: 'Recipient nick.' },
+        text: { type: 'string', description: 'Message text.' },
+      },
+      required: ['nick', 'text'],
+    },
+  },
+  {
+    name: 'channel_join',
+    description: 'Join a channel. Returns when the JOIN is acknowledged. Recent channel history (up to ROOST_IRC_JOIN_HISTORY_LINES messages within ROOST_IRC_JOIN_HISTORY_MINUTES minutes) is then pushed as historical notifications.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', description: 'Channel name including "#".' },
+      },
+      required: ['channel'],
+    },
+  },
+  {
+    name: 'channel_leave',
+    description: 'Leave (PART) a channel.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', description: 'Channel name including "#".' },
+      },
+      required: ['channel'],
+    },
+  },
+  {
+    name: 'channel_who',
+    description: 'List nicks currently present in a channel. Served from a local cache (no network round-trip); the cache is kept current via JOIN/PART/KICK/QUIT events.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', description: 'Channel name including "#".' },
+      },
+      required: ['channel'],
+    },
+  },
+  {
+    name: 'channel_history',
+    description: 'Return up to N recent messages observed by this MCP for a channel or DM peer (since startup, capped at ROOST_IRC_HISTORY).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', description: 'Channel name (e.g., "#roost") or peer nick for DM history.' },
+        limit: { type: 'number', description: 'Max messages to return (default: 20).' },
+      },
+      required: ['channel'],
+    },
+  },
+  {
+    name: 'channel_list',
+    description: 'List all channels currently joined by this MCP instance. Issues a live WHOIS query to the IRC server on every call for an authoritative result.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'channel_ack',
+    description: "Mark a channel (or DM peer nick) as read, clearing its unread count. Only needed when you read a channel's messages but have nothing to say in response. Posting any message to a channel (channel_message / direct_message) implicitly acks it.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', description: 'Channel name (e.g., "#roost") or peer nick for DMs.' },
+      },
+      required: ['channel'],
+    },
+  },
+]
+
 // Wire the MCP server and subscribe to typed IRC events. Does NOT connect to
 // any transport or start the IRC connection — the caller does both after
 // createMcpServer returns. Call order: createMcpServer → server.connect(transport)
@@ -129,108 +217,19 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
 
   // ---- Tool definitions --------------------------------------------------
 
-  mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
-      {
-        name: 'channel_message',
-        description:
-          'Post a message to a channel (e.g., "#roost"). The channel must already be joined.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            channel: { type: 'string', description: 'Channel name including the leading "#".' },
-            text: { type: 'string', description: 'Message text.' },
-          },
-          required: ['channel', 'text'],
-        },
-      },
-      {
-        name: 'direct_message',
-        description: 'Send a private message (DM) to another nick.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            nick: { type: 'string', description: 'Recipient nick.' },
-            text: { type: 'string', description: 'Message text.' },
-          },
-          required: ['nick', 'text'],
-        },
-      },
-      {
-        name: 'channel_join',
-        description: 'Join a channel. Returns when the JOIN is acknowledged. Recent channel history (up to ROOST_IRC_JOIN_HISTORY_LINES messages within ROOST_IRC_JOIN_HISTORY_MINUTES minutes) is then pushed as historical notifications.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            channel: { type: 'string', description: 'Channel name including "#".' },
-          },
-          required: ['channel'],
-        },
-      },
-      {
-        name: 'channel_leave',
-        description: 'Leave (PART) a channel.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            channel: { type: 'string', description: 'Channel name including "#".' },
-          },
-          required: ['channel'],
-        },
-      },
-      {
-        name: 'channel_who',
-        description: 'List nicks currently present in a channel. Served from a local cache (no network round-trip); the cache is kept current via JOIN/PART/KICK/QUIT events.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            channel: { type: 'string', description: 'Channel name including "#".' },
-          },
-          required: ['channel'],
-        },
-      },
-      {
-        name: 'channel_history',
-        description:
-          'Return up to N recent messages observed by this MCP for a channel or DM peer (since startup, capped at ROOST_IRC_HISTORY).',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            channel: {
-              type: 'string',
-              description:
-                'Channel name (e.g., "#roost") or peer nick for DM history.',
-            },
-            limit: {
-              type: 'number',
-              description: 'Max messages to return (default: 20).',
-            },
-          },
-          required: ['channel'],
-        },
-      },
-      {
-        name: 'channel_list',
-        description: 'List all channels currently joined by this MCP instance. Issues a live WHOIS query to the IRC server on every call for an authoritative result.',
-        inputSchema: {
-          type: 'object',
-          properties: {},
-          required: [],
-        },
-      },
-      {
-        name: 'channel_ack',
-        description: 'Mark a channel (or DM peer nick) as read, clearing its unread count. Only needed when you read a channel\'s messages but have nothing to say in response. Posting any message to a channel (channel_message / direct_message) implicitly acks it.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            channel: { type: 'string', description: 'Channel name (e.g., "#roost") or peer nick for DMs.' },
-          },
-          required: ['channel'],
-        },
-      },
-    ],
-  }))
+  const handleSay = (target: string, text: string, label: string) => {
+    const { chunks, mode } = client.say(target, text)
+    client.ackUnread(target)
+    const suffix = unreadSuffix()
+    const note =
+      mode === 'multiline' ? ` (sent as draft/multiline batch, ${chunks} lines)`
+      : chunks > 1 ? ` (split into ${chunks} chunks for IRC line cap)`
+      : ''
+    const preview = text.length > 120 ? text.slice(0, 117) + '...' : text
+    return { content: [{ type: 'text', text: `${label}: ${preview}${note}${suffix}` }] }
+  }
+
+  mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_SCHEMAS }))
 
   mcp.setRequestHandler(CallToolRequestSchema, async req => {
     const { name, arguments: args = {} } = req.params
@@ -244,102 +243,51 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
 
     switch (name) {
       case 'channel_message': {
-        const channel = String(args.channel ?? '')
-        const text = String(args.text ?? '')
-        const { chunks, mode } = client.say(channel, text)
-        client.ackUnread(channel)
-        const suffix = unreadSuffix()
-        const note =
-          mode === 'multiline' ? ` (sent as draft/multiline batch, ${chunks} lines)`
-          : chunks > 1 ? ` (split into ${chunks} chunks for IRC line cap)`
-          : ''
-        const preview = text.length > 120 ? text.slice(0, 117) + '...' : text
-        return { content: [{ type: 'text', text: `sent to ${channel}: ${preview}${note}${suffix}` }] }
+        const ch = args.channel as string
+        const text = args.text as string
+        return handleSay(ch, text, `sent to ${ch}`)
       }
       case 'direct_message': {
-        const nick = String(args.nick ?? '')
-        const text = String(args.text ?? '')
-        const { chunks, mode } = client.say(nick, text)
-        client.ackUnread(nick)
-        const suffix = unreadSuffix()
-        const note =
-          mode === 'multiline' ? ` (sent as draft/multiline batch, ${chunks} lines)`
-          : chunks > 1 ? ` (split into ${chunks} chunks for IRC line cap)`
-          : ''
-        const preview = text.length > 120 ? text.slice(0, 117) + '...' : text
-        return { content: [{ type: 'text', text: `DM to ${nick}: ${preview}${note}${suffix}` }] }
+        const nick = args.nick as string
+        const text = args.text as string
+        return handleSay(nick, text, `DM to ${nick}`)
       }
       case 'channel_join': {
-        const channel = String(args.channel ?? '').toLowerCase()
-        const ok = await client.join(channel)
-        return {
-          content: [
-            { type: 'text', text: ok ? `joined ${channel}` : `join ${channel} timed out` },
-          ],
-          isError: !ok,
-        }
+        const ch = (args.channel as string).toLowerCase()
+        const ok = await client.join(ch)
+        return { content: [{ type: 'text', text: ok ? `joined ${ch}` : `join ${ch} timed out` }], isError: !ok }
       }
       case 'channel_leave': {
-        const channel = String(args.channel ?? '').toLowerCase()
-        const ok = await client.leave(channel)
-        return {
-          content: [
-            { type: 'text', text: ok ? `parted ${channel}` : `part ${channel} timed out` },
-          ],
-          isError: !ok,
-        }
+        const ch = (args.channel as string).toLowerCase()
+        const ok = await client.leave(ch)
+        return { content: [{ type: 'text', text: ok ? `parted ${ch}` : `part ${ch} timed out` }], isError: !ok }
       }
       case 'channel_who': {
-        const channel = String(args.channel ?? '')
-        const users = client.getUsers(channel)
-        return {
-          content: [
-            {
-              type: 'text',
-              text: users.length
-                ? `${channel} (${users.length}): ${users.join(', ')}`
-                : `${channel}: (no users tracked — not joined yet, or NAMES not received)`,
-            },
-          ],
-        }
+        const ch = args.channel as string
+        const users = client.getUsers(ch)
+        return { content: [{ type: 'text', text: users.length ? `${ch} (${users.length}): ${users.join(', ')}` : `${ch}: (no users tracked — not joined yet, or NAMES not received)` }] }
       }
       case 'channel_history': {
-        const key = String(args.channel ?? '')
-        const limit = Number(args.limit ?? 20)
+        const key = args.channel as string
+        const limit = (args.limit as number | undefined) ?? 20
         client.ackUnread(key)
         const slice = client.getHistory(key, limit)
-        if (slice.length === 0) {
-          return {
-            content: [
-              { type: 'text', text: `no history for ${key} (since this MCP started)` },
-            ],
-          }
-        }
-        const lines = slice.map(
-          m =>
-            `[${m.ts}] ${m.isDirect ? `(DM from ${m.sender})` : `${m.channel} <${m.sender}>`} ${m.text}`,
-        )
+        if (slice.length === 0) return { content: [{ type: 'text', text: `no history for ${key} (since this MCP started)` }] }
+        const lines = slice.map(m => `[${m.ts}] ${m.isDirect ? `(DM from ${m.sender})` : `${m.channel} <${m.sender}>`} ${m.text}`)
         return { content: [{ type: 'text', text: lines.join('\n') }] }
       }
       case 'channel_list': {
         const channels = await client.whoisChannels()
-        if (channels === false) {
-          return { content: [{ type: 'text', text: 'whois timed out' }], isError: true }
-        }
-        if (channels.length === 0) {
-          return { content: [{ type: 'text', text: '(no channels joined)' }] }
-        }
+        if (channels === false) return { content: [{ type: 'text', text: 'whois timed out' }], isError: true }
+        if (channels.length === 0) return { content: [{ type: 'text', text: '(no channels joined)' }] }
         const unread = client.getUnread()
-        const lines = channels.map(ch => {
-          const info = unread.get(ch)
-          return info ? formatUnreadLine(ch, info, 80) : ch
-        })
+        const lines = channels.map(ch => { const info = unread.get(ch); return info ? formatUnreadLine(ch, info, 80) : ch })
         return { content: [{ type: 'text', text: lines.join('\n') }] }
       }
       case 'channel_ack': {
-        const channel = String(args.channel ?? '')
-        client.ackUnread(channel)
-        return { content: [{ type: 'text', text: `acked ${channel}` }] }
+        const ch = args.channel as string
+        client.ackUnread(ch)
+        return { content: [{ type: 'text', text: `acked ${ch}` }] }
       }
       default:
         return {
