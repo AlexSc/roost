@@ -94,7 +94,7 @@ EOF
 }
 
 require_ircd() {
-  if ! nc -z -w 2 "${IRC_HOST}" "${IRC_PORT}" >/dev/null 2>&1; then
+  if ! (echo > /dev/tcp/"${IRC_HOST}"/"${IRC_PORT}") 2>/dev/null; then
     echo "error: no IRC daemon listening on ${IRC_HOST}:${IRC_PORT}" >&2
     echo "  start ergo with:" >&2
     echo "    cd ${ROOST_DIR}/var/ergo && ./ergo run --conf ${ROOST_DIR}/etc/ergo.yaml" >&2
@@ -376,7 +376,7 @@ cmd_tail() {
 }
 
 cmd_status() {
-  if nc -z -w 2 "${IRC_HOST}" "${IRC_PORT}" >/dev/null 2>&1; then
+  if (echo > /dev/tcp/"${IRC_HOST}"/"${IRC_PORT}") 2>/dev/null; then
     echo "ircd: up on ${IRC_HOST}:${IRC_PORT}"
   else
     echo "ircd: DOWN (start: cd ${ROOST_DIR}/var/ergo && ./ergo run --conf ${ROOST_DIR}/etc/ergo.yaml)"
