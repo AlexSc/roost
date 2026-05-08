@@ -1,4 +1,7 @@
-#!/usr/bin/env bun
+// Permbot: queues permission-prompt summaries from the worker's hook,
+// DMs them to the operator, and routes the y/n reply back over the unix
+// socket. Loaded as a module by irc-server.ts — owns one of the two IRC
+// connections held by the MCP process.
 
 import * as fs from 'node:fs'
 import * as net from 'node:net'
@@ -12,7 +15,9 @@ export interface PermbotConfig {
   sockPath: string
   target: string
   worker: string
-  debugLog: string
+  // Defaults to <dirname(sockPath)>/permbot.log when omitted. Pass '/dev/null'
+  // in tests to silence file output.
+  debugLog?: string
   nudgeAfterMs?: number  // default: 5 minutes; exposed for testing
 }
 
@@ -44,14 +49,14 @@ export function startPermbot(
   config: PermbotConfig,
   client: RoostIrcClient,
 ): { stop: () => void; ready: Promise<void> } {
-  const { nick, sockPath, target, worker, debugLog } = config
+  const { nick, sockPath, target, worker } = config
+  const debugLog = config.debugLog ?? path.join(path.dirname(sockPath), 'permbot.log')
   const nudgeAfterMs = config.nudgeAfterMs ?? 5 * 60 * 1000
   const log = (msg: string) => dlog(debugLog, nick, msg)
 
   const queue: QueueEntry[] = []
   let inFlight: InFlight | null = null
   let shuttingDown = false
-  let ppidTimer: ReturnType<typeof setInterval> | null = null
 
   function respond(socket: net.Socket, payload: object): void {
     try { socket.write(JSON.stringify(payload) + '\n') } catch { /* ignore */ }
@@ -105,7 +110,6 @@ export function startPermbot(
     }
     for (const e of queue) respond(e.socket, { error: 'daemon shutting down' })
     queue.length = 0
-    if (ppidTimer !== null) clearInterval(ppidTimer)
     try { client.quit() } catch { /* ignore */ }
     server.close()
     try { fs.unlinkSync(sockPath) } catch { /* ignore */ }
@@ -175,6 +179,11 @@ export function startPermbot(
       log('FATAL nick registration failure, shutting down')
       stop()
     } else if (kind === 'disconnected') {
+      // Tear down on disconnect. The hook's askDaemon detects the missing
+      // socket and falls back to a transient-DM + emit('ask'), so the
+      // worker degrades cleanly. Owner-gate eliminates the collision-driven
+      // disconnect that motivated #188; if a real network drop becomes a
+      // recurring failure mode, add auto-reconnect as a followup.
       log('IRC connection lost, shutting down')
       stop()
     } else if (kind === 'cap-missing') {
@@ -182,58 +191,5 @@ export function startPermbot(
     }
   })
 
-  // ---- Parent reparent watcher ---------------------------------------------
-  // Capture initial ppid (the spawning process — typically the MCP server).
-  // When it dies, kernel reparents us to init/launchd → ppid changes → exit.
-  // Bounds orphan window to one poll interval; no env-var config needed.
-
-  const initialPpid = process.ppid
-  ppidTimer = setInterval(() => {
-    if (process.ppid !== initialPpid) {
-      log(`parent reparented (${initialPpid} → ${process.ppid}), shutting down`)
-      stop()
-    }
-  }, 1000)
-  ppidTimer.unref?.()
-
   return { stop, ready }
-}
-
-// ---- Entrypoint -------------------------------------------------------------
-
-if (import.meta.main) {
-  const env = (k: string, def?: string): string | undefined => process.env[k] ?? def
-  const required = (k: string): string => {
-    const v = process.env[k]
-    if (!v) { process.stderr.write(`roost-permbot: FATAL: ${k} required\n`); process.exit(2) }
-    return v
-  }
-
-  const NICK     = required('ROOST_PERM_NICK')
-  const SOCK     = required('ROOST_PERM_SOCK')
-  const TARGET   = required('ROOST_PERM_TARGET')
-  const HOST     = env('ROOST_PERM_HOST', '127.0.0.1')!
-  const PORT     = Number(env('ROOST_PERM_PORT', '6667'))
-  const WORKER   = env('ROOST_PERM_WORKER') ?? NICK.replace(/^permbot-/, '')
-  const LOG      = env('ROOST_PERM_DEBUG_LOG') ?? path.join(path.dirname(SOCK), 'permbot.log')
-
-  const { RoostIrcClientImpl } = await import('./irc-client-impl.js')
-  const client = new RoostIrcClientImpl({
-    nick: NICK,
-    autoJoin: [],
-    historySize: 0,
-    joinHistoryLines: 0,
-    joinHistoryMinutes: 0,
-  })
-
-  const config: PermbotConfig = {
-    nick: NICK, sockPath: SOCK, target: TARGET,
-    worker: WORKER, debugLog: LOG,
-  }
-
-  const { stop } = startPermbot(config, client)
-  client.connect({ host: HOST, port: PORT, nick: NICK, username: NICK, gecos: 'roost-permbot' })
-
-  process.on('SIGTERM', stop)
-  process.on('SIGINT', stop)
 }

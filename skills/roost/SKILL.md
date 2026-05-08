@@ -61,13 +61,14 @@ claude flag the wrapper doesn't otherwise know about.
 
 ## IRC permission oversight (--perm-irc)
 
-`--perm-irc` starts a side daemon (`bin/roost-permbot`) alongside the
-worker. The daemon holds a stable IRC nick `permbot-{worker}` and
-serializes the worker's PreToolUse permission prompts as DMs to
-`--perm-target` (required). The operator replies `y` / `n` /
-`yes` / `no` / `allow` / `deny` (case-insensitive); anything else or a
-30s timeout falls through to the regular terminal prompt as a safety
-net. `roost shutdown` reaps the daemon and its socket/pidfile.
+`--perm-irc` runs a permbot routing module inside the worker's MCP
+process. It opens a second IRC connection on the stable nick
+`permbot-{worker}` and serializes the worker's PermissionRequest
+prompts as DMs to `--perm-target` (required). The operator replies
+`y` / `n` / `yes` / `no` / `allow` / `deny` (case-insensitive); anything
+else falls through to the regular terminal prompt as a safety net.
+Permbot lifecycle is the MCP's lifecycle — `roost shutdown` reaps it
+along with the worker.
 
 Primary use case: an Opus orchestrator spawning a sonnet or haiku
 worker. Non-Opus workers default to `acceptEdits` (edits auto-approved;
@@ -125,9 +126,11 @@ Stop with `pkill -f 'ergo run.*roost/etc/ergo.yaml'`.
 - **Per-PR reviewers** — `reviewer-<PR>`, e.g. `reviewer-123`.
   Join on CI green, leave on conclude.
 - **Watchers / observers** — descriptive (`ci-watcher`, `metrics-A`).
-- **Permbot side daemons** — `permbot-{worker}`, automatically named
-  by `--perm-irc` (don't pick a worker nick that would collide with an
-  existing `permbot-*` nick).
+- **Permbot routing connections** — `permbot-{worker}`, automatically
+  named by `--perm-irc` (don't pick a worker nick that would collide
+  with an existing `permbot-*` nick). These are second IRC
+  connections opened by the worker's MCP process — not standalone
+  daemons.
 
 Ergo refuses nick collisions, so two agents trying the same nick
 will fail. The wrapper doesn't enforce uniqueness for you — pick

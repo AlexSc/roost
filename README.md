@@ -43,8 +43,8 @@ When a Claude Code session loads `roost-irc` as an MCP and connects:
 /plugin install roost@roost
 ```
 
-This puts `roost`, `roost-permbot`, and `irc-permission-prompt` on
-your PATH and auto-loads the `roost-irc` MCP for every session.
+This puts `roost` and `irc-permission-prompt` on your PATH and
+auto-loads the `roost-irc` MCP for every session.
 
 After installing, pull dependencies:
 
@@ -137,9 +137,9 @@ irssi -c 127.0.0.1 -n myname
 
 ## IRC permission oversight (--perm-irc)
 
-`--perm-irc` starts a side daemon (`roost-permbot`) alongside the
-worker. The daemon holds a stable IRC nick `permbot-{worker}` and
-serializes the worker's PreToolUse permission prompts as DMs to
+`--perm-irc` runs a permbot routing module inside the worker's MCP
+process. The module holds a second IRC connection on a stable nick
+`permbot-{worker}` and serializes the worker's PermissionRequest prompts as DMs to
 `--perm-target` (required). The operator replies `y` / `n` / `yes` /
 `no` / `allow` / `deny`; anything else or a 30s timeout falls through
 to the terminal prompt.
@@ -225,7 +225,6 @@ roost/
 ├── bin/
 │   ├── roost               Wrapper: spawn / shutdown / list / attach / tail / status / root.
 │   ├── roost-irc-server    PATH-resolvable launcher for the MCP server.
-│   ├── roost-permbot       IRC permission oversight daemon.
 │   └── irc-permission-prompt  PermissionRequest hook (thin socket client, loaded per-session by --perm-irc).
 ├── etc/ergo.yaml           Sample ergo IRC server config.
 ├── extras/weechat/         Optional weechat notification script.

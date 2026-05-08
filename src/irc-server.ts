@@ -30,10 +30,13 @@ import {
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
 import type { RoostIrcClient, ClientConfig, UnreadInfo } from './irc-client.js'
+import { startPermbot, type PermbotConfig } from './permbot.js'
+import { claimOwnership } from './owner-gate.js'
 
 const SOURCE_NAME = 'roost-irc'
 
 export const NOT_READY_SENTINEL = 'IRC client not ready (still connecting).'
+const PASSIVE_SENTINEL = 'roost-irc MCP is passive: a sibling MCP in the same ROOST_DATA_DIR already owns this nick. Tools are disabled in this instance.'
 
 const REPLY_REMINDER = 'Substantive replies should be posted to IRC.'
 // 1/7 — midpoint of the 1/5–1/10 range from #136. Random rate avoids the
@@ -131,12 +134,44 @@ const TOOL_SCHEMAS = [
   },
 ]
 
+export interface CreateMcpOptions {
+  // Passive MCPs (lost the owner race in claimOwnership) keep the stdio
+  // transport up so claude doesn't see a crashed plugin, but every tool
+  // call short-circuits with PASSIVE_SENTINEL. No IRC events are wired.
+  passive?: boolean
+}
+
 // Wire the MCP server and subscribe to typed IRC events. Does NOT connect to
 // any transport or start the IRC connection — the caller does both after
 // createMcpServer returns. Call order: createMcpServer → server.connect(transport)
 // → ircClient.connect.
-export function createMcpServer(client: RoostIrcClient, config: ClientConfig): { server: Server; clearDedupeCache: () => void; emitUnreadSummary: () => Promise<void> } {
+export function createMcpServer(client: RoostIrcClient, config: ClientConfig, options: CreateMcpOptions = {}): { server: Server; clearDedupeCache: () => void; emitUnreadSummary: () => Promise<void> } {
   const { nick: NICK, autoJoin: AUTO_JOIN } = config
+
+  // ---- Passive short-circuit ---------------------------------------------
+  // Lost the owner race in claimOwnership(). Build a minimal MCP that errors
+  // every tool call so claude doesn't see a crashed plugin. No state, no
+  // event subscriptions, no IRC client interaction.
+
+  if (options.passive === true) {
+    const mcp = new Server(
+      { name: SOURCE_NAME, version: '0.0.1' },
+      {
+        capabilities: { tools: {} },
+        instructions: `roost IRC MCP (passive instance for nick "${NICK}"). All tool calls error.`,
+      },
+    )
+    mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_SCHEMAS }))
+    mcp.setRequestHandler(CallToolRequestSchema, async () => ({
+      content: [{ type: 'text', text: PASSIVE_SENTINEL }],
+      isError: true,
+    }))
+    return {
+      server: mcp,
+      clearDedupeCache: () => { /* no-op */ },
+      emitUnreadSummary: async () => { /* no-op */ },
+    }
+  }
 
   // Per-MCP monotonic receive counter — gives downstream consumers a
   // strictly-monotonic ordering even when two events resolve to the same
@@ -374,51 +409,13 @@ if (import.meta.main) {
     .map(s => s.trim())
     .filter(Boolean)
 
-  // Write our PID so the PreCompact hook can signal us. Only when ROOST_DATA_DIR
-  // is set — that's always true for sessions spawned by bin/roost.
+  // Owner gate: nested claudes (e.g. `claude -p ...` from a Bash tool call)
+  // inherit ROOST_DATA_DIR via tmux env and would otherwise spawn a duplicate
+  // MCP that collides with the owner's IRC nick. First MCP to start wins;
+  // later starters detect the mismatch and stay passive.
   const DATA_DIR = process.env['ROOST_DATA_DIR'] ?? ''
-  if (DATA_DIR) {
-    try {
-      await Bun.write(`${DATA_DIR}/mcp.pid`, String(process.pid))
-    } catch (e) {
-      process.stderr.write(`roost-irc[${NICK}]: warn: could not write pidfile: ${e}\n`)
-    }
-  }
-
-  // Spawn permbot as our child when the side-daemon is requested. Permbot's
-  // lifecycle then rides this MCP's lifecycle: when claude exits, we exit
-  // (stdio EOF), permbot detects ppid change and exits. No external pidfiles,
-  // no stale-reap on next spawn.
-  const PERM_SOCK = process.env['ROOST_PERM_SOCK'] ?? ''
-  const PERM_TARGET = process.env['ROOST_PERM_TARGET'] ?? ''
-  let permbotProc: import('bun').Subprocess | null = null
-  if (PERM_SOCK && PERM_TARGET) {
-    const permbotPath = new URL('./permbot.ts', import.meta.url).pathname
-    // ROOST_PERM_SOCK / ROOST_PERM_TARGET are already in process.env (set by
-    // bin/roost via tmux -e). ROOST_PERM_WORKER and ROOST_PERM_DEBUG_LOG
-    // default sensibly inside permbot.ts (worker = nick minus 'permbot-',
-    // log = dirname(sock)/permbot.log). Only ROOST_PERM_NICK needs explicit
-    // setting — the prefix convention lives in one place: here.
-    // stdout=ignore: MCP owns parent stdout for JSON-RPC protocol; permbot
-    // writes there would corrupt it. stderr=inherit lets permbot logs surface
-    // alongside MCP logs in the tmux pane.
-    permbotProc = Bun.spawn([process.execPath, permbotPath], {
-      env: { ...process.env, ROOST_PERM_NICK: `permbot-${NICK}` } as Record<string, string>,
-      stdin: 'ignore',
-      stdout: 'ignore',
-      stderr: 'inherit',
-    })
-    process.stderr.write(`roost-irc[${NICK}]: spawned permbot child (pid ${permbotProc.pid})\n`)
-  }
-
-  const killPermbot = () => {
-    if (permbotProc && permbotProc.exitCode === null) {
-      try { permbotProc.kill('SIGTERM') } catch { /* ignore */ }
-    }
-  }
-  process.on('exit', killPermbot)
-  process.on('SIGINT', () => { killPermbot(); process.exit(130) })
-  process.on('SIGTERM', () => { killPermbot(); process.exit(143) })
+  const SESSION_ID = process.env['CLAUDE_CODE_SESSION_ID'] ?? ''
+  const ownership = (DATA_DIR && SESSION_ID) ? claimOwnership(DATA_DIR, SESSION_ID) : 'owner'
 
   const clientConfig: ClientConfig = {
     nick: NICK,
@@ -428,8 +425,83 @@ if (import.meta.main) {
     joinHistoryMinutes: numericEnv('ROOST_IRC_JOIN_HISTORY_MINUTES', 30),
   }
 
+  if (ownership === 'passive') {
+    process.stderr.write(`roost-irc[${NICK}]: passive — owner.session held by sibling MCP, skipping IRC connect / permbot / pidfile\n`)
+    const ircClient = new RoostIrcClientImpl(clientConfig)
+    const { server: mcp } = createMcpServer(ircClient, clientConfig, { passive: true })
+    await mcp.connect(new StdioServerTransport())
+    process.stderr.write(`roost-irc[${NICK}]: passive MCP transport up at ${new Date().toISOString()}\n`)
+  } else {
+    await runOwnerMcp({ NICK, REALNAME, SERVER, PORT, DATA_DIR, clientConfig, RoostIrcClientImpl })
+  }
+}
+
+// Owner path: pidfile + worker IRC + (optional) in-process permbot.
+// Extracted from the if-block to keep the entrypoint flat — the passive
+// branch returns early; this is the rest.
+async function runOwnerMcp(args: {
+  NICK: string
+  REALNAME: string
+  SERVER: string
+  PORT: number
+  DATA_DIR: string
+  clientConfig: ClientConfig
+  RoostIrcClientImpl: typeof import('./irc-client-impl.js').RoostIrcClientImpl
+}): Promise<void> {
+  const { NICK, REALNAME, SERVER, PORT, DATA_DIR, clientConfig, RoostIrcClientImpl } = args
+
+  if (DATA_DIR) {
+    try {
+      await Bun.write(`${DATA_DIR}/mcp.pid`, String(process.pid))
+    } catch (e) {
+      process.stderr.write(`roost-irc[${NICK}]: warn: could not write pidfile: ${e}\n`)
+    }
+  }
+
   const ircClient = new RoostIrcClientImpl(clientConfig)
   const { server: mcp, clearDedupeCache, emitUnreadSummary } = createMcpServer(ircClient, clientConfig)
+
+  // Permbot runs in-process when --perm-irc is on. Same MCP, second IRC
+  // connection on nick `permbot-${NICK}`. Lifecycle = MCP lifecycle, so a
+  // crashed nested-claude spawn can no longer kick the worker's permbot
+  // off via nick collision (#188). The hook stays a separate process and
+  // talks to us over the unix socket as before.
+  const PERM_SOCK = process.env['ROOST_PERM_SOCK'] ?? ''
+  const PERM_TARGET = process.env['ROOST_PERM_TARGET'] ?? ''
+  let permbotStop: (() => void) | null = null
+  if (PERM_SOCK && PERM_TARGET) {
+    const permbotNick = `permbot-${NICK}`
+    const permbotClient = new RoostIrcClientImpl({
+      nick: permbotNick,
+      autoJoin: [],
+      historySize: 0,
+      joinHistoryLines: 0,
+      joinHistoryMinutes: 0,
+    })
+    const permbotConfig: PermbotConfig = {
+      nick: permbotNick,
+      sockPath: PERM_SOCK,
+      target: PERM_TARGET,
+      worker: NICK,
+    }
+    const { stop } = startPermbot(permbotConfig, permbotClient)
+    permbotStop = stop
+    permbotClient.connect({
+      host: SERVER,
+      port: PORT,
+      nick: permbotNick,
+      username: permbotNick,
+      gecos: 'roost-permbot',
+    })
+    process.stderr.write(`roost-irc[${NICK}]: started in-process permbot (nick ${permbotNick}, sock ${PERM_SOCK})\n`)
+  }
+
+  const shutdown = (code: number) => {
+    try { permbotStop?.() } catch { /* ignore */ }
+    process.exit(code)
+  }
+  process.on('SIGINT', () => shutdown(130))
+  process.on('SIGTERM', () => shutdown(143))
 
   // SIGUSR1: PreCompact hook fires this to clear the seen-set. Next backfill
   // after reconnect re-delivers messages compacted out of the agent's context.

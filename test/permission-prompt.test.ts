@@ -263,4 +263,32 @@ describe('permission-prompt hook', () => {
     const { stderr } = await runHook({ ROOST_IRC_NICK: 'worker-test' })
     expect(stderr).toContain('deferring to terminal')
   })
+
+  it('owner-gate short-circuits before any socket touch when nested (#188)', async () => {
+    // Owner.session is held by sess-A; this hook run carries CLAUDE_CODE_SESSION_ID=sess-B,
+    // so checkOwnership() must short-circuit BEFORE askDaemon connects to the unix socket.
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-hook-test-'))
+    const sockPath = path.join(dataDir, 'permbot.sock')
+    fs.writeFileSync(path.join(dataDir, 'owner.session'), 'sess-A')
+
+    let connected = false
+    const sockServer = net.createServer((s) => { connected = true; s.destroy() })
+    await new Promise<void>(r => sockServer.listen(sockPath, () => r()))
+
+    try {
+      const { stdout, stderr } = await runHook({
+        ROOST_IRC_NICK: 'worker-test',
+        ROOST_DATA_DIR: dataDir,
+        CLAUDE_CODE_SESSION_ID: 'sess-B',
+        ROOST_PERM_SOCK: sockPath,
+        ROOST_PERM_TARGET: 'operator',
+      })
+      expect(connected).toBe(false)
+      expect(stderr).toContain('nested claude')
+      expect(stdout).toBe('')  // emit('ask') is a no-stdout exit
+    } finally {
+      await new Promise<void>(r => sockServer.close(() => r()))
+      fs.rmSync(dataDir, { recursive: true, force: true })
+    }
+  })
 })

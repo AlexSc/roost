@@ -400,6 +400,11 @@ substrate swap may bring different canonicalization rules.
 
 ## Findings — `bin/roost-permbot` (318 LOC)
 
+> **Update (#188):** the standalone `bin/roost-permbot` launcher has been
+> deleted. Permbot now runs as a module (`src/permbot.ts`) loaded by
+> `src/irc-server.ts`. D2–D4 below are obsolete; L9 is moot since the
+> module rewrite is in TypeScript with named tuples.
+
 ### D2-D4. Dead state — delete · low · −6 LOC
 
 Three small dead bindings on the same wrapper class:

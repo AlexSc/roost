@@ -51,11 +51,11 @@ Options:
   -c, --channels CHANS       Comma-separated channels to auto-join.
                              Default: #roost
   -m, --model MODEL          Override --model. Default: opus.
-  --perm-irc                 Start a permbot side daemon that surfaces this
-                             worker's tool-permission prompts as DMs to
-                             --perm-target. Useful for non-Opus models that
-                             can't use auto mode. Spawned as a child of the
-                             MCP server and dies with it.
+  --perm-irc                 Run an in-process permbot inside the worker's
+                             MCP server. It surfaces this worker's
+                             tool-permission prompts as DMs to --perm-target.
+                             Useful for non-Opus models that can't use auto
+                             mode. Lifecycle = MCP lifecycle.
   --perm-target NICK         Operator nick to DM for permission prompts.
                              Required when --perm-irc is set.
   --permission-mode MODE     Override --permission-mode passed to claude.
@@ -188,8 +188,8 @@ require_ircd() {
 # spawn time (ROOST_DATA_DIR). The dir is stored in the tmux session env so
 # shutdown can find it:
 #   tmux show-environment -t roost-<nick> ROOST_DATA_DIR
-# Permbot (when --perm-irc is on) is spawned as a child of the MCP server in
-# src/irc-server.ts and dies with it — no lifecycle management here.
+# Permbot (when --perm-irc is on) runs in-process inside the MCP server
+# (src/irc-server.ts) — no separate process to manage here.
 
 cmd_spawn() {
   local nick=""
@@ -398,8 +398,8 @@ cmd_shutdown() {
   data_dir="$(tmux show-environment -t "${session_name}" ROOST_DATA_DIR 2>/dev/null | sed 's/^ROOST_DATA_DIR=//')"
   tmux kill-session -t "${session_name}"
   echo "killed ${session_name}"
-  # MCP exits with the tmux pane → permbot reparents → permbot exits via
-  # its own ppid watcher. We just clean up the per-session data dir.
+  # MCP (which hosts the in-process permbot) exits with the tmux pane.
+  # We just clean up the per-session data dir.
   if [ -n "${data_dir}" ] && [ -d "${data_dir}" ]; then
     rm -rf "${data_dir}"
   fi
