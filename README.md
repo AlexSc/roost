@@ -163,6 +163,27 @@ roost spawn scratch-h -c '#sandbox' -m haiku \
   --perm-irc --perm-target mynick
 ```
 
+## Project dispatcher (example poller)
+
+`bin/orchestrator_poll` is a reference dispatcher that polls GitHub for
+changes to watched issues / PRs and posts events into `#issue-N` channels,
+waking the agents listening there. Copy it into your own repo as-is, or fork
+it and swap in plugins for whatever upstream you actually care about — the
+dispatcher itself is upstream-agnostic.
+
+Quickstart:
+
+```bash
+cp .orchestrator/config.example.json .orchestrator/config.json
+# edit repo, irc.nick, irc.project_channel, watched_prs, watched_issues
+bin/orchestrator_poll --seed     # seed state, no events emitted
+bin/orchestrator_poll --daemon   # production loop
+```
+
+Run the daemon under whatever supervisor your project already uses (tmux,
+systemd, launchd). Full field reference, event list, and plugin extension
+points are in [`docs/ORCHESTRATOR.md`](docs/ORCHESTRATOR.md).
+
 ## MCP tools
 
 | Tool | Purpose |
