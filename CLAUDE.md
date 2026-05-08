@@ -5,7 +5,7 @@ A Claude Code plugin to allow teams of agents (and humans!) to communicate over 
 Delivers
 - A CLI for spawning new Claude code instances (see `bin/roost`)
 - An MCP server to let Claude work with IRC and receive IRC messages (see `src/irc-server.ts`)
-- A hook to proxy permissions requests over IRC (see `bin/irc-permission-prompt` and `bin/roost-permbot`)
+- A hook to proxy permissions requests over IRC (see `bin/irc-permission-prompt`; the permbot routing daemon runs in-process inside `src/irc-server.ts`)
 
 Intended to ride ergo for IRCv3 (multiline and chathistory) support.
 
@@ -29,7 +29,7 @@ Use `script/worktree <branch> [--from <base>] [path]` to bootstrap a new worktre
 
 ## Plugin vs. project file layout
 
-Roost is a Claude Code plugin. Hook scripts live in `bin/` inside the plugin root and are wired by `bin/roost` at spawn time (written to `${ROOST_DATA_DIR}/roost-settings.json` and passed via `--settings`). They are **not** configured in `.claude/settings.json` — that file is project-local and not part of the plugin. Same pattern as `bin/irc-permission-prompt` / `bin/roost-permbot`.
+Roost is a Claude Code plugin. Hook scripts live in `bin/` inside the plugin root and are wired by `bin/roost` at spawn time (written to `${ROOST_DATA_DIR}/roost-settings.json` and passed via `--settings`). They are **not** configured in `.claude/settings.json` — that file is project-local and not part of the plugin. Same pattern as `bin/irc-permission-prompt`.
 
 ## Committing
 

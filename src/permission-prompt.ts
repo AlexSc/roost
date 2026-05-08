@@ -3,12 +3,15 @@
 import * as fs from 'node:fs'
 import * as net from 'node:net'
 import * as path from 'node:path'
+import { checkOwnership } from './owner-gate.js'
 
 const WORKER      = process.env['ROOST_IRC_NICK'] ?? 'unknown'
 const SOCK_PATH   = process.env['ROOST_PERM_SOCK'] ?? ''
 const PERM_TARGET = process.env['ROOST_PERM_TARGET'] ?? ''
 const PERM_HOST   = process.env['ROOST_PERM_HOST'] ?? '127.0.0.1'
 const PERM_PORT   = Number(process.env['ROOST_PERM_PORT'] ?? '6667')
+const DATA_DIR    = process.env['ROOST_DATA_DIR'] ?? ''
+const SESSION_ID  = process.env['CLAUDE_CODE_SESSION_ID'] ?? ''
 const SOCKET_SAFETY_TIMEOUT = 570 // just under Claude Code's 600s hook default
 
 const PASSTHROUGH_PREFIXES = ['mcp__roost-irc__', 'mcp__plugin_roost_roost-irc__']
@@ -242,6 +245,16 @@ if (import.meta.main) {
   const agentId        = String(payload!['agent_id'] ?? '')
 
   if (PASSTHROUGH_PREFIXES.some(p => toolName.startsWith(p))) emit('allow', 'roost-irc passthrough')
+
+  // Owner-gate short-circuit (#188): nested claudes inherit the parent's
+  // ROOST_DATA_DIR via tmux env, so the unix socket path resolves to the
+  // owner's permbot. Routing a nested-claude's prompt there would DM the
+  // operator about a tool call they didn't initiate. Defer to the local
+  // terminal prompt before touching the socket at all.
+  if (DATA_DIR && SESSION_ID) {
+    const ownership = checkOwnership(DATA_DIR, SESSION_ID)
+    if (ownership === 'passive') emit('ask', 'nested claude (non-owner session) — local prompt')
+  }
 
   const intent = extractIntent(resolveTranscriptPath(transcriptPath, agentId))
   const summaryLines = summarize(toolName, toolInput)

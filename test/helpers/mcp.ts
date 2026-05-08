@@ -16,11 +16,18 @@ let instanceCounter = 0
 export async function startMcp(ergo: ErgoContext, nick?: string, extraEnv?: Record<string, string>): Promise<McpHandle> {
   const clientNick = nick ?? `mcp${++instanceCounter}`
 
+  // Scrub roost-related env from the parent process so the subprocess
+  // doesn't inherit a real worker's ROOST_DATA_DIR / ROOST_PERM_* and
+  // accidentally bind a test permbot on top of the operator's live socket.
+  const scrubbed = Object.fromEntries(
+    Object.entries(process.env).filter(([k]) => !k.startsWith('ROOST_')),
+  )
+
   const transport = new StdioClientTransport({
     command: 'bun',
     args: ['run', join(ROOST_ROOT, 'src', 'irc-server.ts')],
     env: {
-      ...process.env,
+      ...scrubbed,
       ROOST_IRC_SERVER: ergo.host,
       ROOST_IRC_PORT: String(ergo.port),
       ROOST_IRC_NICK: clientNick,
