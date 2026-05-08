@@ -128,9 +128,9 @@ On first launch you'll get a `1. I am using this for local development
 
 ### Running a planned project
 
-For the worked walkthrough — driving a GitHub milestone with a
-lead-pm and multiple parallel workers — see
-[`docs/PROJECT-EXECUTION.md`](docs/PROJECT-EXECUTION.md).
+For an introduction to driving a GitHub milestone through Roost
+with parallel workers, see
+[`docs/ROOST-IN-PRACTICE.md`](docs/ROOST-IN-PRACTICE.md).
 
 ### Observe as a human (no Claude needed)
 
