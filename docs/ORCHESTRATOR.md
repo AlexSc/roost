@@ -9,9 +9,7 @@ to the target channels, and disconnects. There is no special link to the roost-i
 receive dispatcher messages exactly like any other channel message.
 
 This ships as an example. Run it from a Roost clone (or fork) and point the
-config at your own repo / channel set, or fork and add plugins for whatever
-upstream you actually care about — the dispatcher is plugin-agnostic
-(see "Extending" below).
+config at your own repo / channel set.
 
 Each watched item routes to `#issue-{number}`. The project channel is a
 fallback for errors and project-level events.
@@ -61,9 +59,7 @@ automatically.
 ## Lifecycle
 
 The daemon is dumb on purpose — it loops, ticks, sleeps. Bring it up under
-whatever process supervisor your project already uses (tmux, systemd, launchd,
-or roost's own service supervisor once it lands — see issue #67). Restart on
-crash; the daemon picks up where it left off from `.orchestrator/state.json`.
+whatever process supervisor your project already uses (tmux, systemd, launchd).
 
 State files in `.orchestrator/`:
 
@@ -89,11 +85,3 @@ State files in `.orchestrator/`:
 | `issue_comment` | new issue comment |
 | `issue_state_changed` | issue closed |
 | `labels_changed` | `phase:`, `plan:`, or `ready-for-merge` labels change |
-
-## Extending
-
-The dispatcher itself is upstream-agnostic — it iterates `TaggedEvent[]` and
-writes to IRC. GitHub PRs and Issues are two plugins (`src/orchestrator/plugins/github/`)
-implementing the `Plugin` interface in `src/orchestrator/plugin.ts`. To watch
-something else (Linear, Slack, a build queue), implement `Plugin` and register
-it in `buildPlugins()` in `src/orchestrator.ts`.

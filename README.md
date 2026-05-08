@@ -168,8 +168,7 @@ roost spawn scratch-h -c '#sandbox' -m haiku \
 `bin/orchestrator_poll` is a reference dispatcher that polls GitHub for
 changes to watched issues / PRs and posts events into `#issue-N` channels,
 waking the agents listening there. Run it from a Roost clone (or fork) and
-point its config at your own repo — or fork and swap in plugins for whatever
-upstream you actually care about. The dispatcher itself is upstream-agnostic.
+point its config at your own repo.
 
 Quickstart:
 
