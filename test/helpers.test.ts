@@ -41,7 +41,7 @@ describe.if(isErgoAvailable())('test helpers', () => {
     expect(mcp.waiterCount()).toBe(0)
   })
 
-  it('waitForMessage removes waiter on timeout — issue #172 regression', async () => {
+  it('waitForMessage removes waiter on timeout', async () => {
     const peer = await connectPeer(ergo, 'wfm-timeout-peer')
     await peer.joinChannel('#wfm-timeout')
     await expect(peer.waitForMessage('#wfm-timeout', () => false, 50)).rejects.toThrow('timed out')
