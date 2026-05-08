@@ -10,7 +10,7 @@ The primary goal of the alpha milestone is to make Roost usable for development 
 
 ## Naming convention (multi-project, #196)
 
-Every per-project artifact carries a `roost-` prefix so multiple projects can share one ergo without collision:
+Every per-project artifact carries a `roost-` prefix:
 
 - Leads channel: `#roost-leads`
 - Issue channel: `#roost-issue-<N>`
@@ -19,7 +19,9 @@ Every per-project artifact carries a `roost-` prefix so multiple projects can sh
 - Watcher nick: `roost-watcher`
 - Dispatcher nick: `roost-dispatcher` (set in `.orchestrator/config.json`)
 
-When you spawn an agent, compute the namespaced nick + channel and pass them explicitly via `roost spawn` flags. The orchestrator daemon's `naming.ts` is the source of truth.
+The prefix exists for **IRC nick uniqueness** across projects sharing one ergo, and for **GitHub comment attribution** (agents share one GH account, so `[roost-worker-N]` disambiguates which project the comment came from). It is *not* an in-chat speaker label — IRC nicks already show who said what.
+
+When you spawn an agent, always pass the namespaced nick + the matching `--channels` value explicitly. Same when DMing the watcher to add a watch — pass the explicit channel rather than relying on dispatcher defaults.
 
 ## Getting started
 

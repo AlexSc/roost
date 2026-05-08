@@ -14,7 +14,7 @@ The primary goal of the $1 milestone is to make Roost usable for development by 
 
 ## Naming convention (multi-project, #196)
 
-Every per-project artifact carries a `$0-` prefix so multiple projects can share one ergo without collision:
+Every per-project artifact carries a `$0-` prefix:
 
 - Leads channel: `#$0-leads`
 - Issue channel: `#$0-issue-<N>`
@@ -23,7 +23,9 @@ Every per-project artifact carries a `$0-` prefix so multiple projects can share
 - Watcher nick: `$0-watcher`
 - Dispatcher nick: `$0-dispatcher` (set in `.orchestrator/config.json`)
 
-When you spawn an agent, compute the namespaced nick + channel and pass them explicitly via `roost spawn` flags. The orchestrator daemon's `naming.ts` is the source of truth — keep prompt-side strings in sync.
+The prefix exists for **IRC nick uniqueness** across projects sharing one ergo, and for **GitHub comment attribution** (agents share one GH account, so `[$0-worker-N]` disambiguates which project the comment came from). It is *not* an in-chat speaker label — IRC nicks already show who said what.
+
+When you spawn an agent, always pass the namespaced nick + the matching `--channels` value explicitly. Same when DMing the watcher to add a watch — pass the explicit channel rather than relying on dispatcher defaults. Namespacing in spawn args + watch commands is the lead's job.
 
 ## Getting started
 
