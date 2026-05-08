@@ -140,7 +140,9 @@ async function runDaemon(stateDir: string): Promise<void> {
       log(`orchestrator[daemon]: config load failed: ${e}\n`)
     }
 
-    let result: TickResult = { taggedEvents: [], channels: [] }
+    // On tick failure, fall back to the config-only channel view so a transient
+    // GH/scrape blip doesn't part every #issue-N channel until the next success.
+    let result: TickResult = { taggedEvents: [], channels: bootChannels(plugins, config, projectChannel) }
     try {
       result = await runOneTick(stateDir, config, plugins, tickOpts)
     } catch (e) {

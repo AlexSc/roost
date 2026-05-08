@@ -5,7 +5,7 @@ import type { OrchestratorConfig, PrSnap, IssueSnap, WatchedEntry } from './conf
 import { resolveRepoEntry } from './config.js'
 import { scrapePr, scrapeIssue } from './scraper.js'
 import { eventChannels } from './format.js'
-import { BasePlugin, type PluginTickResult, type PluginTickOpts, type TaggedEvent } from './plugin.js'
+import { BasePlugin, type PluginTickResult, type TaggedEvent } from './plugin.js'
 
 export interface GitHubPluginState {
   prs: Record<string, PrSnap>
@@ -30,15 +30,17 @@ export class GitHubPlugin extends BasePlugin {
 
   async runTick(
     config: OrchestratorConfig,
-    prevState: unknown,
-    opts: PluginTickOpts
+    prevState: unknown
   ): Promise<PluginTickResult> {
     const defaultRepo = config.repo
     const watchedPrs = config.watched_prs ?? []
     const watchedIssues = config.watched_issues ?? []
     const agentLogins = new Set(config.agent_logins ?? [])
 
-    const prev = opts.seed ? null : (prevState as GitHubPluginState | null)
+    // Orchestrator already passes null for prevSlice when seeding, so opts.seed
+    // is redundant here. Seeding ticks return [] from the scraper helpers
+    // because their prevSnap is undefined.
+    const prev = prevState as GitHubPluginState | null
     const seeding = prev === null
 
     const curState: GitHubPluginState = { prs: {}, issues: {} }
@@ -73,6 +75,6 @@ export class GitHubPlugin extends BasePlugin {
       for (const n of snap.linked_issues ?? []) channels.add(`#issue-${n}`)
     }
 
-    return { state: curState, taggedEvents: seeding ? [] : taggedEvents, channels: [...channels] }
+    return { state: curState, taggedEvents, channels: [...channels] }
   }
 }
