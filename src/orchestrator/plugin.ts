@@ -1,13 +1,18 @@
 // Plugin seam (#116). A plugin owns a slice of `state.plugins[name]`,
 // declares which IRC channels it wants joined, and on each tick returns
-// pre-routed events. The dispatcher itself is plugin-agnostic — it just
-// walks `TaggedEvent[]` and writes to IRC.
+// pre-routed, pre-formatted events. The dispatcher itself is fully
+// plugin-agnostic — it iterates `TaggedEvent[]` and writes to IRC.
 import type { OrchestratorConfig } from './config.js'
-import type { OrchestratorEvent } from './diff.js'
+
+// Pre-formatted payload variants. Plugins decide one-line vs. multi-line;
+// the dispatcher only knows how to write each variant to IRC.
+export type TaggedEventPayload =
+  | { kind: 'oneline'; text: string }
+  | { kind: 'multiline'; header: string; body: string; url: string }
 
 export interface TaggedEvent {
-  event: OrchestratorEvent
   channels: string[]
+  payload: TaggedEventPayload
 }
 
 export interface PluginTickResult {
@@ -17,6 +22,7 @@ export interface PluginTickResult {
   // members only learnable after scraping (PR linked-issues channels), so
   // the orchestrator picks them up post-tick. Pre-tick boot uses the
   // synchronous desiredChannels(config) view instead.
+  // Excludes the project/default channel — orchestrator unions that in.
   channels: string[]
 }
 
@@ -31,9 +37,7 @@ export interface Plugin {
   // the orchestrator unions that in itself.
   desiredChannels(config: OrchestratorConfig): string[]
   // Per-tick: state slice + tagged events + the live channel set (post-scrape,
-  // including dynamic discoveries like PR linked-issues). The returned
-  // `channels` does NOT include the project/default channel — orchestrator
-  // unions it in. Same contract as desiredChannels.
+  // including dynamic discoveries like PR linked-issues).
   runTick(config: OrchestratorConfig, prevState: unknown, opts: PluginTickOpts): Promise<PluginTickResult>
 }
 
@@ -43,10 +47,9 @@ export abstract class BasePlugin implements Plugin {
   abstract desiredChannels(config: OrchestratorConfig): string[]
   abstract runTick(config: OrchestratorConfig, prevState: unknown, opts: PluginTickOpts): Promise<PluginTickResult>
 
-  // Union auto-detected channels (PR linked-issues, issue's own channel) with
-  // the entry's declared channels; fall back to the default channel if both
-  // are empty — defensive for any future entity-less event the dispatcher
-  // might receive (today's dispatcher-error path goes via direct client.say).
+  // Union auto-detected channels with the entry's declared channels;
+  // fall back to the default channel if both are empty (defensive for any
+  // future entity-less event).
   protected resolveChannels(autoDetected: string[], entryChannels: string[] = []): string[] {
     const merged = Array.from(new Set([...autoDetected, ...entryChannels]))
     return merged.length ? merged : [this.defaultChannel]

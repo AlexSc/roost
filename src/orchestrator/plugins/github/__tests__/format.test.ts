@@ -1,26 +1,56 @@
 import { describe, it, expect } from 'bun:test'
-import { formatEvent, formatCommentHeader, eventChannels } from '../format.js'
+import { formatEvent, formatCommentHeader, prEventChannels, issueEventChannels, formatPayload } from '../format.js'
 import type { OrchestratorEvent } from '../diff.js'
 
-describe('eventChannels', () => {
+describe('prEventChannels', () => {
   it('routes PR with no linked issues to its own channel', () => {
-    expect(eventChannels({ kind: 'pr_merged', pr: 25 })).toEqual(['#issue-25'])
+    expect(prEventChannels({ kind: 'pr_merged', pr: 25 })).toEqual(['#issue-25'])
   })
 
   it('routes PR with linked issues to linked channels', () => {
-    expect(eventChannels({ kind: 'pr_merged', pr: 25, linked_issues: [14, 7] })).toEqual(['#issue-14', '#issue-7'])
-  })
-
-  it('routes issue events to issue channel', () => {
-    expect(eventChannels({ kind: 'issue_comment', issue: 14 })).toEqual(['#issue-14'])
-  })
-
-  it('returns empty for orphan events (no entity)', () => {
-    expect(eventChannels({ kind: 'dispatcher_error' })).toEqual([])
+    expect(prEventChannels({ kind: 'pr_merged', pr: 25, linked_issues: [14, 7] })).toEqual(['#issue-14', '#issue-7'])
   })
 
   it('routes PR with single linked issue to that issue channel', () => {
-    expect(eventChannels({ kind: 'pr_merged', pr: 99, linked_issues: [3] })).toEqual(['#issue-3'])
+    expect(prEventChannels({ kind: 'pr_merged', pr: 99, linked_issues: [3] })).toEqual(['#issue-3'])
+  })
+
+  it('returns empty for events with no pr field', () => {
+    expect(prEventChannels({ kind: 'issue_comment', issue: 14 })).toEqual([])
+  })
+})
+
+describe('issueEventChannels', () => {
+  it('routes issue events to the issue channel', () => {
+    expect(issueEventChannels({ kind: 'issue_comment', issue: 14 })).toEqual(['#issue-14'])
+  })
+
+  it('returns empty for events with no issue field', () => {
+    expect(issueEventChannels({ kind: 'pr_merged', pr: 25 })).toEqual([])
+  })
+})
+
+describe('formatPayload', () => {
+  it('returns oneline for non-comment kinds', () => {
+    const ev: OrchestratorEvent = { kind: 'pr_merged', repo: 'org/r', pr: 5, url: 'u', title: 't' } as OrchestratorEvent
+    const p = formatPayload(ev)
+    expect(p.kind).toBe('oneline')
+    if (p.kind === 'oneline') expect(p.text).toContain('PR org/r#5 merged')
+  })
+
+  it('returns multiline for comment kinds with header/body/url', () => {
+    const ev: OrchestratorEvent = {
+      kind: 'pr_review_comment', repo: 'org/r', pr: 5,
+      author: 'alice', body: 'a\nb', body_preview: 'a',
+      comment_url: 'https://example.com/c/1',
+    } as OrchestratorEvent
+    const p = formatPayload(ev)
+    expect(p.kind).toBe('multiline')
+    if (p.kind === 'multiline') {
+      expect(p.header).toBe('PR org/r#5 comment by alice:')
+      expect(p.body).toBe('a\nb')
+      expect(p.url).toBe('https://example.com/c/1')
+    }
   })
 })
 

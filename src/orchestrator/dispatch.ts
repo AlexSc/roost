@@ -1,15 +1,6 @@
 import type { RoostIrcClient } from '../irc-client.js'
-import { shouldPush } from './diff.js'
-import { formatEvent, formatCommentHeader } from './format.js'
 import type { SystemKind, ConnectOpts } from '../irc-client.js'
 import type { TaggedEvent } from './plugin.js'
-
-const MULTILINE_COMMENT_KINDS = new Set([
-  'pr_review_comment',
-  'pr_conversation_comment',
-  'issue_comment',
-  'pr_review_submitted',
-])
 
 export async function waitForReady(
   client: RoostIrcClient,
@@ -42,43 +33,29 @@ export async function connectAndWait(
   await Promise.all(channels.map(ch => client.join(ch)))
 }
 
-// Data-shape-agnostic dispatch (imports the TaggedEvent type but treats every
-// plugin's output identically). Channels are pre-resolved by the plugin;
-// we just format and write. say() is a synchronous socket write with no
-// delivery ack — a mid-tick disconnect drops in-flight events silently.
+// Pure plumbing: pre-routed, pre-formatted events in, IRC writes out.
+// The dispatcher knows how to write the two payload variants but nothing
+// about plugins, event kinds, or routing rules. say() is a synchronous
+// socket write with no delivery ack — a mid-tick disconnect drops in-flight
+// events silently.
 export async function dispatchTaggedEvents(
   taggedEvents: TaggedEvent[],
   client: RoostIrcClient
 ): Promise<void> {
   const failures: string[] = []
-  for (const { event: ev, channels } of taggedEvents) {
-    if (!shouldPush(ev)) continue
-    const kind = ev.kind
-    const isComment = MULTILINE_COMMENT_KINDS.has(kind)
-    let text = ''
-    let header = ''
-    let body = ''
-    let url = ''
-    if (isComment) {
-      header = formatCommentHeader(ev)
-      const commentEv = ev as { body?: string; comment_url?: string; review_url?: string; url?: string }
-      body = commentEv.body ?? ''
-      url = commentEv.comment_url ?? commentEv.review_url ?? commentEv.url ?? ''
-    } else {
-      text = formatEvent(ev)
-    }
+  for (const { channels, payload } of taggedEvents) {
     const seen = new Set<string>()
     for (const target of channels) {
       if (seen.has(target)) continue
       seen.add(target)
       try {
-        if (isComment) {
-          client.say(target, [header, body, url].join('\n'))
+        if (payload.kind === 'oneline') {
+          client.say(target, payload.text)
         } else {
-          client.say(target, text)
+          client.say(target, [payload.header, payload.body, payload.url].join('\n'))
         }
       } catch (e) {
-        failures.push(`${ev.kind} -> ${target}: ${e}`)
+        failures.push(`${payload.kind} -> ${target}: ${e}`)
       }
     }
   }

@@ -1,8 +1,9 @@
 import { mkdir, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 
-// Bumped to 2 in #116 — namespaced plugin state + WatchedEntry channels (no bare-int back-compat).
-export const SCHEMA_VERSION = 2
+// Bumped to 3 in #116 — split GitHub plugin into Prs/Issues, each owns its
+// own state slice. Schema bumps trigger a one-time re-seed via loadState().
+export const SCHEMA_VERSION = 3
 
 export interface WatchedEntry {
   repo?: string
@@ -22,34 +23,6 @@ export interface OrchestratorConfig {
   }
   watched_prs?: WatchedEntry[]
   watched_issues?: WatchedEntry[]
-}
-
-export interface PrSnap {
-  repo: string
-  number: number
-  title: string | null
-  url: string | null
-  head_ref: string | null
-  head_oid: string | null
-  is_draft: boolean
-  merged: boolean
-  state: string | null
-  labels: string[]
-  ci_state: string | null
-  linked_issues: number[]
-  seen_review_comment_ids: number[]
-  seen_conversation_comment_ids: number[]
-  seen_review_ids: number[]
-}
-
-export interface IssueSnap {
-  repo: string
-  number: number
-  title: string | null
-  url: string | null
-  state: string | null
-  labels: string[]
-  seen_comment_ids: number[]
 }
 
 export interface OrchestratorState {

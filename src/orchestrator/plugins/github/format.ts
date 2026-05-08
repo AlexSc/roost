@@ -1,4 +1,12 @@
 import type { OrchestratorEvent, CommentEvent, ReviewEvent, LabelEvent, CiEvent, StateChangeEvent, SeedEvent } from './diff.js'
+import type { TaggedEventPayload } from '../../plugin.js'
+
+const MULTILINE_COMMENT_KINDS: ReadonlySet<string> = new Set([
+  'pr_review_comment',
+  'pr_conversation_comment',
+  'issue_comment',
+  'pr_review_submitted',
+])
 
 function eventTag(event: OrchestratorEvent): string {
   const n = (event as { pr?: number; issue?: number }).pr ?? (event as { pr?: number; issue?: number }).issue
@@ -107,16 +115,32 @@ export function formatEvent(event: OrchestratorEvent): string {
   return `[${kind}] ${JSON.stringify(event).slice(0, 280)}`
 }
 
-// Auto-detected channels for an event, based on its entity. Returns [] for
-// orphan events (no pr/issue) — callers compose with entry-declared channels
-// and a default-channel fallback (see BasePlugin.resolveChannels).
-export function eventChannels(event: OrchestratorEvent): string[] {
-  const ev = event as { pr?: number; issue?: number; linked_issues?: number[] }
-  if (ev.pr != null) {
-    const linked = ev.linked_issues ?? []
-    if (linked.length) return linked.map(n => `#issue-${n}`)
-    return [`#issue-${ev.pr}`]
+// Auto-detected channels for a PR event (the PR's linked-issue channels, or
+// its own #issue-N if it has no linked issues). Plugin uses this when tagging.
+export function prEventChannels(event: OrchestratorEvent): string[] {
+  const ev = event as { pr?: number; linked_issues?: number[] }
+  if (ev.pr == null) return []
+  const linked = ev.linked_issues ?? []
+  return linked.length ? linked.map(n => `#issue-${n}`) : [`#issue-${ev.pr}`]
+}
+
+// Auto-detected channels for an issue event — the issue's own channel.
+export function issueEventChannels(event: OrchestratorEvent): string[] {
+  const ev = event as { issue?: number }
+  return ev.issue != null ? [`#issue-${ev.issue}`] : []
+}
+
+// Convert an event into a renderable payload. Comment-style kinds use the
+// multiline form (header + body + url); everything else is a oneline.
+export function formatPayload(event: OrchestratorEvent): TaggedEventPayload {
+  if (MULTILINE_COMMENT_KINDS.has(event.kind)) {
+    const ev = event as CommentEvent & { review_url?: string }
+    return {
+      kind: 'multiline',
+      header: formatCommentHeader(event),
+      body: ev.body ?? '',
+      url: ev.comment_url ?? ev.review_url ?? event.url ?? '',
+    }
   }
-  if (ev.issue != null) return [`#issue-${ev.issue}`]
-  return []
+  return { kind: 'oneline', text: formatEvent(event) }
 }

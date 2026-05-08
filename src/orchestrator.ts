@@ -16,7 +16,8 @@ import {
 } from './orchestrator/config.js'
 
 import { dispatchTaggedEvents, connectAndWait } from './orchestrator/dispatch.js'
-import { GitHubPlugin } from './orchestrator/github-plugin.js'
+import { GitHubPrsPlugin } from './orchestrator/plugins/github/prs-plugin.js'
+import { GitHubIssuesPlugin } from './orchestrator/plugins/github/issues-plugin.js'
 import type { Plugin, TaggedEvent } from './orchestrator/plugin.js'
 import { RoostIrcClientImpl } from './irc-client-impl.js'
 
@@ -48,9 +49,15 @@ async function runOneTick(
   const allTagged: TaggedEvent[] = []
   const allChannels = new Set<string>()
 
-  for (const plugin of plugins) {
-    const prevSlice = getPluginState<unknown>(prev, plugin.name)
-    const result = await plugin.runTick(config, prevSlice, { seed: opts.seed })
+  // Plugins are independent — share GH rate limits but no in-process state —
+  // so parallel execution is safe and useful for any N≥2.
+  const results = await Promise.all(
+    plugins.map(async plugin => ({
+      plugin,
+      result: await plugin.runTick(config, getPluginState<unknown>(prev, plugin.name), { seed: opts.seed }),
+    }))
+  )
+  for (const { plugin, result } of results) {
     curState.plugins[plugin.name] = result.state
     allTagged.push(...result.taggedEvents)
     for (const c of result.channels) allChannels.add(c)
@@ -66,7 +73,10 @@ async function runOneTick(
 }
 
 function buildPlugins(defaultChannel: string): Plugin[] {
-  return [new GitHubPlugin(defaultChannel)]
+  return [
+    new GitHubPrsPlugin(defaultChannel),
+    new GitHubIssuesPlugin(defaultChannel),
+  ]
 }
 
 function bootChannels(plugins: Plugin[], config: OrchestratorConfig, projectChannel: string): string[] {
