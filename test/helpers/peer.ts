@@ -149,9 +149,8 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
 
     waitForMessage(channel, pred, timeoutMs = 5000) {
       return suppressLateRejection(new Promise<PeerMessage>((resolve, reject) => {
-        let timer: ReturnType<typeof setTimeout>
         const wrappedResolve = (msg: PeerMessage) => { clearTimeout(timer); resolve(msg) }
-        timer = setTimeout(() => {
+        const timer = setTimeout(() => {
           const idx = messageWaiters.findIndex(w => w.resolve === wrappedResolve)
           if (idx !== -1) messageWaiters.splice(idx, 1)
           reject(new Error(`waitForMessage on ${channel} timed out after ${timeoutMs}ms`))
