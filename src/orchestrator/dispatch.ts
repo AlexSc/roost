@@ -33,21 +33,18 @@ export async function connectAndWait(
   await Promise.all(channels.map(ch => client.join(ch)))
 }
 
-// Pure plumbing: pre-routed, pre-formatted events in, IRC writes out.
-// The dispatcher knows how to write the two payload variants but nothing
-// about plugins, event kinds, or routing rules. say() is a synchronous
-// socket write with no delivery ack — a mid-tick disconnect drops in-flight
-// events silently.
+// Plugin-agnostic, payload-shape-aware: we know how to write the two payload
+// variants (oneline / multiline) but nothing about plugins, event kinds, or
+// routing. Channels are pre-resolved and pre-deduped by the plugin's
+// resolveChannels — we trust the input. say() is a synchronous socket write
+// with no delivery ack: a mid-tick disconnect drops in-flight events silently.
 export async function dispatchTaggedEvents(
   taggedEvents: TaggedEvent[],
   client: RoostIrcClient
 ): Promise<void> {
   const failures: string[] = []
   for (const { channels, payload } of taggedEvents) {
-    const seen = new Set<string>()
     for (const target of channels) {
-      if (seen.has(target)) continue
-      seen.add(target)
       try {
         if (payload.kind === 'oneline') {
           client.say(target, payload.text)

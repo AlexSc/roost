@@ -9,7 +9,7 @@ const MULTILINE_COMMENT_KINDS: ReadonlySet<string> = new Set([
 ])
 
 function eventTag(event: OrchestratorEvent): string {
-  const n = (event as { pr?: number; issue?: number }).pr ?? (event as { pr?: number; issue?: number }).issue
+  const n = event.pr ?? event.issue
   const repo = event.repo
   if (n != null && repo) return `${repo}#${n}`
   if (n != null) return `#${n}`

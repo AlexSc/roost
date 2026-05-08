@@ -17,10 +17,9 @@ export class GitHubPrsPlugin extends GhBase {
   // Auto-detected channels for a PR event: linked-issue channels, or its own
   // #issue-N if no linked issues.
   private static prEventChannels(event: OrchestratorEvent): string[] {
-    const ev = event as { pr?: number; linked_issues?: number[] }
-    if (ev.pr == null) return []
-    const linked = ev.linked_issues ?? []
-    return linked.length ? linked.map(n => `#issue-${n}`) : [`#issue-${ev.pr}`]
+    if (event.pr == null) return []
+    const linked = event.linked_issues ?? []
+    return linked.length ? linked.map(n => `#issue-${n}`) : [`#issue-${event.pr}`]
   }
 
   async runTick(
@@ -32,14 +31,15 @@ export class GitHubPrsPlugin extends GhBase {
     const agentLogins = this.agentLogins(config)
 
     const prev = prevState as PrPluginState | null
-    const seeding = prev === null
 
     // Scrape all PRs in parallel — each entry is independent. Preserve config
-    // order for taggedEvents so output is stable.
+    // order for taggedEvents so output is stable. prevPr semantics for the
+    // scraper: undefined = seeding (no prior state at all); null = entry is
+    // new to the watch list; PrSnap = normal diff.
     const scraped = await Promise.all(watched.map(async entry => {
       const { repo, number, channels: entryChannels } = resolveRepoEntry(entry, defaultRepo)
       const key = `${repo}#${number}`
-      const prevPr: PrSnap | null | undefined = seeding ? undefined : (prev?.prs[key] ?? null)
+      const prevPr: PrSnap | null | undefined = prev === null ? undefined : (prev.prs[key] ?? null)
       const { snap, events } = await scrapePr(repo, number, prevPr, agentLogins)
       return { key, snap, events, entryChannels }
     }))

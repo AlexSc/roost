@@ -26,10 +26,6 @@ export interface PluginTickResult {
   channels: string[]
 }
 
-export interface PluginTickOpts {
-  seed: boolean
-}
-
 export interface Plugin {
   readonly name: string
   // Synchronous, config-only view of channels the plugin wants joined at boot,
@@ -37,20 +33,21 @@ export interface Plugin {
   // the orchestrator unions that in itself.
   desiredChannels(config: OrchestratorConfig): string[]
   // Per-tick: state slice + tagged events + the live channel set (post-scrape,
-  // including dynamic discoveries like PR linked-issues).
-  runTick(config: OrchestratorConfig, prevState: unknown, opts: PluginTickOpts): Promise<PluginTickResult>
+  // including dynamic discoveries like PR linked-issues). Seeding is signaled
+  // by `prevState === null`.
+  runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult>
 }
 
 export abstract class BasePlugin implements Plugin {
   abstract readonly name: string
   constructor(protected readonly defaultChannel: string) {}
   abstract desiredChannels(config: OrchestratorConfig): string[]
-  abstract runTick(config: OrchestratorConfig, prevState: unknown, opts: PluginTickOpts): Promise<PluginTickResult>
+  abstract runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult>
 
   // Union auto-detected channels with the entry's declared channels;
   // fall back to the default channel if both are empty (defensive for any
   // future entity-less event).
-  protected resolveChannels(autoDetected: string[], entryChannels: string[] = []): string[] {
+  protected resolveChannels(autoDetected: string[], entryChannels: string[]): string[] {
     const merged = Array.from(new Set([...autoDetected, ...entryChannels]))
     return merged.length ? merged : [this.defaultChannel]
   }

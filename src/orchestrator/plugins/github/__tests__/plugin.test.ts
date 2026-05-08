@@ -47,8 +47,8 @@ describe('GitHubPrsPlugin.runTick', () => {
       expect(result.taggedEvents).toHaveLength(1)
       expect(result.taggedEvents[0]?.channels.sort()).toEqual(['#extra', '#issue-14'])
       expect(result.taggedEvents[0]?.payload.kind).toBe('multiline')
-      expect(result.channels.sort()).toContain('#issue-14')
-      expect(result.channels.sort()).toContain('#extra')
+      expect(result.channels).toContain('#issue-14')
+      expect(result.channels).toContain('#extra')
     } finally { spy.mockRestore() }
   })
 

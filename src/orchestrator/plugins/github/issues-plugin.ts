@@ -16,8 +16,7 @@ export class GitHubIssuesPlugin extends GhBase {
 
   // Auto-detected channel for an issue event: the issue's own channel.
   private static issueEventChannels(event: OrchestratorEvent): string[] {
-    const ev = event as { issue?: number }
-    return ev.issue != null ? [`#issue-${ev.issue}`] : []
+    return event.issue != null ? [`#issue-${event.issue}`] : []
   }
 
   async runTick(
@@ -29,14 +28,14 @@ export class GitHubIssuesPlugin extends GhBase {
     const agentLogins = this.agentLogins(config)
 
     const prev = prevState as IssuePluginState | null
-    const seeding = prev === null
 
     // Scrape all issues in parallel — each entry is independent. Preserve
-    // config order for taggedEvents so output is stable.
+    // config order for taggedEvents so output is stable. prevIssue semantics:
+    // undefined = seeding; null = new to watch list; IssueSnap = normal diff.
     const scraped = await Promise.all(watched.map(async entry => {
       const { repo, number, channels: entryChannels } = resolveRepoEntry(entry, defaultRepo)
       const key = `${repo}#${number}`
-      const prevIssue: IssueSnap | null | undefined = seeding ? undefined : (prev?.issues[key] ?? null)
+      const prevIssue: IssueSnap | null | undefined = prev === null ? undefined : (prev.issues[key] ?? null)
       const { snap, events } = await scrapeIssue(repo, number, prevIssue, agentLogins)
       return { key, snap, events, entryChannels }
     }))

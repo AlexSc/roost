@@ -50,11 +50,12 @@ async function runOneTick(
   const allChannels = new Set<string>()
 
   // Plugins are independent — share GH rate limits but no in-process state —
-  // so parallel execution is safe and useful for any N≥2.
+  // so parallel execution is safe and useful for any N≥2. Seeding is signaled
+  // by `prev === null` (loadState skipped above when opts.seed).
   const results = await Promise.all(
     plugins.map(async plugin => ({
       plugin,
-      result: await plugin.runTick(config, getPluginState<unknown>(prev, plugin.name), { seed: opts.seed }),
+      result: await plugin.runTick(config, getPluginState<unknown>(prev, plugin.name)),
     }))
   )
   for (const { plugin, result } of results) {
@@ -150,15 +151,16 @@ async function runDaemon(stateDir: string): Promise<void> {
       log(`orchestrator[daemon]: config load failed: ${e}\n`)
     }
 
-    // On tick failure, fall back to the config-only channel view so a transient
-    // GH/scrape blip doesn't part every #issue-N channel until the next success.
-    let result: TickResult = { taggedEvents: [], channels: bootChannels(plugins, config, projectChannel) }
+    let result: TickResult
     try {
       result = await runOneTick(stateDir, config, plugins, tickOpts)
     } catch (e) {
       const msg = String(e)
       log(`orchestrator[daemon]: tick failed: ${msg}\n`)
       try { client.say(projectChannel, `[dispatcher_error] ${msg}`) } catch { /* best-effort */ }
+      // Fall back to the config-only channel view so a transient GH/scrape
+      // blip doesn't part every #issue-N until the next success.
+      result = { taggedEvents: [], channels: bootChannels(plugins, config, projectChannel) }
     }
 
     // Sync IRC membership against the plugin's reported desired set + project channel.
