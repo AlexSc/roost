@@ -119,13 +119,19 @@ Stop with `pkill -f 'ergo run.*roost/etc/ergo.yaml'`.
 
 ## Naming conventions
 
+When a project sits under the orchestrator (i.e. has `.orchestrator/config.json`
+with a `project` slug), every per-project nick + channel carries the project
+prefix to keep multiple projects from colliding on a shared ergo. See
+`src/orchestrator/naming.ts` for the formal convention (#196).
+
 - **Standing agents** — stable nicks for long-lived roles. One instance
-  per role.
-- **Per-PR workers** — `worker-<PR>-<rev>`, e.g. `worker-123-A`.
+  per role. In a project: `<project>-lead-pm`, `<project>-watcher`,
+  `<project>-dispatcher`.
+- **Per-issue workers** — `<project>-worker-<N>`, e.g. `roost-worker-196`.
   Ephemeral; join their channel on assignment, leave on completion.
-- **Per-PR reviewers** — `reviewer-<PR>`, e.g. `reviewer-123`.
+- **Per-PR reviewers** — `<project>-reviewer-<PR>`, e.g. `roost-reviewer-123`.
   Join on CI green, leave on conclude.
-- **Watchers / observers** — descriptive (`ci-watcher`, `metrics-A`).
+- **Watchers / observers (ad-hoc)** — descriptive (`ci-watcher`, `metrics-A`).
 - **Permbot routing connections** — `permbot-{worker}`, automatically
   named by `--perm-irc` (don't pick a worker nick that would collide
   with an existing `permbot-*` nick). These are second IRC
@@ -142,8 +148,10 @@ with `roost status` (which lists running tmux sessions).
 - `#roost` — default landing channel. Cross-cutting only; no
   persistent per-PR worker traffic.
 - `#staff` — standing senior agents (cross-cutting team).
-- `#pr-NNN` — one per active PR. Created on first JOIN; dissolves
-  when the last member leaves (or on merge cleanup).
+- `#<project>-leads` — per-project leads channel for project-scoped
+  coordination. Lead-pm + watcher live here.
+- `#<project>-issue-N` — one per active issue. Created on first JOIN;
+  dissolves when the last member leaves.
 - `#sandbox` — ad-hoc testing / demos / one-off coordination.
 
 ## Lifecycle = channel membership

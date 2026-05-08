@@ -11,8 +11,9 @@ receive dispatcher messages exactly like any other channel message.
 This ships as an example. Run it from a Roost clone (or fork) and point the
 config at your own repo / channel set.
 
-Each watched item routes to `#issue-{number}`. The project channel is a
-fallback for errors and project-level events.
+Each watched item routes to `#<project>-issue-{number}`. The project channel
+(default `#<project>-leads`) is a fallback for errors and project-level events.
+See `src/orchestrator/naming.ts` for the full namespacing convention (#196).
 
 ## Setup
 
@@ -26,18 +27,19 @@ Fields:
 
 | Field | Meaning |
 |---|---|
+| `project` | Lowercase slug used to namespace IRC nicks/channels (`<project>-worker-N`, `#<project>-issue-N`). Falls back to the basename of `repo`. Must match `^[a-z0-9][a-z0-9-]*$`. |
 | `repo` | Default `OWNER/NAME` for watched items. Per-entry `repo` overrides. |
 | `agent_logins` | GitHub logins whose comments are tagged `is_worker_reply: true` (informational). |
-| `irc.nick` | Nick the dispatcher uses on the IRC server. |
-| `irc.project_channel` | Fallback channel for errors and project-level events. |
+| `irc.nick` | Nick the dispatcher uses on the IRC server. Convention: `<project>-dispatcher`. |
+| `irc.project_channel` | Fallback channel for errors and project-level events. Defaults to `#<project>-leads`. |
 | `irc.server` / `irc.port` | IRCv3 server address. Defaults to `127.0.0.1:6667`. |
 | `irc.interval_seconds` | Tick interval. Min 5s; 60s is sane for most repos. |
 | `watched_prs` | `[{"number": N, "repo"?: "OWNER/NAME", "channels"?: [...]}]` |
 | `watched_issues` | Same shape as `watched_prs`. |
 
 For watched entries, `repo` defaults to the top-level value. `channels` adds
-destinations on top of the auto-routed `#issue-N` (PR events also go to
-`#issue-N` for each linked issue).
+destinations on top of the auto-routed `#<project>-issue-N` (PR events also go
+to `#<project>-issue-N` for each linked issue).
 
 ## Running
 

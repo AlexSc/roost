@@ -12,6 +12,10 @@ export interface WatchedEntry {
 }
 
 export interface OrchestratorConfig {
+  // Lowercase slug used as the prefix for namespaced nicks/channels
+  // (`<project>-worker-N`, `#<project>-issue-N`). Optional: falls back to
+  // the basename of `repo` if missing. See src/orchestrator/naming.ts.
+  project?: string
   repo?: string
   agent_logins?: string[]
   irc?: {

@@ -39,15 +39,16 @@ describe('GitHubPrsPlugin.runTick', () => {
     })
     try {
       const cfg: OrchestratorConfig = {
+        project: 'proj',
         repo: 'org/repo',
         watched_prs: [{ number: 25, channels: ['#extra'] }],
         watched_issues: [],
       }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
       expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels.sort()).toEqual(['#extra', '#issue-14'])
+      expect(result.taggedEvents[0]?.channels.sort()).toEqual(['#extra', '#proj-issue-14'])
       expect(result.taggedEvents[0]?.payload.kind).toBe('multiline')
-      expect(result.channels).toContain('#issue-14')
+      expect(result.channels).toContain('#proj-issue-14')
       expect(result.channels).toContain('#extra')
     } finally { spy.mockRestore() }
   })
@@ -58,6 +59,7 @@ describe('GitHubPrsPlugin.runTick', () => {
     })
     try {
       const cfg: OrchestratorConfig = {
+        project: 'proj',
         repo: 'org/repo',
         watched_prs: [{ number: 25 }],
         watched_issues: [],
@@ -65,7 +67,7 @@ describe('GitHubPrsPlugin.runTick', () => {
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, null)
       const state = result.state as { prs: Record<string, PrSnap> }
       expect(state.prs['org/repo#25']?.linked_issues).toEqual([7])
-      expect(result.channels).toContain('#issue-7')
+      expect(result.channels).toContain('#proj-issue-7')
     } finally { spy.mockRestore() }
   })
 
@@ -77,7 +79,7 @@ describe('GitHubPrsPlugin.runTick', () => {
       snap: fakePrSnap(), events: [seedEv],
     })
     try {
-      const cfg: OrchestratorConfig = { repo: 'org/repo', watched_prs: [{ number: 25 }] }
+      const cfg: OrchestratorConfig = { project: 'proj', repo: 'org/repo', watched_prs: [{ number: 25 }] }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
       expect(result.taggedEvents).toHaveLength(0)
     } finally { spy.mockRestore() }
@@ -98,34 +100,45 @@ describe('GitHubIssuesPlugin.runTick', () => {
     })
     try {
       const cfg: OrchestratorConfig = {
+        project: 'proj',
         repo: 'org/repo',
         watched_prs: [],
         watched_issues: [{ number: 50, channels: ['#leads'] }],
       }
       const result = await new GitHubIssuesPlugin('#proj').runTick(cfg, { issues: {} })
       expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels.sort()).toEqual(['#issue-50', '#leads'])
+      expect(result.taggedEvents[0]?.channels.sort()).toEqual(['#leads', '#proj-issue-50'])
     } finally { spy.mockRestore() }
   })
 })
 
 describe('desiredChannels', () => {
-  it('PrsPlugin includes #issue-N + entry channels for watched_prs only', () => {
+  it('PrsPlugin includes #<project>-issue-N + entry channels for watched_prs only', () => {
     const cfg: OrchestratorConfig = {
+      project: 'proj',
       repo: 'org/repo',
       watched_prs: [{ number: 25, channels: ['#extra'] }],
       watched_issues: [{ number: 14 }],
     }
-    expect(new GitHubPrsPlugin('#proj').desiredChannels(cfg).sort()).toEqual(['#extra', '#issue-25'])
+    expect(new GitHubPrsPlugin('#proj').desiredChannels(cfg).sort()).toEqual(['#extra', '#proj-issue-25'])
   })
 
-  it('IssuesPlugin includes #issue-N + entry channels for watched_issues only', () => {
+  it('IssuesPlugin includes #<project>-issue-N + entry channels for watched_issues only', () => {
     const cfg: OrchestratorConfig = {
+      project: 'proj',
       repo: 'org/repo',
       watched_prs: [{ number: 25 }],
       watched_issues: [{ number: 14, channels: ['#extra', '#more'] }],
     }
-    expect(new GitHubIssuesPlugin('#proj').desiredChannels(cfg).sort()).toEqual(['#extra', '#issue-14', '#more'])
+    expect(new GitHubIssuesPlugin('#proj').desiredChannels(cfg).sort()).toEqual(['#extra', '#more', '#proj-issue-14'])
+  })
+
+  it('falls back to repo basename when project is unset', () => {
+    const cfg: OrchestratorConfig = {
+      repo: 'org/myrepo',
+      watched_issues: [{ number: 7 }],
+    }
+    expect(new GitHubIssuesPlugin('#proj').desiredChannels(cfg)).toEqual(['#myrepo-issue-7'])
   })
 
   it('returns empty when no watches configured', () => {

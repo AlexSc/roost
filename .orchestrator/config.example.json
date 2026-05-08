@@ -1,9 +1,10 @@
 {
+  "project": "your-project",
   "repo": "your-org/your-repo",
   "agent_logins": [],
   "irc": {
-    "nick": "dispatcher",
-    "project_channel": "#your-project",
+    "nick": "your-project-dispatcher",
+    "project_channel": "#your-project-leads",
     "server": "127.0.0.1",
     "port": 6667,
     "interval_seconds": 60
