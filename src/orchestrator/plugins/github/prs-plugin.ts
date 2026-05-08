@@ -1,5 +1,6 @@
 import type { OrchestratorConfig } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
+import { defaultProject, issueChannel } from '../../naming.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { GhBase } from './base.js'
 import { scrapePr } from './scraper.js'
@@ -11,21 +12,24 @@ export class GitHubPrsPlugin extends GhBase {
   readonly name = 'github-prs'
 
   desiredChannels(config: OrchestratorConfig): string[] {
-    return this.entryChannels(config.watched_prs, config.repo)
+    return this.entryChannels(config, config.watched_prs)
   }
 
   // Auto-detected channels for a PR event: linked-issue channels, or its own
-  // #issue-N if no linked issues.
-  private static prEventChannels(event: OrchestratorEvent): string[] {
+  // issue channel if no linked issues.
+  private static prEventChannels(project: string, event: OrchestratorEvent): string[] {
     if (event.pr == null) return []
     const linked = event.linked_issues ?? []
-    return linked.length ? linked.map(n => `#issue-${n}`) : [`#issue-${event.pr}`]
+    return linked.length
+      ? linked.map(n => issueChannel(project, n))
+      : [issueChannel(project, event.pr)]
   }
 
   async runTick(
     config: OrchestratorConfig,
     prevState: unknown
   ): Promise<PluginTickResult> {
+    const project = defaultProject(config)
     const defaultRepo = config.repo
     const watched = config.watched_prs ?? []
     const agentLogins = this.agentLogins(config)
@@ -51,7 +55,7 @@ export class GitHubPrsPlugin extends GhBase {
       for (const event of events) {
         if (!shouldPush(event)) continue
         taggedEvents.push({
-          channels: this.resolveChannels(GitHubPrsPlugin.prEventChannels(event), entryChannels),
+          channels: this.resolveChannels(GitHubPrsPlugin.prEventChannels(project, event), entryChannels),
           payload: formatPayload(event),
         })
       }
@@ -61,7 +65,7 @@ export class GitHubPrsPlugin extends GhBase {
     // discovered during scrape).
     const channels = new Set<string>(this.desiredChannels(config))
     for (const snap of Object.values(curState.prs)) {
-      for (const n of snap.linked_issues ?? []) channels.add(`#issue-${n}`)
+      for (const n of snap.linked_issues ?? []) channels.add(issueChannel(project, n))
     }
 
     return { state: curState, taggedEvents, channels: [...channels] }

@@ -1,5 +1,6 @@
 import type { OrchestratorConfig } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
+import { defaultProject, issueChannel } from '../../naming.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { GhBase } from './base.js'
 import { scrapeIssue } from './scraper.js'
@@ -11,18 +12,19 @@ export class GitHubIssuesPlugin extends GhBase {
   readonly name = 'github-issues'
 
   desiredChannels(config: OrchestratorConfig): string[] {
-    return this.entryChannels(config.watched_issues, config.repo)
+    return this.entryChannels(config, config.watched_issues)
   }
 
   // Auto-detected channel for an issue event: the issue's own channel.
-  private static issueEventChannels(event: OrchestratorEvent): string[] {
-    return event.issue != null ? [`#issue-${event.issue}`] : []
+  private static issueEventChannels(project: string, event: OrchestratorEvent): string[] {
+    return event.issue != null ? [issueChannel(project, event.issue)] : []
   }
 
   async runTick(
     config: OrchestratorConfig,
     prevState: unknown
   ): Promise<PluginTickResult> {
+    const project = defaultProject(config)
     const defaultRepo = config.repo
     const watched = config.watched_issues ?? []
     const agentLogins = this.agentLogins(config)
@@ -47,7 +49,7 @@ export class GitHubIssuesPlugin extends GhBase {
       for (const event of events) {
         if (!shouldPush(event)) continue
         taggedEvents.push({
-          channels: this.resolveChannels(GitHubIssuesPlugin.issueEventChannels(event), entryChannels),
+          channels: this.resolveChannels(GitHubIssuesPlugin.issueEventChannels(project, event), entryChannels),
           payload: formatPayload(event),
         })
       }

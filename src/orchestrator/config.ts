@@ -12,6 +12,8 @@ export interface WatchedEntry {
 }
 
 export interface OrchestratorConfig {
+  // See src/orchestrator/naming.ts for shape + fallback rules.
+  project?: string
   repo?: string
   agent_logins?: string[]
   irc?: {

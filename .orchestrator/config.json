@@ -1,9 +1,10 @@
 {
+  "project": "roost",
   "repo": "AlexSc/roost",
   "agent_logins": ["TeakBuilds"],
   "irc": {
-    "nick": "dispatcher-roost",
-    "project_channel": "#leads-roost-dev",
+    "nick": "roost-dispatcher",
+    "project_channel": "#roost-leads",
     "server": "127.0.0.1",
     "port": 6667,
     "interval_seconds": 10

@@ -18,6 +18,7 @@ import {
 import { dispatchTaggedEvents, connectAndWait } from './orchestrator/dispatch.js'
 import { GitHubPrsPlugin } from './orchestrator/plugins/github/prs-plugin.js'
 import { GitHubIssuesPlugin } from './orchestrator/plugins/github/issues-plugin.js'
+import { resolveProjectChannel } from './orchestrator/naming.js'
 import type { Plugin, TaggedEvent } from './orchestrator/plugin.js'
 import { RoostIrcClientImpl } from './irc-client-impl.js'
 
@@ -104,7 +105,7 @@ async function runDaemon(stateDir: string): Promise<void> {
   const ircCfg = config.irc ?? {}
   const nick = ircCfg.nick
   if (!nick) throw new Error('daemon mode requires irc.nick in config')
-  const projectChannel = ircCfg.project_channel ?? '#general'
+  const projectChannel = resolveProjectChannel(config)
   const server = ircCfg.server ?? '127.0.0.1'
   const port = ircCfg.port ?? 6667
   const interval = Math.max(5, ircCfg.interval_seconds ?? 60) * 1000
@@ -204,7 +205,7 @@ async function runDispatchIrc(stateDir: string, seed: boolean): Promise<void> {
   const ircCfg = config.irc ?? {}
   const nick = ircCfg.nick
   if (!nick) throw new Error('--dispatch-irc requires irc.nick in config')
-  const projectChannel = ircCfg.project_channel ?? '#general'
+  const projectChannel = resolveProjectChannel(config)
   const server = ircCfg.server ?? '127.0.0.1'
   const port = ircCfg.port ?? 6667
 
@@ -264,7 +265,7 @@ async function main(): Promise<void> {
 
     // One-shot: fetch + diff, print events JSON
     const config = await loadConfig(stateDir)
-    const projectChannel = config.irc?.project_channel ?? '#general'
+    const projectChannel = resolveProjectChannel(config)
     const plugins = buildPlugins(projectChannel)
     const result = await runOneTick(stateDir, config, plugins, {
       seed: values['seed'] as boolean,
