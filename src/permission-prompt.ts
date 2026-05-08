@@ -244,6 +244,9 @@ if (import.meta.main) {
   const transcriptPath = String(payload!['transcript_path'] ?? '')
   const agentId        = String(payload!['agent_id'] ?? '')
 
+  // Passthrough check runs BEFORE the owner gate: roost-irc tool calls are
+  // safe from any session (worker, nested, owner) and we never want to ask
+  // the operator to approve them. Anything else falls through to the gate.
   if (PASSTHROUGH_PREFIXES.some(p => toolName.startsWith(p))) emit('allow', 'roost-irc passthrough')
 
   // Owner-gate short-circuit (#188): nested claudes inherit the parent's

@@ -16,11 +16,17 @@ const FILE = 'owner.session'
 // Atomic claim — used by the MCP at startup. Writes our session id if the
 // file is absent; on EEXIST, compares and returns 'passive' on mismatch.
 // Same session re-running (e.g. after a transient crash) re-acquires owner.
+//
+// Stale-file note: nothing deletes owner.session by itself; `roost shutdown`
+// rms the whole data dir. If the data dir survives an abnormal exit (manual
+// tmux kill, crash mid-session) and a *different* CLAUDE_CODE_SESSION_ID
+// boots later in the same dir, that starter goes passive against the stale
+// file. Same-session re-acquires fine. In practice we always start fresh
+// dirs via `roost spawn`, so this is a known edge, not a recurring bug.
 export function claimOwnership(dataDir: string, sessionId: string): Ownership {
   const p = path.join(dataDir, FILE)
   try {
-    const fd = fs.openSync(p, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o600)
-    try { fs.writeSync(fd, sessionId) } finally { fs.closeSync(fd) }
+    fs.writeFileSync(p, sessionId, { flag: 'wx', mode: 0o600 })
     return 'owner'
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e

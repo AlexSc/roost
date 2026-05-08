@@ -5,6 +5,7 @@
 
 import * as fs from 'node:fs'
 import * as net from 'node:net'
+import * as path from 'node:path'
 import type { IrcMessage, RoostIrcClient } from './irc-client.js'
 
 // ---- Types ------------------------------------------------------------------
@@ -14,7 +15,9 @@ export interface PermbotConfig {
   sockPath: string
   target: string
   worker: string
-  debugLog: string
+  // Defaults to <dirname(sockPath)>/permbot.log when omitted. Pass '/dev/null'
+  // in tests to silence file output.
+  debugLog?: string
   nudgeAfterMs?: number  // default: 5 minutes; exposed for testing
 }
 
@@ -46,7 +49,8 @@ export function startPermbot(
   config: PermbotConfig,
   client: RoostIrcClient,
 ): { stop: () => void; ready: Promise<void> } {
-  const { nick, sockPath, target, worker, debugLog } = config
+  const { nick, sockPath, target, worker } = config
+  const debugLog = config.debugLog ?? path.join(path.dirname(sockPath), 'permbot.log')
   const nudgeAfterMs = config.nudgeAfterMs ?? 5 * 60 * 1000
   const log = (msg: string) => dlog(debugLog, nick, msg)
 

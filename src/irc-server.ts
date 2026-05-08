@@ -23,7 +23,6 @@
  *   ROOST_IRC_JOIN_HISTORY_MINUTES Time window for join history in minutes (default: 30)
  */
 
-import * as path from 'node:path'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
@@ -37,7 +36,7 @@ import { claimOwnership } from './owner-gate.js'
 const SOURCE_NAME = 'roost-irc'
 
 export const NOT_READY_SENTINEL = 'IRC client not ready (still connecting).'
-export const PASSIVE_SENTINEL = 'roost-irc MCP is passive: a sibling MCP in the same ROOST_DATA_DIR already owns this nick. Tools are disabled in this instance.'
+const PASSIVE_SENTINEL = 'roost-irc MCP is passive: a sibling MCP in the same ROOST_DATA_DIR already owns this nick. Tools are disabled in this instance.'
 
 const REPLY_REMINDER = 'Substantive replies should be posted to IRC.'
 // 1/7 — midpoint of the 1/5–1/10 range from #136. Random rate avoids the
@@ -148,7 +147,31 @@ export interface CreateMcpOptions {
 // → ircClient.connect.
 export function createMcpServer(client: RoostIrcClient, config: ClientConfig, options: CreateMcpOptions = {}): { server: Server; clearDedupeCache: () => void; emitUnreadSummary: () => Promise<void> } {
   const { nick: NICK, autoJoin: AUTO_JOIN } = config
-  const passive = options.passive === true
+
+  // ---- Passive short-circuit ---------------------------------------------
+  // Lost the owner race in claimOwnership(). Build a minimal MCP that errors
+  // every tool call so claude doesn't see a crashed plugin. No state, no
+  // event subscriptions, no IRC client interaction.
+
+  if (options.passive === true) {
+    const mcp = new Server(
+      { name: SOURCE_NAME, version: '0.0.1' },
+      {
+        capabilities: { tools: {} },
+        instructions: `roost IRC MCP (passive instance for nick "${NICK}"). All tool calls error.`,
+      },
+    )
+    mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_SCHEMAS }))
+    mcp.setRequestHandler(CallToolRequestSchema, async () => ({
+      content: [{ type: 'text', text: PASSIVE_SENTINEL }],
+      isError: true,
+    }))
+    return {
+      server: mcp,
+      clearDedupeCache: () => { /* no-op */ },
+      emitUnreadSummary: async () => { /* no-op */ },
+    }
+  }
 
   // Per-MCP monotonic receive counter — gives downstream consumers a
   // strictly-monotonic ordering even when two events resolve to the same
@@ -198,23 +221,6 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
     const unread = client.getUnread()
     if (unread.size === 0) return ''
     return '\nunread:\n' + [...unread.entries()].map(([ch, i]) => `  ${formatUnreadLine(ch, i)}`).join('\n')
-  }
-
-  // ---- Passive short-circuit ---------------------------------------------
-  // No event subscriptions in passive mode — we never connect the client,
-  // so they'd never fire anyway, but skipping makes intent explicit.
-
-  if (passive) {
-    mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_SCHEMAS }))
-    mcp.setRequestHandler(CallToolRequestSchema, async () => ({
-      content: [{ type: 'text', text: PASSIVE_SENTINEL }],
-      isError: true,
-    }))
-    return {
-      server: mcp,
-      clearDedupeCache: () => { /* no-op */ },
-      emitUnreadSummary: async () => { /* no-op */ },
-    }
   }
 
   // ---- Typed event subscriptions -----------------------------------------
@@ -426,9 +432,24 @@ if (import.meta.main) {
     await mcp.connect(new StdioServerTransport())
     process.stderr.write(`roost-irc[${NICK}]: passive MCP transport up at ${new Date().toISOString()}\n`)
   } else {
+    await runOwnerMcp({ NICK, REALNAME, SERVER, PORT, DATA_DIR, clientConfig, RoostIrcClientImpl })
+  }
+}
 
-  // Owner path: write pidfile so the PreCompact hook can signal us, then
-  // bring up worker IRC + (optional) in-process permbot.
+// Owner path: pidfile + worker IRC + (optional) in-process permbot.
+// Extracted from the if-block to keep the entrypoint flat — the passive
+// branch returns early; this is the rest.
+async function runOwnerMcp(args: {
+  NICK: string
+  REALNAME: string
+  SERVER: string
+  PORT: number
+  DATA_DIR: string
+  clientConfig: ClientConfig
+  RoostIrcClientImpl: typeof import('./irc-client-impl.js').RoostIrcClientImpl
+}): Promise<void> {
+  const { NICK, REALNAME, SERVER, PORT, DATA_DIR, clientConfig, RoostIrcClientImpl } = args
+
   if (DATA_DIR) {
     try {
       await Bun.write(`${DATA_DIR}/mcp.pid`, String(process.pid))
@@ -462,7 +483,6 @@ if (import.meta.main) {
       sockPath: PERM_SOCK,
       target: PERM_TARGET,
       worker: NICK,
-      debugLog: path.join(path.dirname(PERM_SOCK), 'permbot.log'),
     }
     const { stop } = startPermbot(permbotConfig, permbotClient)
     permbotStop = stop
@@ -477,7 +497,7 @@ if (import.meta.main) {
   }
 
   const shutdown = (code: number) => {
-    if (permbotStop) { try { permbotStop() } catch { /* ignore */ } }
+    try { permbotStop?.() } catch { /* ignore */ }
     process.exit(code)
   }
   process.on('SIGINT', () => shutdown(130))
@@ -505,6 +525,4 @@ if (import.meta.main) {
     autoReconnectMaxRetries: 10,
   })
   process.stderr.write(`roost-irc[${NICK}]: connecting to ${SERVER}:${PORT}...\n`)
-
-  } // end owner branch
 }
