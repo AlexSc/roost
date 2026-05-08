@@ -3,7 +3,7 @@ import * as fs from 'node:fs'
 import * as net from 'node:net'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { summarize, extractIntent } from '../src/permission-prompt.js'
+import { summarize, extractIntent, resolveTranscriptPath } from '../src/permission-prompt.js'
 
 const HOOK = path.join(import.meta.dirname, '../src/permission-prompt.ts')
 
@@ -126,6 +126,39 @@ describe('extractIntent', () => {
     } finally {
       fs.unlinkSync(tmp)
     }
+  })
+
+})
+
+// ---- resolveTranscriptPath() ------------------------------------------------
+
+describe('resolveTranscriptPath', () => {
+  it('returns transcript_path unchanged when no agent_id', () => {
+    expect(resolveTranscriptPath('/path/to/session.jsonl', '')).toBe('/path/to/session.jsonl')
+  })
+
+  it('returns transcript_path unchanged when path already contains /subagents/', () => {
+    const p = '/path/to/session/subagents/agent-abc.jsonl'
+    expect(resolveTranscriptPath(p, 'abc')).toBe(p)
+  })
+
+  it('derives sub-agent path when agent_id present and file exists', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rtp-'))
+    const sessionJsonl = path.join(tmp, 'session.jsonl')
+    const subDir = path.join(tmp, 'session', 'subagents')
+    fs.mkdirSync(subDir, { recursive: true })
+    fs.writeFileSync(sessionJsonl, '')
+    const subFile = path.join(subDir, 'agent-deadbeef.jsonl')
+    fs.writeFileSync(subFile, '')
+    try {
+      expect(resolveTranscriptPath(sessionJsonl, 'deadbeef')).toBe(subFile)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to parent transcript when sub-agent file does not exist', () => {
+    expect(resolveTranscriptPath('/nonexistent/session.jsonl', 'deadbeef')).toBe('/nonexistent/session.jsonl')
   })
 })
 

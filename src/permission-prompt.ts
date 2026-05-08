@@ -2,6 +2,7 @@
 
 import * as fs from 'node:fs'
 import * as net from 'node:net'
+import * as path from 'node:path'
 
 const WORKER      = process.env['ROOST_IRC_NICK'] ?? 'unknown'
 const SOCK_PATH   = process.env['ROOST_PERM_SOCK'] ?? ''
@@ -139,6 +140,14 @@ export function extractIntent(transcriptPath: string): string {
   return fallbackThinking
 }
 
+export function resolveTranscriptPath(transcriptPath: string, agentId: string): string {
+  if (!agentId) return transcriptPath
+  if (transcriptPath.includes('/subagents/')) return transcriptPath
+  const sessionDir = transcriptPath.replace(/\.jsonl$/, '')
+  const subPath = path.join(sessionDir, 'subagents', `agent-${agentId}.jsonl`)
+  return fs.existsSync(subPath) ? subPath : transcriptPath
+}
+
 // ---- Socket round-trip to permbot daemon ------------------------------------
 
 export async function askDaemon(summary: string): Promise<string | null> {
@@ -230,12 +239,16 @@ if (import.meta.main) {
   const toolName      = String(payload!['tool_name'] ?? '')
   const toolInput     = (payload!['tool_input'] as Record<string, unknown> | null) ?? {}
   const transcriptPath = String(payload!['transcript_path'] ?? '')
+  const agentId        = String(payload!['agent_id'] ?? '')
 
   if (PASSTHROUGH_PREFIXES.some(p => toolName.startsWith(p))) emit('allow', 'roost-irc passthrough')
 
-  const intent = extractIntent(transcriptPath)
+  const intent = extractIntent(resolveTranscriptPath(transcriptPath, agentId))
   const summaryLines = summarize(toolName, toolInput)
-  if (intent) summaryLines.push(`intent: ${intent}`)
+  if (intent) {
+    summaryLines.push(`last narration: ${intent}`)
+    summaryLines.push(`(also check the agent's recent IRC messages)`)
+  }
   const summary = summaryLines.join('\n')
 
   const reply = await askDaemon(summary)
