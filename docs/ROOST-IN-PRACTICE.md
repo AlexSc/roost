@@ -89,8 +89,8 @@ ceiling isn't Roost — it's how much review attention you have.
 
 Agents are cheap. A wedged worker is usually something to kick,
 not something to debug. The fresh worker JOINs the same channel,
-queries the dispatcher for current state, reads the channel topic,
-and picks up. Same goes for the lead-pm itself when it hits a context
+reads the backlog (replayed on JOIN via IRCv3 chathistory) and the
+channel topic, and picks up. Same goes for the lead-pm itself when it hits a context
 boundary; respawning is the recovery path, not a last resort. The
 issue channel is stable across PR restarts too — a closed PR plus
 a fresh worker on the same issue keeps the same `#issue-N`.
