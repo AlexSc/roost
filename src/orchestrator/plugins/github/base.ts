@@ -13,10 +13,8 @@ export abstract class GhBase extends BasePlugin {
     return new Set(config.agent_logins ?? [])
   }
 
-  // Static channel set for a list of watched entries: project-namespaced
-  // issue channel for each entry, plus the entry's declared channels.
-  // Used for boot-time joins. No watches → no project lookup (avoids
-  // requiring `project`/`repo` on minimal configs).
+  // No watches → no project lookup (avoids requiring `project`/`repo` on
+  // minimal configs).
   protected entryChannels(config: OrchestratorConfig, entries: WatchedEntry[] | undefined): string[] {
     if (!entries?.length) return []
     const project = defaultProject(config)

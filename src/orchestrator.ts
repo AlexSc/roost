@@ -18,13 +18,9 @@ import {
 import { dispatchTaggedEvents, connectAndWait } from './orchestrator/dispatch.js'
 import { GitHubPrsPlugin } from './orchestrator/plugins/github/prs-plugin.js'
 import { GitHubIssuesPlugin } from './orchestrator/plugins/github/issues-plugin.js'
-import { defaultProject, leadsChannel } from './orchestrator/naming.js'
+import { resolveProjectChannel } from './orchestrator/naming.js'
 import type { Plugin, TaggedEvent } from './orchestrator/plugin.js'
 import { RoostIrcClientImpl } from './irc-client-impl.js'
-
-function resolveProjectChannel(config: OrchestratorConfig): string {
-  return config.irc?.project_channel ?? leadsChannel(defaultProject(config))
-}
 
 // ---- Path setup ------------------------------------------------------------
 

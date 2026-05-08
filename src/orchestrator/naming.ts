@@ -9,6 +9,10 @@
 
 import type { OrchestratorConfig } from './config.js'
 
+export function resolveProjectChannel(config: OrchestratorConfig): string {
+  return config.irc?.project_channel ?? leadsChannel(defaultProject(config))
+}
+
 const PROJECT_PATTERN = /^[a-z0-9][a-z0-9-]*$/
 
 export function validateProject(project: string): void {
