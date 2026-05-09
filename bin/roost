@@ -52,7 +52,11 @@ Options:
   --repo OWNER/REPO      GitHub repo (default: parsed from git origin remote).
   --agent-login LOGIN    GitHub login for agent_logins. Repeatable.
                          Default: current gh user.
-  --force                Overwrite existing .orchestrator/config.json.
+  --force                Overwrite existing .orchestrator/config.json and
+                         .orchestrator/.gitignore.
+  --force-prompts        Overwrite existing .claude/commands/ prompt copies.
+                         Independent of --force; does not touch config.json.
+  --no-prompts           Skip copying prompts to .claude/commands/.
   --dry-run              Print what would be written; do not write files.
 
 Examples:
@@ -60,6 +64,8 @@ Examples:
   roost init --project myapp --repo Owner/myapp
   roost init --agent-login alice --agent-login bob
   roost init --force
+  roost init --force-prompts
+  roost init --no-prompts
 EOF
 }
 
@@ -205,16 +211,20 @@ cmd_init() {
   local repo=""
   local agent_logins=()
   local force=0
+  local force_prompts=0
+  local no_prompts=0
   local dry_run=0
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --project)     project="$2";              shift 2 ;;
-      --repo)        repo="$2";                 shift 2 ;;
-      --agent-login) agent_logins+=("$2");      shift 2 ;;
-      --force)       force=1;                   shift ;;
-      --dry-run)     dry_run=1;                 shift ;;
-      -h|--help)     usage_init;                exit 0 ;;
+      --project)       project="$2";         shift 2 ;;
+      --repo)          repo="$2";            shift 2 ;;
+      --agent-login)   agent_logins+=("$2"); shift 2 ;;
+      --force)         force=1;              shift ;;
+      --force-prompts) force_prompts=1;      shift ;;
+      --no-prompts)    no_prompts=1;         shift ;;
+      --dry-run)       dry_run=1;            shift ;;
+      -h|--help)       usage_init;           exit 0 ;;
       *) echo "error: unknown init option: $1" >&2; exit 1 ;;
     esac
   done
@@ -277,6 +287,9 @@ cmd_init() {
 
   local config_path=".orchestrator/config.json"
   local gitignore_path=".orchestrator/.gitignore"
+  local prompts_dir="${ROOST_DIR}/prompts"
+  local commands_dir=".claude/commands"
+  local prompt_names=(lead-pm worker reviewer watcher)
 
   if [ "$dry_run" -eq 1 ]; then
     echo "--- ${config_path} ---"
@@ -284,6 +297,12 @@ cmd_init() {
       "$project" "$repo" "$logins_json"
     echo "--- ${gitignore_path} ---"
     printf 'state.json\nlast-tick.txt\nlast-error.txt\n'
+    if [ "$no_prompts" -eq 0 ]; then
+      for name in "${prompt_names[@]}"; do
+        local src="${prompts_dir}/${name}.md"
+        [ -f "$src" ] && echo "--- ${commands_dir}/${name}.md ---"
+      done
+    fi
     exit 0
   fi
 
@@ -300,6 +319,29 @@ cmd_init() {
     printf 'state.json\nlast-tick.txt\nlast-error.txt\n' > "$gitignore_path"
     echo "Wrote ${gitignore_path}"
   fi
+
+  local wrote_prompts=0
+  if [ "$no_prompts" -eq 0 ]; then
+    mkdir -p "$commands_dir"
+    for name in "${prompt_names[@]}"; do
+      local src="${prompts_dir}/${name}.md"
+      local dst="${commands_dir}/${name}.md"
+      if [ ! -f "$src" ]; then
+        continue
+      fi
+      if [ ! -f "$dst" ] || [ "$force_prompts" -eq 1 ]; then
+        cp "$src" "$dst"
+        echo "Wrote ${dst}"
+        wrote_prompts=1
+      fi
+    done
+    if [ "$wrote_prompts" -eq 1 ]; then
+      printf '\nTip: prompts under %s/ are project-local copies. Edit them\n' "$commands_dir"
+      printf '     to fit your conventions, or delete a file to fall back to the\n'
+      printf "     plugin default. Re-run \`roost init --force-prompts\` to refresh.\n"
+    fi
+  fi
+
   printf '\nNext step:\n'
   printf '  roost spawn %s-lead-pm \\\n' "$project"
   printf "    --channels '#%s-leads' \\\n" "$project"

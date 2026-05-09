@@ -225,6 +225,67 @@ fi
 cd - >/dev/null
 teardown
 
+# --- prompts: fresh copy ---
+
+setup "https://github.com/TestOwner/myproject.git"
+cd "$TDIR"
+if roost_init >/dev/null 2>&1 \
+    && [ -f "${TDIR}/.claude/commands/worker.md" ] \
+    && [ -f "${TDIR}/.claude/commands/lead-pm.md" ] \
+    && [ -f "${TDIR}/.claude/commands/reviewer.md" ] \
+    && [ -f "${TDIR}/.claude/commands/watcher.md" ]; then
+  ok "prompts: fresh copy to .claude/commands/"
+else
+  fail "prompts: fresh copy to .claude/commands/"
+fi
+cd - >/dev/null
+teardown
+
+# --- prompts: skip existing (idempotent) ---
+
+setup "https://github.com/TestOwner/myproject.git"
+cd "$TDIR"
+mkdir -p .claude/commands
+echo 'custom content' > .claude/commands/worker.md
+roost_init >/dev/null 2>&1
+if grep -q 'custom content' "${TDIR}/.claude/commands/worker.md"; then
+  ok "prompts: existing file not overwritten without --force-prompts"
+else
+  fail "prompts: existing file not overwritten without --force-prompts"
+fi
+cd - >/dev/null
+teardown
+
+# --- prompts: --force-prompts overwrites ---
+
+setup "https://github.com/TestOwner/myproject.git"
+cd "$TDIR"
+mkdir -p .claude/commands
+echo 'custom content' > .claude/commands/worker.md
+roost_init --force-prompts >/dev/null 2>&1
+if ! grep -q 'custom content' "${TDIR}/.claude/commands/worker.md" \
+    && grep -q 'description' "${TDIR}/.claude/commands/worker.md"; then
+  ok "prompts: --force-prompts overwrites existing"
+else
+  fail "prompts: --force-prompts overwrites existing"
+fi
+cd - >/dev/null
+teardown
+
+# --- prompts: --no-prompts skips copy ---
+
+setup "https://github.com/TestOwner/myproject.git"
+cd "$TDIR"
+roost_init --no-prompts >/dev/null 2>&1
+if [ ! -d "${TDIR}/.claude/commands" ] \
+    || [ ! -f "${TDIR}/.claude/commands/worker.md" ]; then
+  ok "prompts: --no-prompts skips copy"
+else
+  fail "prompts: --no-prompts skips copy"
+fi
+cd - >/dev/null
+teardown
+
 # --- summary ---
 
 echo ""
