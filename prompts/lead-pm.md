@@ -81,13 +81,12 @@ To work on an issue:
 
    The worker should report "pushed" or "addressed" — workers do NOT mark the PR ready themselves.
 
-   Once ready, the PR stays in ready state throughout the human review loop — do NOT convert back to draft, regardless of feedback. Three outcomes:
+   Once ready, the PR stays in ready state throughout the human review loop — do NOT convert back to draft, regardless of feedback. GitHub does not auto-rerequest a CHANGES_REQUESTED reviewer after new commits, so re-requesting is on you. Three outcomes:
    - **APPROVE**: proceed to step 9.
    - **COMMENT** or **CHANGES_REQUESTED**: equivalent. The worker addresses the feedback. Once the worker has responded:
      - if a new commit was pushed, wait for CI to go green, then re-request review (`gh pr edit N --repo OWNER/REPO --add-reviewer $3`)
      - if no new commit (just a reply), re-request review immediately
-
-   GitHub does not auto-rerequest a CHANGES_REQUESTED reviewer after new commits. Post in '#$0-leads' to additionally notify the human.
+     - either way, post in '#$0-leads' to additionally notify the human
 9. Once the human approves the PR
   - Terminate the worker
   - Part the channel
