@@ -40,15 +40,6 @@ roost_init() {
   PATH="${STUBS}:${PATH}" "${ROOST_BIN}" init "$@"
 }
 
-assert_json() {
-  local file="$1" field="$2" expected="$3"
-  local actual
-  actual="$(grep "\"${field}\"" "$file" | sed 's/.*: //' | tr -d ' ,')"
-  if [ "$actual" = "$expected" ]; then return 0; fi
-  echo "  expected ${field}=${expected}, got ${actual}" >&2
-  return 1
-}
-
 # --- URL parsing: all four remote shapes ---
 
 for shape in \
@@ -137,11 +128,27 @@ teardown
 
 setup "https://github.com/TestOwner/myproject.git"
 cd "$TDIR"
-if roost_init --dry-run 2>/dev/null | grep -q '"project"' \
+dry_out="$(roost_init --dry-run 2>/dev/null)"
+if echo "$dry_out" | grep -q '"project"' \
     && [ ! -f "${TDIR}/.orchestrator/config.json" ]; then
   ok "--dry-run: no files written, content printed"
 else
   fail "--dry-run: no files written, content printed"
+fi
+cd - >/dev/null
+teardown
+
+# --- --dry-run on existing config: works without --force ---
+
+setup "https://github.com/TestOwner/myproject.git"
+cd "$TDIR"
+mkdir -p .orchestrator
+echo '{"old": true}' > .orchestrator/config.json
+dry_out="$(roost_init --dry-run 2>/dev/null)"
+if echo "$dry_out" | grep -q '"project"'; then
+  ok "--dry-run: bypasses existing-config guard"
+else
+  fail "--dry-run: bypasses existing-config guard"
 fi
 cd - >/dev/null
 teardown

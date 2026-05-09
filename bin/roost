@@ -278,11 +278,6 @@ cmd_init() {
   local config_path=".orchestrator/config.json"
   local gitignore_path=".orchestrator/.gitignore"
 
-  if [ -f "$config_path" ] && [ "$force" -eq 0 ]; then
-    echo "error: ${config_path} already exists — pass \`--force\` to overwrite" >&2
-    exit 1
-  fi
-
   if [ "$dry_run" -eq 1 ]; then
     echo "--- ${config_path} ---"
     printf '{\n  "project": "%s",\n  "repo": "%s",\n  "agent_logins": %s,\n  "watched_issues": [],\n  "watched_prs": []\n}\n' \
@@ -292,13 +287,19 @@ cmd_init() {
     exit 0
   fi
 
+  if [ -f "$config_path" ] && [ "$force" -eq 0 ]; then
+    echo "error: ${config_path} already exists — pass \`--force\` to overwrite" >&2
+    exit 1
+  fi
+
   mkdir -p .orchestrator
   printf '{\n  "project": "%s",\n  "repo": "%s",\n  "agent_logins": %s,\n  "watched_issues": [],\n  "watched_prs": []\n}\n' \
     "$project" "$repo" "$logins_json" > "$config_path"
-  printf 'state.json\nlast-tick.txt\nlast-error.txt\n' > "$gitignore_path"
-
   echo "Wrote ${config_path}"
-  echo "Wrote ${gitignore_path}"
+  if [ ! -f "$gitignore_path" ] || [ "$force" -eq 1 ]; then
+    printf 'state.json\nlast-tick.txt\nlast-error.txt\n' > "$gitignore_path"
+    echo "Wrote ${gitignore_path}"
+  fi
   printf '\nNext step:\n'
   printf '  roost spawn %s-lead-pm \\\n' "$project"
   printf "    --channels '#%s-leads' \\\n" "$project"
