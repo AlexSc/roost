@@ -206,10 +206,20 @@ Example:
 EOF
 }
 
+_init_config_json() {
+  printf '{\n  "project": "%s",\n  "repo": "%s",\n  "agent_logins": %s,\n  "watched_issues": [],\n  "watched_prs": []\n}\n' \
+    "$1" "$2" "$3"
+}
+
+_init_gitignore() {
+  printf 'state.json\nlast-tick.txt\nlast-error.txt\n'
+}
+
 cmd_init() {
   local project=""
   local repo=""
   local agent_logins=()
+  local login_re='^[a-zA-Z0-9][a-zA-Z0-9-]*$'
   local force=0
   local force_prompts=0
   local no_prompts=0
@@ -219,7 +229,12 @@ cmd_init() {
     case "$1" in
       --project)       project="$2";         shift 2 ;;
       --repo)          repo="$2";            shift 2 ;;
-      --agent-login)   agent_logins+=("$2"); shift 2 ;;
+      --agent-login)
+        if [[ ! "$2" =~ $login_re ]]; then
+          echo "error: invalid --agent-login \"$2\": must match ^[a-zA-Z0-9][a-zA-Z0-9-]*$" >&2
+          exit 1
+        fi
+        agent_logins+=("$2");               shift 2 ;;
       --force)         force=1;              shift ;;
       --force-prompts) force_prompts=1;      shift ;;
       --no-prompts)    no_prompts=1;         shift ;;
@@ -293,14 +308,13 @@ cmd_init() {
 
   if [ "$dry_run" -eq 1 ]; then
     echo "--- ${config_path} ---"
-    printf '{\n  "project": "%s",\n  "repo": "%s",\n  "agent_logins": %s,\n  "watched_issues": [],\n  "watched_prs": []\n}\n' \
-      "$project" "$repo" "$logins_json"
+    _init_config_json "$project" "$repo" "$logins_json"
     echo "--- ${gitignore_path} ---"
-    printf 'state.json\nlast-tick.txt\nlast-error.txt\n'
+    _init_gitignore
     if [ "$no_prompts" -eq 0 ]; then
       for name in "${prompt_names[@]}"; do
         local src="${prompts_dir}/${name}.md"
-        [ -f "$src" ] && echo "--- ${commands_dir}/${name}.md ---"
+        [ -f "$src" ] && echo "--- ${commands_dir}/${name}.md (copied verbatim from plugin prompts/${name}.md) ---"
       done
     fi
     exit 0
@@ -312,11 +326,10 @@ cmd_init() {
   fi
 
   mkdir -p .orchestrator
-  printf '{\n  "project": "%s",\n  "repo": "%s",\n  "agent_logins": %s,\n  "watched_issues": [],\n  "watched_prs": []\n}\n' \
-    "$project" "$repo" "$logins_json" > "$config_path"
+  _init_config_json "$project" "$repo" "$logins_json" > "$config_path"
   echo "Wrote ${config_path}"
   if [ ! -f "$gitignore_path" ] || [ "$force" -eq 1 ]; then
-    printf 'state.json\nlast-tick.txt\nlast-error.txt\n' > "$gitignore_path"
+    _init_gitignore > "$gitignore_path"
     echo "Wrote ${gitignore_path}"
   fi
 

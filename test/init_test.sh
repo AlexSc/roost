@@ -16,6 +16,8 @@ setup() {
   local remote_url="${1:-}"
   # Template uses only dashes so basename matches the project-name regex.
   TDIR="$(mktemp -d /tmp/roost-test-XXXXXXXX)"
+  # Cleanup on exit in case a test panics before teardown.
+  trap 'cd / 2>/dev/null; rm -rf "$TDIR"' EXIT
   git -C "$TDIR" init -q
   if [ -n "$remote_url" ]; then
     git -C "$TDIR" remote add origin "$remote_url"
@@ -165,6 +167,23 @@ if roost_init --force >/dev/null 2>&1 \
   ok "--force: overwrites existing"
 else
   fail "--force: overwrites existing"
+fi
+cd - >/dev/null
+teardown
+
+# --- --force: also overwrites .gitignore ---
+
+setup "https://github.com/TestOwner/myproject.git"
+cd "$TDIR"
+mkdir -p .orchestrator
+echo '{"old": true}' > .orchestrator/config.json
+printf 'old-entry\n' > .orchestrator/.gitignore
+if roost_init --force >/dev/null 2>&1 \
+    && ! grep -q 'old-entry' "${TDIR}/.orchestrator/.gitignore" \
+    && grep -q 'state.json' "${TDIR}/.orchestrator/.gitignore"; then
+  ok "--force: overwrites .gitignore"
+else
+  fail "--force: overwrites .gitignore"
 fi
 cd - >/dev/null
 teardown
