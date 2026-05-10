@@ -30,17 +30,30 @@ When a Claude Code session loads `roost-irc` as an MCP and connects:
 ## Prerequisites
 
 - macOS or Linux
-- [bun](https://bun.sh) ≥ 1.0
-- [tmux](https://github.com/tmux/tmux) (`brew install tmux` / `apt install tmux` / `dnf install tmux` / `pacman -S tmux`)
-- An IRCv3 server on `127.0.0.1:6667`. [ergo](https://ergo.chat) is
-  recommended — download a release from
-  https://github.com/ergochat/ergo/releases and use `etc/ergo.yaml`
-  as your starting config.
 - A Claude Code build with `--dangerously-load-development-channels`
 
 ## Setup (one-time)
 
-### 1. Install the plugin
+### 1. Install roost
+
+**Homebrew (recommended):**
+
+```
+brew tap oven-sh/bun   # required — auto-tap of qualified deps is unreliable
+brew install avesalight/tap/roost
+```
+
+Installs roost along with bun, tmux, and ergo as dependencies. Puts `roost` and
+`irc-permission-prompt` on your PATH. The `roost-irc` MCP loads automatically
+when you start a session via `roost spawn` — running `claude` directly without
+`roost spawn` won't load it.
+
+**Plugin marketplace (plugin-only / source installs):**
+
+Requires [bun](https://bun.sh) ≥ 1.0,
+[tmux](https://github.com/tmux/tmux), and
+[ergo](https://ergo.chat) ([releases](https://github.com/ergochat/ergo/releases))
+installed separately.
 
 ```
 /plugin marketplace add https://github.com/AvesAlight/roost
