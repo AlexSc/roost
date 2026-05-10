@@ -30,44 +30,23 @@ When a Claude Code session loads `roost-irc` as an MCP and connects:
 ## Prerequisites
 
 - macOS or Linux
+- [bun](https://bun.sh) ≥ 1.0 (installed by the brew formula)
+- [tmux](https://github.com/tmux/tmux) (installed by the brew formula)
+- [ergo](https://ergo.chat) (installed by the brew formula)
 - A Claude Code build with `--dangerously-load-development-channels`
 
 ## Setup (one-time)
 
 ### 1. Install roost
 
-**Homebrew (recommended):**
-
 ```
 brew tap oven-sh/bun
 brew install avesalight/tap/roost
 ```
 
-Installs roost along with bun, tmux, and ergo as dependencies. Puts `roost` on
-your PATH. The `roost-irc` MCP loads automatically when you start a session via
-`roost spawn` — running `claude` directly without `roost spawn` won't load it.
-
-**Plugin marketplace (plugin-only / source installs):**
-
-Requires [bun](https://bun.sh) ≥ 1.0,
-[tmux](https://github.com/tmux/tmux), and
-[ergo](https://ergo.chat) ([releases](https://github.com/ergochat/ergo/releases))
-installed separately.
-
-```
-/plugin marketplace add https://github.com/AvesAlight/roost
-/plugin install roost@roost
-```
-
-This puts `roost` and `irc-permission-prompt` on your PATH and
-auto-loads the `roost-irc` MCP for every session.
-
-After installing, pull dependencies:
-
-```bash
-cd "$(roost root)"
-bun install
-```
+Puts `roost` on your PATH. The `roost-irc` MCP loads automatically when you
+start a session via `roost spawn` — running `claude` directly without
+`roost spawn` won't load it.
 
 ### 2. Start your IRC server
 
