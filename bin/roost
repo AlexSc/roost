@@ -16,7 +16,16 @@
 
 set -uo pipefail
 
-ROOST_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+# Walk symlinks so ROOST_DIR resolves to the real plugin tree, not the
+# parent of a /usr/local/bin/roost-style shim.
+_src="${BASH_SOURCE[0]}"
+while [ -L "$_src" ]; do
+  _dir="$( cd -P "$( dirname "$_src" )" && pwd )"
+  _src="$( readlink "$_src" )"
+  case "$_src" in /*) ;; *) _src="$_dir/$_src" ;; esac
+done
+ROOST_DIR="$( cd -P "$( dirname "$_src" )/.." && pwd )"
+unset _src _dir
 IRC_HOST="${ROOST_IRC_SERVER:-127.0.0.1}"
 IRC_PORT=6667
 SESSION_PREFIX="roost-"
