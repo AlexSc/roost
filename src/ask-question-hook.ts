@@ -133,7 +133,7 @@ export function mapReplyToAnswers(reply: string, questions: Question[]): Record<
 // ---- Socket round-trip to permbot -------------------------------------------
 
 export async function askPermbot(summary: string): Promise<string | null> {
-  const req: Record<string, unknown> = { summary, timeout: SOCKET_TIMEOUT }
+  const req: Record<string, unknown> = { summary, timeout: SOCKET_TIMEOUT, kind: 'question' }
   if (ASK_CHANNEL) req['channel'] = ASK_CHANNEL  // omit → DM mode
   if (ASK_TARGET) req['replyTarget'] = ASK_TARGET
   return socketRoundtrip(SOCK_PATH, req, (msg) => {

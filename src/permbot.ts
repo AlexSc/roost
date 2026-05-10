@@ -24,6 +24,7 @@ export interface PermbotConfig {
 interface PermBotRequest {
   summary?: unknown
   timeout?: unknown
+  kind?: unknown   // 'permission' | 'question'; falls back to channel-presence if absent
   channel?: unknown
   replyTarget?: unknown
 }
@@ -178,7 +179,10 @@ export function startPermbot(
       const timeout = Number(req.timeout) > 0 ? Number(req.timeout) : 30
       const channel = typeof req.channel === 'string' && req.channel ? req.channel.toLowerCase() : undefined
       const replyTarget = typeof req.replyTarget === 'string' && req.replyTarget ? req.replyTarget : undefined
-      const kind: 'permission' | 'question' = channel ? 'question' : 'permission'
+      // Explicit kind takes precedence; fall back to channel-presence for backward compat.
+      const kind: 'permission' | 'question' = req.kind === 'question' || req.kind === 'permission'
+        ? req.kind
+        : (channel ? 'question' : 'permission')
 
       // Fallback join: irc-server pre-joins ROOST_ASK_CHANNEL via autoJoin at
       // startup. This covers dynamically-specified channels from the request.
