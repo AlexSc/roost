@@ -25,12 +25,19 @@ interface QueueEntry {
   socket: net.Socket
   summary: string
   timeout: number
+  // When set: post to this channel instead of DM'ing target; accept in-channel
+  // replies from replyTarget in this channel in addition to DMs.
+  channel?: string
+  // When set: accept replies from this nick instead of config.target.
+  replyTarget?: string
 }
 
 interface InFlight {
   socket: net.Socket
   timer: ReturnType<typeof setTimeout>
   nudgeTimer: ReturnType<typeof setTimeout>
+  channel: string | null   // channel the question was posted to (null for DM-style)
+  replyTarget: string      // lowercase nick whose messages count as the reply
 }
 
 // ---- Helpers ----------------------------------------------------------------
@@ -66,36 +73,44 @@ export function startPermbot(
   function maybeDispatch(): void {
     if (inFlight !== null || queue.length === 0 || shuttingDown) return
     const entry = queue.shift()!
+    const isQuestion = !!entry.channel
+    const postTarget = entry.channel ?? target
+    const effectiveReplyTarget = (entry.replyTarget ?? target).toLowerCase()
+
     const lines = [
-      `[${worker}] permission requested:`,
+      `[${worker}] ${isQuestion ? 'question:' : 'permission requested:'}`,
       ...entry.summary.split('\n').map(l => l.trimEnd()).filter(l => l.trim()),
-      'reply y/n',
+      ...(isQuestion ? [] : ['reply y/n']),
     ]
-    client.say(target, lines.join('\n'))
-    log(`in-flight to ${target} (${lines.length} lines, timeout ${entry.timeout}s)`)
+    client.say(postTarget, lines.join('\n'))
+    log(`in-flight to ${postTarget} (replyTarget: ${effectiveReplyTarget}, ${lines.length} lines, timeout ${entry.timeout}s)`)
 
     const timer = setTimeout(() => {
       log('in-flight timed out')
       inFlight = null
       respond(entry.socket, { timeout: true })
-      // drain queue: next request can now be dispatched
       maybeDispatch()
     }, entry.timeout * 1000)
     timer.unref?.()
 
     const nudgeTimer = setTimeout(() => {
-      if (inFlight === null) return  // already resolved before nudge fired
+      if (inFlight === null) return
       log('nudge: 5min elapsed without reply')
-      const nudgeLines = [
-        `[${worker}] permission prompt still pending (5min elapsed):`,
-        ...entry.summary.split('\n').map(l => l.trimEnd()).filter(l => l.trim()),
-        `reply y/n — or: \`roost tail ${worker}\` to see context, \`roost send ${worker} y\` to unblock`,
-      ]
-      client.say(target, nudgeLines.join('\n'))
+      const nudgeLines = isQuestion
+        ? [
+            `[${worker}] question still pending (5min elapsed):`,
+            ...entry.summary.split('\n').map(l => l.trimEnd()).filter(l => l.trim()),
+          ]
+        : [
+            `[${worker}] permission prompt still pending (5min elapsed):`,
+            ...entry.summary.split('\n').map(l => l.trimEnd()).filter(l => l.trim()),
+            `reply y/n — or: \`roost tail ${worker}\` to see context, \`roost send ${worker} y\` to unblock`,
+          ]
+      client.say(postTarget, nudgeLines.join('\n'))
     }, nudgeAfterMs)
     nudgeTimer.unref?.()
 
-    inFlight = { socket: entry.socket, timer, nudgeTimer }
+    inFlight = { socket: entry.socket, timer, nudgeTimer, channel: entry.channel ?? null, replyTarget: effectiveReplyTarget }
   }
 
   function stop(): void {
@@ -128,9 +143,9 @@ export function startPermbot(
       if (nl === -1) return
       const line = buf.slice(0, nl)
       buf = buf.slice(nl + 1)
-      let req: { summary?: unknown; timeout?: unknown }
+      let req: { summary?: unknown; timeout?: unknown; channel?: unknown; replyTarget?: unknown }
       try {
-        req = JSON.parse(line) as { summary?: unknown; timeout?: unknown }
+        req = JSON.parse(line) as { summary?: unknown; timeout?: unknown; channel?: unknown; replyTarget?: unknown }
       } catch (e) {
         log(`bad request json: ${e}`)
         respond(socket, { error: `bad request json: ${e}` })
@@ -138,8 +153,19 @@ export function startPermbot(
       }
       const summary = typeof req.summary === 'string' ? req.summary : '(no summary)'
       const timeout = Number(req.timeout) > 0 ? Number(req.timeout) : 30
+      const channel = typeof req.channel === 'string' && req.channel ? req.channel.toLowerCase() : undefined
+      const replyTarget = typeof req.replyTarget === 'string' && req.replyTarget ? req.replyTarget : undefined
+
+      // Auto-join the target channel before posting. Fire-and-forget: the IRC
+      // client writes JOIN to the socket synchronously, and PRIVMSG follows in
+      // order, so the server processes JOIN before PRIVMSG even without awaiting.
+      if (channel && !client.isJoined(channel)) {
+        void client.join(channel)
+        log(`auto-joining ${channel} for question routing`)
+      }
+
       log(`queued request: ${JSON.stringify(req)}`)
-      queue.push({ socket, summary, timeout })
+      queue.push({ socket, summary, timeout, channel, replyTarget })
       maybeDispatch()
     })
     socket.on('error', (e) => log(`client socket error: ${e}`))
@@ -156,17 +182,30 @@ export function startPermbot(
   // ---- IRC event handlers --------------------------------------------------
 
   client.on('message', (msg: IrcMessage) => {
-    if (!msg.isDirect || msg.sender.toLowerCase() !== target.toLowerCase()) return
     const body = msg.text.trim()
-    log(`reply from ${msg.sender}: ${JSON.stringify(body)}`)
+    const senderLower = msg.sender.toLowerCase()
+
     if (inFlight !== null) {
-      clearTimeout(inFlight.timer)
-      clearTimeout(inFlight.nudgeTimer)
-      const s = inFlight.socket
-      inFlight = null
-      respond(s, { reply: body })
-      maybeDispatch()
-    } else {
+      const isDmFromTarget = msg.isDirect && senderLower === inFlight.replyTarget
+      const isChannelReply = !msg.isDirect
+        && inFlight.channel !== null
+        && msg.channel.toLowerCase() === inFlight.channel
+        && senderLower === inFlight.replyTarget
+
+      if (isDmFromTarget || isChannelReply) {
+        log(`reply from ${msg.sender} (${msg.isDirect ? 'DM' : 'channel'}): ${JSON.stringify(body)}`)
+        clearTimeout(inFlight.timer)
+        clearTimeout(inFlight.nudgeTimer)
+        const s = inFlight.socket
+        inFlight = null
+        respond(s, { reply: body })
+        maybeDispatch()
+        return
+      }
+    }
+
+    // Unsolicited DM from primary target
+    if (msg.isDirect && senderLower === target.toLowerCase()) {
       log(`unsolicited DM from ${msg.sender}: ${JSON.stringify(body)}`)
       client.say(msg.sender, 'late — request already timed out (no in-flight prompt)')
     }

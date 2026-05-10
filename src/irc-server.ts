@@ -468,8 +468,9 @@ async function runOwnerMcp(args: {
   // talks to us over the unix socket as before.
   const PERM_SOCK = process.env['ROOST_PERM_SOCK'] ?? ''
   const PERM_TARGET = process.env['ROOST_PERM_TARGET'] ?? ''
+  const ASK_TARGET = process.env['ROOST_ASK_TARGET'] ?? ''
   let permbotStop: (() => void) | null = null
-  if (PERM_SOCK && PERM_TARGET) {
+  if (PERM_SOCK && (PERM_TARGET || ASK_TARGET)) {
     const permbotNick = `permbot-${NICK}`
     const permbotClient = new RoostIrcClientImpl({
       nick: permbotNick,
@@ -481,7 +482,7 @@ async function runOwnerMcp(args: {
     const permbotConfig: PermbotConfig = {
       nick: permbotNick,
       sockPath: PERM_SOCK,
-      target: PERM_TARGET,
+      target: PERM_TARGET || ASK_TARGET,
       worker: NICK,
     }
     const { stop } = startPermbot(permbotConfig, permbotClient)
