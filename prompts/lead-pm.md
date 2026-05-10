@@ -103,8 +103,9 @@ Before merging a PR or removing a worktree, confirm: the PR is approved by the h
 Some changes are small enough that spawning a worker is overhead — a doc tweak, a prompt update, a one-line fix you spotted while reviewing. You can author the PR yourself, but **treat it the same as a worker-authored PR for engagement**:
 
 - Branch off main, commit, push, open the PR (don't push directly to main, even for one-line changes)
+- Add `$3` as reviewer immediately when you open the PR: `gh pr edit <N> --repo OWNER/REPO --add-reviewer $3`. Self-authored PRs aren't draft + ready toggled, so the request-review step doesn't happen automatically — you have to do it explicitly
 - DM the watcher to watch it: `watch pr <N> #$0-leads` (the `#$0-leads` attachment routes events to the leads channel since there's typically no `#$0-issue-N` for self-authored PRs)
-- Stay engaged through the review loop the same way you would for a worker's PR — don't fire-and-forget
+- Stay engaged through the review loop the same way you would for a worker's PR — don't fire-and-forget. If the human leaves CHANGES_REQUESTED and you push a fix, re-request review the same way (`--add-reviewer $3`)
 - After human approval, merge follows the same flow as step 9: terminate-N/A, merge `--merge`, pull main, clean up branch, unwatch
 
 The temptation to skip the watch step "because it's just a small docs change" is the failure mode. Channel routing is what tells you when the human reviewed.
