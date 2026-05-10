@@ -1,12 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 320" role="img" aria-label="Roost"><rect x="0" y="0" width="1280" height="320" fill="#EFE6D6"></rect>
-  <rect width="1280" height="320" fill="#EFE6D6"></rect>
-  <g transform="translate(80 90)">
-    <text x="0" y="120" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="500" font-size="160" letter-spacing="10" fill="#04060B">ROOST</text>
-    <rect x="14.24" y="126" width="73.44" height="14" fill="#E8A24A"></rect>
-  </g>
-  <!-- Crow: upper-right of header (light mode — ink fill on paper) -->
-  <g id="crow" transform="translate(1020 30) scale(1.476)">
-    <g transform="translate(0.000000,120.000000) scale(0.100000,-0.100000)"
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 320" role="img" aria-label="Roost — AVES/ALIGHT"><rect x="0" y="0" width="1280" height="320" fill="#EFE6D6"></rect>
+
+  <!-- Authoritative roost-primary-crow lockup, scaled 1.6x and anchored left with margin -->
+  <!-- Light-mode color inversion: ink type/crow, wick perch (unchanged), moss slash (unchanged) -->
+  <g transform="translate(80 26) scale(1.6)">
+    <text x="0" y="78" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="500" font-size="100" letter-spacing="6" fill="#04060B">ROOST</text>
+    <rect x="8.9" y="82" width="45.9" height="9" fill="#E8A24A"></rect>
+
+    <g id="crow" transform="translate(17.4687 98.8622) scale(0.337349)">
+      <g transform="translate(0.000000,120.000000) scale(0.100000,-0.100000)"
 fill="#04060B" stroke="none">
 <path d="M440 1050 c0 -26 33 -71 75 -101 25 -18 45 -34 45 -35 0 -5 -73 23
 -142 54 -38 17 -68 28 -68 24 0 -17 49 -64 85 -82 47 -23 33 -24 -52 -7 -58
@@ -38,12 +39,13 @@ fill="#04060B" stroke="none">
 177 l-1 33 -13 -30 -14 -30 -2 45 c0 25 -4 56 -9 70 l-7 25 -7 -30 c-16 -68
 -21 -69 -40 -11 -23 67 -36 72 -36 12z"/>
 </g>
+    </g>
+
+    <g transform="translate(181.8 130)" text-anchor="middle">
+      <text font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="500" font-size="28" letter-spacing="3" fill="#04060B">
+        <tspan>AVES</tspan><tspan fill="none" font-weight="700" font-size="34" dy="2.02" dx="4.5">/</tspan><tspan dy="-2.02" dx="4.5">ALIGHT</tspan>
+      </text>
+    </g>
+    <polygon points="162.65,103.72 166.65,103.72 161.35,135.22 157.35,135.22" fill="#3F8F77"></polygon>
   </g>
-  <g transform="translate(80 250)">
-    <text font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="500" font-size="22" letter-spacing="3" fill="#04060B">
-      <tspan>AVES</tspan><tspan fill="none" font-weight="700" font-size="28" dy="1.58" dx="4.5">/</tspan><tspan dy="-1.58" dx="4.5">ALIGHT</tspan>
-    </text>
-  </g>
-  <!-- AVES/ALIGHT slash polygon (moss accent — kept on paper per brand rules) -->
-  <polygon points="157.785,229.34 161.785,229.34 157.615,254.10 153.615,254.10" fill="#3F8F77"></polygon>
 </svg>
