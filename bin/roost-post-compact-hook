@@ -13,9 +13,15 @@ if [ ! -f "$pid_file" ]; then
   exit 0
 fi
 pid=$(cat "$pid_file")
+case "$pid" in
+  ''|*[!0-9]*)
+    echo "roost-post-compact-hook: malformed pid in $pid_file: '$pid', skipping" >&2
+    exit 0
+    ;;
+esac
 if kill -USR2 "$pid" 2>/dev/null; then
   echo "roost-post-compact-hook: sent SIGUSR2 to MCP pid $pid" >&2
 else
-  echo "roost-post-compact-hook: kill -USR2 $pid failed" >&2
+  echo "roost-post-compact-hook: kill -USR2 $pid failed (no such process?)" >&2
 fi
 exit 0
