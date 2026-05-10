@@ -1,6 +1,12 @@
 import * as fs from 'node:fs'
 import * as net from 'node:net'
 
+export type PermBotKind = 'permission' | 'question'
+
+export const CHAT_KEYWORDS = new Set(['chat', 'skip', 'cancel'])
+
+export function permbotNickFor(nick: string): string { return `permbot-${nick}` }
+
 /** Connect to the permbot unix socket, send a JSON request, await the response.
  *  Returns the raw `reply` string, or null on missing socket / timeout / error. */
 export async function socketRoundtrip(

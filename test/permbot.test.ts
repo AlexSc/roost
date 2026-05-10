@@ -114,7 +114,7 @@ describe('permbot queue dispatch', () => {
     stops.push(stop)
     await ready
 
-    const respPromise = socketRoundtrip(sockPath, { summary: 'Read /foo', timeout: 5, replyTarget: 'operator' })
+    const respPromise = socketRoundtrip(sockPath, { summary: 'Read /foo', timeout: 5, kind: 'permission', replyTarget: 'operator' })
     // give the socket handler a tick to enqueue and dispatch
     await new Promise(r => setTimeout(r, 20))
     expect(said.length).toBeGreaterThan(0)
@@ -135,7 +135,7 @@ describe('permbot queue dispatch', () => {
     stops.push(stop)
     await ready
 
-    const resp = await socketRoundtrip(sockPath, { summary: 'Bash rm -rf', timeout: 0.05, replyTarget: 'operator' })
+    const resp = await socketRoundtrip(sockPath, { summary: 'Bash rm -rf', timeout: 0.05, kind: 'permission', replyTarget: 'operator' })
     expect(resp).toEqual({ timeout: true })
   })
 
@@ -149,10 +149,10 @@ describe('permbot queue dispatch', () => {
     stops.push(stop)
     await ready
 
-    const { response: resp1 } = await socketSend(sockPath, { summary: 'first', timeout: 5, replyTarget: 'operator' })
+    const { response: resp1 } = await socketSend(sockPath, { summary: 'first', timeout: 5, kind: 'permission', replyTarget: 'operator' })
     await new Promise(r => setTimeout(r, 20))
 
-    const { response: resp2 } = await socketSend(sockPath, { summary: 'second', timeout: 5, replyTarget: 'operator' })
+    const { response: resp2 } = await socketSend(sockPath, { summary: 'second', timeout: 5, kind: 'permission', replyTarget: 'operator' })
     await new Promise(r => setTimeout(r, 20))
 
     // only first should have been dispatched so far
@@ -180,7 +180,7 @@ describe('permbot queue dispatch', () => {
     stops.push(stop)
     await ready
 
-    socketRoundtrip(sockPath, { summary: 'Read /secret', timeout: 5, replyTarget: 'operator' }).catch(() => {})
+    socketRoundtrip(sockPath, { summary: 'Read /secret', timeout: 5, kind: 'permission', replyTarget: 'operator' }).catch(() => {})
     await new Promise(r => setTimeout(r, 20))
     expect(said.some(m => m.text.includes('Read /secret'))).toBe(true)
     // nudge not yet fired
@@ -201,7 +201,7 @@ describe('permbot queue dispatch', () => {
     stops.push(stop)
     await ready
 
-    const respPromise = socketRoundtrip(sockPath, { summary: 'Bash ls', timeout: 5, replyTarget: 'operator' })
+    const respPromise = socketRoundtrip(sockPath, { summary: 'Bash ls', timeout: 5, kind: 'permission', replyTarget: 'operator' })
     await new Promise(r => setTimeout(r, 20))
     replyDm('operator', 'y')
     await respPromise
@@ -221,8 +221,8 @@ describe('permbot queue dispatch', () => {
     stops.push(stop)
     await ready
 
-    const { response: resp1 } = await socketSend(sockPath, { summary: 'req1', timeout: 30, replyTarget: 'operator' })
-    const { response: resp2 } = await socketSend(sockPath, { summary: 'req2', timeout: 30, replyTarget: 'operator' })
+    const { response: resp1 } = await socketSend(sockPath, { summary: 'req1', timeout: 30, kind: 'permission', replyTarget: 'operator' })
+    const { response: resp2 } = await socketSend(sockPath, { summary: 'req2', timeout: 30, kind: 'permission', replyTarget: 'operator' })
     await new Promise(r => setTimeout(r, 30))
 
     stop()
@@ -245,7 +245,7 @@ describe('permbot ask-question channel routing', () => {
     stops.push(stop)
     await ready
 
-    const respPromise = socketRoundtrip(sockPath, { summary: 'Which framework?\n  1. React\n  2. Vue\nReply: number or option label', timeout: 5, channel: '#ask-channel', replyTarget: 'operator' })
+    const respPromise = socketRoundtrip(sockPath, { summary: 'Which framework?\n  1. React\n  2. Vue\nReply: number or option label', timeout: 5, kind: 'question', channel: '#ask-channel', replyTarget: 'operator' })
     await new Promise(r => setTimeout(r, 20))
 
     // Should post to channel, not DM target
@@ -272,7 +272,7 @@ describe('permbot ask-question channel routing', () => {
     stops.push(stop)
     await ready
 
-    const respPromise = socketRoundtrip(sockPath, { summary: 'Pick one\n  1. A\n  2. B\nReply: number or option label', timeout: 5, channel: '#ask-channel', replyTarget: 'operator' })
+    const respPromise = socketRoundtrip(sockPath, { summary: 'Pick one\n  1. A\n  2. B\nReply: number or option label', timeout: 5, kind: 'question', channel: '#ask-channel', replyTarget: 'operator' })
     await new Promise(r => setTimeout(r, 20))
 
     // Reply via DM (not channel) — should also be accepted
@@ -291,7 +291,7 @@ describe('permbot ask-question channel routing', () => {
     stops.push(stop)
     await ready
 
-    const respPromise = socketRoundtrip(sockPath, { summary: 'Which?', timeout: 0.2, channel: '#ask-channel', replyTarget: 'operator' })
+    const respPromise = socketRoundtrip(sockPath, { summary: 'Which?', timeout: 0.2, kind: 'question', channel: '#ask-channel', replyTarget: 'operator' })
     await new Promise(r => setTimeout(r, 20))
 
     // Message from a different nick should not resolve the request
@@ -304,32 +304,6 @@ describe('permbot ask-question channel routing', () => {
     expect(resp).toEqual({ timeout: true })
   })
 
-  it('auto-joins channel on first question request', async () => {
-    const sockPath = tmpSock()
-    const joined: string[] = []
-    const { client, said, replyChannel } = makeMockClient()
-    // Override join to track calls
-    const origJoin = client.join.bind(client)
-    client.join = async (ch: string) => { joined.push(ch); return origJoin(ch) }
-
-    const { stop, ready } = startPermbot(
-      { nick: 'permbot-test', sockPath, worker: 'test', debugLog: '/dev/null' },
-      client,
-    )
-    stops.push(stop)
-    await ready
-
-    const respPromise = socketRoundtrip(sockPath, { summary: 'Q', timeout: 5, channel: '#new-channel', replyTarget: 'operator' })
-    await new Promise(r => setTimeout(r, 20))
-
-    expect(joined).toContain('#new-channel')
-    expect(said.some(m => m.target === '#new-channel')).toBe(true)
-
-    replyChannel('operator', '#new-channel', '1')
-    const resp = await respPromise
-    expect(resp).toEqual({ reply: '1' })
-  })
-
   it('uses replyTarget instead of config.target for channel questions', async () => {
     const sockPath = tmpSock()
     const { client, replyChannel } = makeMockClient()
@@ -340,7 +314,7 @@ describe('permbot ask-question channel routing', () => {
     stops.push(stop)
     await ready
 
-    const respPromise = socketRoundtrip(sockPath, { summary: 'Q', timeout: 5, channel: '#ch', replyTarget: 'custom-target' })
+    const respPromise = socketRoundtrip(sockPath, { summary: 'Q', timeout: 5, kind: 'question', channel: '#ch', replyTarget: 'custom-target' })
     await new Promise(r => setTimeout(r, 20))
 
     // Reply from config-target should be ignored; custom-target's numeric reply should count
@@ -362,7 +336,7 @@ describe('permbot ask-question channel routing', () => {
     stops.push(stop)
     await ready
 
-    const respPromise = socketRoundtrip(sockPath, { summary: 'Pick?', timeout: 5, channel: '#ch', replyTarget: 'operator' })
+    const respPromise = socketRoundtrip(sockPath, { summary: 'Pick?', timeout: 5, kind: 'question', channel: '#ch', replyTarget: 'operator' })
     await new Promise(r => setTimeout(r, 20))
 
     // Conversational message should be ignored even though it's from replyTarget
@@ -385,7 +359,7 @@ describe('permbot ask-question channel routing', () => {
     stops.push(stop)
     await ready
 
-    const respPromise = socketRoundtrip(sockPath, { summary: 'Pick?', timeout: 5, channel: '#ch', replyTarget: 'operator' })
+    const respPromise = socketRoundtrip(sockPath, { summary: 'Pick?', timeout: 5, kind: 'question', channel: '#ch', replyTarget: 'operator' })
     await new Promise(r => setTimeout(r, 20))
 
     replyChannel('operator', '#ch', 'chat')

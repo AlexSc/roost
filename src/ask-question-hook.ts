@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { checkOwnership } from './owner-gate.js'
-import { socketRoundtrip } from './permbot-socket.js'
+import { socketRoundtrip, CHAT_KEYWORDS, permbotNickFor } from './permbot-socket.js'
 
 const HOOK_EVENT   = 'PreToolUse'
 const WORKER       = process.env['ROOST_IRC_NICK'] ?? 'unknown'
@@ -51,10 +51,6 @@ function deny(reason: string): never {
   }) + '\n')
   process.exit(0)
 }
-
-// Keywords the operator can send to abort the question and return to chat.
-// Must stay in sync with permbot.ts CHAT_KEYWORDS.
-const CHAT_KEYWORDS = new Set(['chat', 'skip', 'cancel'])
 
 // ---- Question formatting ----------------------------------------------------
 
@@ -172,12 +168,12 @@ if (import.meta.main) {
   }
 
   // In channel mode include the permbot nick so the hint tells operators how to DM.
-  const permbotNick = ASK_CHANNEL ? `permbot-${WORKER}` : undefined
+  const permbotNick = ASK_CHANNEL ? permbotNickFor(WORKER) : undefined
   const summary = formatQuestionsForIRC(questions, permbotNick)
   const reply = await askPermbot(summary)
 
   if (reply === null) {
-    deny(`No IRC reply within ${TIMEOUT_SECS}s — permbot unavailable or timed out. Decide without user input or retry.`)
+    deny(`No IRC reply within ${SOCKET_TIMEOUT}s — permbot unavailable or timed out. Decide without user input or retry.`)
   }
 
   if (CHAT_KEYWORDS.has(reply!.trim().toLowerCase())) {

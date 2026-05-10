@@ -154,7 +154,7 @@ export function resolveTranscriptPath(transcriptPath: string, agentId: string): 
 // ---- Socket round-trip to permbot daemon ------------------------------------
 
 export async function askDaemon(summary: string): Promise<string | null> {
-  const req: Record<string, unknown> = { summary, timeout: SOCKET_SAFETY_TIMEOUT }
+  const req: Record<string, unknown> = { summary, timeout: SOCKET_SAFETY_TIMEOUT, kind: 'permission' }
   if (PERM_TARGET) req['replyTarget'] = PERM_TARGET
   return socketRoundtrip(SOCK_PATH, req, (msg) => { process.stderr.write(`perm-hook: ${msg}\n`) })
 }

@@ -7,6 +7,7 @@ import * as fs from 'node:fs'
 import * as net from 'node:net'
 import * as path from 'node:path'
 import type { IrcMessage, RoostIrcClient } from './irc-client.js'
+import { CHAT_KEYWORDS, type PermBotKind } from './permbot-socket.js'
 
 // ---- Types ------------------------------------------------------------------
 
@@ -21,18 +22,18 @@ export interface PermbotConfig {
 }
 
 interface PermBotRequest {
-  summary?: unknown
-  timeout?: unknown
-  kind?: unknown   // 'permission' | 'question'; falls back to channel-presence if absent
-  channel?: unknown
-  replyTarget?: unknown
+  summary?: string
+  timeout?: number
+  kind?: string
+  channel?: string
+  replyTarget?: string
 }
 
 interface QueueEntry {
   socket: net.Socket
   summary: string
   timeout: number
-  kind: 'permission' | 'question'
+  kind: PermBotKind
   replyTarget: string  // required on every request
   channel?: string     // set → channel mode (post + accept in-channel); absent → DM mode
 }
@@ -41,20 +42,16 @@ interface InFlight {
   socket: net.Socket
   timer: ReturnType<typeof setTimeout>
   nudgeTimer: ReturnType<typeof setTimeout>
-  kind: 'permission' | 'question'
+  kind: PermBotKind
   channel: string | null   // channel the question was posted to (null for DM-style)
   replyTarget: string      // lowercase nick whose messages count as the reply
 }
 
-// Keywords the operator can send in-channel to abort AskUserQuestion and
-// return to normal chat flow. The hook maps these to permissionDecision: deny.
-const CHAT_KEYWORDS = new Set(['chat', 'skip', 'cancel'])
-
 /** For in-channel question replies: only accept bare numeric answers, slash-
  *  separated multi-select combos, or chat-flow keywords. Anything else risks
  *  eating side-conversation. DM replies bypass this check entirely. */
-function looksLikeAnswer(text: string, botNick: string): boolean {
-  const stripped = text.replace(new RegExp(`^(!ask|@${botNick.toLowerCase()})\\s+`, 'i'), '').trim()
+function looksLikeAnswer(text: string): boolean {
+  const stripped = text.trim()
   if (/^[\d,/\s]+$/.test(stripped)) return true
   if (CHAT_KEYWORDS.has(stripped.toLowerCase())) return true
   return false
@@ -175,23 +172,18 @@ export function startPermbot(
       const summary = typeof req.summary === 'string' ? req.summary : '(no summary)'
       const timeout = Number(req.timeout) > 0 ? Number(req.timeout) : 30
       const channel = typeof req.channel === 'string' && req.channel ? req.channel.toLowerCase() : undefined
-      const replyTarget = typeof req.replyTarget === 'string' && req.replyTarget ? req.replyTarget : null
+      const replyTarget = req.replyTarget ?? null
       if (!replyTarget) {
         log('request missing replyTarget — rejected')
         respond(socket, { error: 'replyTarget is required' })
         return
       }
-      // Explicit kind takes precedence; fall back to channel-presence for backward compat.
-      const kind: 'permission' | 'question' = req.kind === 'question' || req.kind === 'permission'
-        ? req.kind
-        : (channel ? 'question' : 'permission')
-
-      // Fallback join: irc-server pre-joins ROOST_ASK_CHANNEL via autoJoin at
-      // startup. This covers dynamically-specified channels from the request.
-      if (channel && !client.isJoined(channel)) {
-        void client.join(channel)
-        log(`auto-joining ${channel} for question routing`)
+      if (req.kind !== 'permission' && req.kind !== 'question') {
+        log('request missing valid kind — rejected')
+        respond(socket, { error: 'kind must be "permission" or "question"' })
+        return
       }
+      const kind: PermBotKind = req.kind
 
       log(`queued request: kind=${kind} replyTarget=${replyTarget} ${JSON.stringify(req)}`)
       queue.push({ socket, summary, timeout, kind, replyTarget, channel })
@@ -224,7 +216,7 @@ export function startPermbot(
       if (isDmFromTarget || isChannelReply) {
         // For in-channel question replies, only accept bare numeric answers or
         // chat keywords. DM replies are unambiguous and bypass this check.
-        if (isChannelReply && inFlight.kind === 'question' && !looksLikeAnswer(body, nick)) {
+        if (isChannelReply && inFlight.kind === 'question' && !looksLikeAnswer(body)) {
           log(`ignoring in-channel message from ${msg.sender} (not answer-shaped): ${JSON.stringify(body)}`)
           return
         }
