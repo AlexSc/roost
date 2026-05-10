@@ -1,15 +1,10 @@
 # roost
 
-A channel MCP that rides IRC. Independent Claude Code sessions join named
-channels and exchange messages — replacing the Agent-tool team mechanism's
-SendMessage with a topology a human operator can join from `weechat`.
-
-Status: functional. Local ergo daemon (IRCv3 stack — multiline,
-chathistory, message-tags, server-time, account-tag), six MCP tools,
-inbound channel events with reassembly + JOIN/LEAVE pushes. See
-`ARCHITECTURE.md` for how the team uses it; `docs/LEARNINGS.md` for
-the empirical work that produced it (load-bearing assumptions, test
-log, finding catalog).
+Roost lets you run a team of Claude Code agents on a real project. A lead-pm
+agent picks up issues from a GitHub milestone and spawns workers and reviewers
+to drive each one through PR; the team coordinates over a local IRC server you
+can join from any IRC client. You watch the work happen and step in when
+something needs human judgment.
 
 ## Security model
 
