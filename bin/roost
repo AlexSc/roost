@@ -538,14 +538,17 @@ cmd_spawn() {
   local perm_sock=""
   local perm_hook_json=""
   local ask_hook_json=""
-  # Permbot is needed for --perm-irc or --ask-irc; both share the same socket.
-  if [ "${perm_irc}" -eq 1 ] || [ -n "${ask_irc}" ]; then
+  # Question routing is enabled by --ask-irc (channel mode) or --ask-target (DM mode).
+  local ask_routing=0
+  { [ -n "${ask_irc}" ] || [ -n "${ask_target}" ]; } && ask_routing=1
+  # Permbot is needed for --perm-irc or any question routing; all share one socket.
+  if [ "${perm_irc}" -eq 1 ] || [ "${ask_routing}" -eq 1 ]; then
     perm_sock="${ROOST_DATA_DIR}/permbot.sock"
   fi
   if [ "${perm_irc}" -eq 1 ]; then
     perm_hook_json=",\"PermissionRequest\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/irc-permission-prompt\"}]}]"
   fi
-  if [ -n "${ask_irc}" ]; then
+  if [ "${ask_routing}" -eq 1 ]; then
     ask_hook_json=",\"PreToolUse\":[{\"matcher\":\"AskUserQuestion\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/irc-ask-question\"}]}]"
   fi
   local ROOST_SETTINGS="${ROOST_DATA_DIR}/roost-settings.json"
@@ -562,8 +565,10 @@ cmd_spawn() {
     tmux_env+=(-e "ROOST_PERM_SOCK=${perm_sock}" -e "ROOST_PERM_HOST=${IRC_HOST}" -e "ROOST_PERM_PORT=${IRC_PORT}")
     [ -n "${perm_target}" ] && tmux_env+=(-e "ROOST_PERM_TARGET=${perm_target}")
   fi
-  if [ -n "${ask_irc}" ]; then
-    tmux_env+=(-e "ROOST_ASK_CHANNEL=${ask_irc}")
+  if [ "${ask_routing}" -eq 1 ]; then
+    # Channel mode: ROOST_ASK_CHANNEL tells the hook to post to a channel.
+    # DM mode: omit ROOST_ASK_CHANNEL; hook sends no channel → permbot DMs target.
+    [ -n "${ask_irc}" ] && tmux_env+=(-e "ROOST_ASK_CHANNEL=${ask_irc}")
     # Effective ask-target: explicit --ask-target, else fall back to --perm-target
     local effective_ask_target="${ask_target:-${perm_target}}"
     [ -n "${effective_ask_target}" ] && tmux_env+=(-e "ROOST_ASK_TARGET=${effective_ask_target}")

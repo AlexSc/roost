@@ -11,7 +11,7 @@ const HOOK = path.join(import.meta.dirname, '../src/ask-question-hook.ts')
 // ---- formatQuestionsForIRC --------------------------------------------------
 
 describe('formatQuestionsForIRC', () => {
-  it('single question with options', () => {
+  it('single question with options (DM mode — no permbotNick)', () => {
     const text = formatQuestionsForIRC([{
       question: 'Which framework?',
       options: [{ label: 'React' }, { label: 'Vue' }],
@@ -19,12 +19,25 @@ describe('formatQuestionsForIRC', () => {
     expect(text).toContain('Which framework?')
     expect(text).toContain('1. React')
     expect(text).toContain('2. Vue')
-    expect(text).toContain("Reply: number, your own answer, or 'chat' to discuss")
+    expect(text).toContain("Reply: number, your own answer, or 'chat' to skip")
+  })
+
+  it('single question with options (channel mode — includes DM hint)', () => {
+    const text = formatQuestionsForIRC([{
+      question: 'Which framework?',
+      options: [{ label: 'React' }, { label: 'Vue' }],
+    }], 'permbot-worker')
+    expect(text).toContain('Which framework?')
+    expect(text).toContain('1. React')
+    expect(text).toContain('2. Vue')
+    expect(text).toContain('DM @permbot-worker')
+    expect(text).toContain("'chat' to skip")
   })
 
   it('no Q prefix for single question', () => {
     const text = formatQuestionsForIRC([{ question: 'Pick one?', options: [{ label: 'A' }] }])
     expect(text).not.toContain('Q1:')
+    expect(text).not.toContain('comma-separated')
   })
 
   it('Q prefix for multiple questions', () => {
@@ -36,6 +49,15 @@ describe('formatQuestionsForIRC', () => {
     expect(text).toContain('Q2: Second?')
     expect(text).toContain('comma-separated')
     expect(text).toContain("'chat'")
+  })
+
+  it('multi-select hint uses / separator in multi-question context', () => {
+    const text = formatQuestionsForIRC([
+      { question: 'Q1?', options: [{ label: 'A' }], multiSelect: true },
+      { question: 'Q2?', options: [{ label: 'B' }] },
+    ])
+    expect(text).toContain('use / to separate choices')
+    expect(text).not.toContain('comma-separate multiple')
   })
 
   it('includes option description when present', () => {
@@ -236,8 +258,18 @@ describe('ask-question-hook subprocess', () => {
   it('falls through (exit 0, no stdout) when not configured (no SOCK_PATH)', async () => {
     const { stdout, exit } = await runHook({
       ROOST_IRC_NICK: 'worker-test',
-      // ROOST_PERM_SOCK not set → passthrough
+      // ROOST_PERM_SOCK not set → passthrough regardless of channel/target
       ROOST_ASK_CHANNEL: '#ask-channel',
+      ROOST_ASK_TARGET: 'operator',
+    })
+    expect(exit).toBe(0)
+    expect(stdout.trim()).toBe('')
+  }, 5_000)
+
+  it('falls through when no SOCK_PATH and no target (fully unconfigured)', async () => {
+    const { stdout, exit } = await runHook({
+      ROOST_IRC_NICK: 'worker-test',
+      // neither ROOST_PERM_SOCK nor ROOST_ASK_TARGET → passthrough
     })
     expect(exit).toBe(0)
     expect(stdout.trim()).toBe('')

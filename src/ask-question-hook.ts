@@ -58,21 +58,32 @@ const CHAT_KEYWORDS = new Set(['chat', 'skip', 'cancel'])
 
 // ---- Question formatting ----------------------------------------------------
 
-export function formatQuestionsForIRC(questions: Question[]): string {
+/** permbotNick: when provided (channel mode), hint includes DM escape instruction.
+ *  Omit for DM-mode routing where all replies are accepted as-is. */
+export function formatQuestionsForIRC(questions: Question[], permbotNick?: string): string {
   const lines: string[] = []
+  const isMultiQ = questions.length > 1
   questions.forEach((q, i) => {
-    const prefix = questions.length > 1 ? `Q${i + 1}: ` : ''
+    const prefix = isMultiQ ? `Q${i + 1}: ` : ''
     lines.push(`${prefix}${q.question}`)
     for (const [j, o] of (q.options ?? []).entries()) {
       const desc = o.description ? ` — ${o.description}` : ''
       lines.push(`  ${j + 1}. ${o.label}${desc}`)
     }
-    if (q.multiSelect) lines.push('  (multi-select: comma-separate multiple choices)')
+    if (q.multiSelect) {
+      // In multi-question context commas separate questions, so inner choices use "/"
+      lines.push(isMultiQ
+        ? '  (multi-select: use / to separate choices, e.g. 1/3)'
+        : '  (multi-select: comma-separate multiple choices)')
+    }
   })
-  if (questions.length > 1) {
-    lines.push("Reply: number per question, comma-separated (e.g. 1, 2) — or 'chat' to discuss; DM for text answers")
+  const dmNote = permbotNick ? ` | DM @${permbotNick} for free text` : ''
+  if (isMultiQ) {
+    lines.push(`Reply: number per question, comma-separated (e.g. 1, 2)${dmNote} | 'chat' to skip`)
   } else {
-    lines.push("Reply: number, your own answer, or 'chat' to discuss")
+    lines.push(permbotNick
+      ? `Reply: number | DM @${permbotNick} for free text | 'chat' to skip`
+      : "Reply: number, your own answer, or 'chat' to skip")
   }
   return lines.join('\n')
 }
@@ -122,7 +133,8 @@ export function mapReplyToAnswers(reply: string, questions: Question[]): Record<
 // ---- Socket round-trip to permbot -------------------------------------------
 
 export async function askPermbot(summary: string): Promise<string | null> {
-  const req: Record<string, unknown> = { summary, timeout: SOCKET_TIMEOUT, channel: ASK_CHANNEL }
+  const req: Record<string, unknown> = { summary, timeout: SOCKET_TIMEOUT }
+  if (ASK_CHANNEL) req['channel'] = ASK_CHANNEL  // omit → DM mode
   if (ASK_TARGET) req['replyTarget'] = ASK_TARGET
   return socketRoundtrip(SOCK_PATH, req, (msg) => {
     process.stderr.write(`ask-question-hook[${WORKER}]: ${msg}\n`)
@@ -154,12 +166,14 @@ if (import.meta.main) {
   const questions = (toolInput['questions'] as Question[] | undefined) ?? []
   if (questions.length === 0) passthrough()
 
-  if (!SOCK_PATH || !ASK_CHANNEL) {
-    process.stderr.write(`ask-question-hook[${WORKER}]: not configured (missing ROOST_PERM_SOCK or ROOST_ASK_CHANNEL), falling through to UI\n`)
+  if (!SOCK_PATH || (!ASK_CHANNEL && !ASK_TARGET)) {
+    process.stderr.write(`ask-question-hook[${WORKER}]: not configured (missing ROOST_PERM_SOCK or ask target/channel), falling through to UI\n`)
     passthrough()
   }
 
-  const summary = formatQuestionsForIRC(questions)
+  // In channel mode include the permbot nick so the hint tells operators how to DM.
+  const permbotNick = ASK_CHANNEL ? `permbot-${WORKER}` : undefined
+  const summary = formatQuestionsForIRC(questions, permbotNick)
   const reply = await askPermbot(summary)
 
   if (reply === null) {
