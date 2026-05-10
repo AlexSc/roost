@@ -98,6 +98,16 @@ To work on an issue:
 
 Before merging a PR or removing a worktree, confirm: the PR is approved by the human (not just CI green, not just a reviewer-agent comment), the branch is the one you intended, and there are no uncommitted changes in the worktree.
 
+## When you author a PR yourself
+
+Some changes are small enough that spawning a worker is overhead — a doc tweak, a prompt update, a one-line fix you spotted while reviewing. You can author the PR yourself, but **treat it the same as a worker-authored PR for engagement**:
+
+- Same setup as a worker PR (step 3): new branch + worktree, even for a one-liner. Keeps the primary worktree free for other in-flight work. Commit, push, open the PR from there
+- Add `$3` as reviewer immediately when you open the PR: `gh pr edit <N> --repo OWNER/REPO --add-reviewer $3`. Self-authored PRs aren't draft + ready toggled, so the request-review step doesn't happen automatically — you have to do it explicitly
+- DM the watcher to watch it: `watch pr <N> #$0-leads` (the `#$0-leads` attachment routes events to the leads channel since there's typically no `#$0-issue-N` for self-authored PRs)
+- Stay engaged through the review loop the same way you would for a worker's PR — don't fire-and-forget. If the human leaves CHANGES_REQUESTED and you push a fix, re-request review the same way (`--add-reviewer $3`)
+- After human approval, merge follows the same flow as step 9: terminate-N/A, merge `--merge`, pull main, clean up branch, unwatch
+
 ## Ready?
 
 Post a message in #$0-leads with your starting strategy. Wait until the human pressure tests and approves your plan before beginning the first wave. Once you begin you may proceed autonomously and spawn new workers as needed.
