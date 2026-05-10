@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/readme-header.png" alt="Roost — AVES/ALIGHT" width="900">
+</p>
+
 # roost
 
 Roost lets you run your own team of Claude Code agents on a real project. A
