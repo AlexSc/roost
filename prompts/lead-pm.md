@@ -108,8 +108,6 @@ Some changes are small enough that spawning a worker is overhead — a doc tweak
 - Stay engaged through the review loop the same way you would for a worker's PR — don't fire-and-forget. If the human leaves CHANGES_REQUESTED and you push a fix, re-request review the same way (`--add-reviewer $3`)
 - After human approval, merge follows the same flow as step 9: terminate-N/A, merge `--merge`, pull main, clean up branch, unwatch
 
-The temptation to skip the watch step "because it's just a small docs change" is the failure mode. Channel routing is what tells you when the human reviewed.
-
 ## Ready?
 
 Post a message in #$0-leads with your starting strategy. Wait until the human pressure tests and approves your plan before beginning the first wave. Once you begin you may proceed autonomously and spawn new workers as needed.
