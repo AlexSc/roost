@@ -231,12 +231,13 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     peer.say('#ip-unread8-b', 'check this out')
     await mcp.waitForNotification(n => n.meta.channel === '#ip-unread8-b' && n.content === 'check this out')
 
-    // Acking A should report B as unread
+    // Acking A should report B as unread, including the hint
     const ack = await mcp.client.callTool({ name: 'channel_ack', arguments: { channel: '#ip-unread8-a' } })
     expect(toolText(ack)).toContain('acked #ip-unread8-a')
     expect(toolText(ack)).toContain('unread:')
     expect(toolText(ack)).toContain('#ip-unread8-b')
     expect(toolText(ack)).toContain('check this out')
+    expect(toolText(ack)).toContain('channel_ack to clear')
 
     // Acking B clears the last unread — no suffix
     const ack2 = await mcp.client.callTool({ name: 'channel_ack', arguments: { channel: '#ip-unread8-b' } })
@@ -264,6 +265,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     expect(nDirty.content).toContain('#ip-unread5')
     expect(nDirty.content).toContain('ip-unread5-peer')
     expect(nDirty.content).toContain('pending message')
+    expect(nDirty.content).toContain('channel_ack to clear')
   })
 
   it('send reply includes unread nudge for other channels, omits if none', async () => {

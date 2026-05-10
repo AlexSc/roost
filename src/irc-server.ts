@@ -40,6 +40,7 @@ export const NOT_READY_SENTINEL = 'IRC client not ready (still connecting).'
 const PASSIVE_SENTINEL = 'roost-irc MCP is passive: a sibling MCP in the same ROOST_DATA_DIR already owns this nick. Tools are disabled in this instance.'
 
 const REPLY_REMINDER = 'Substantive replies should be posted to IRC.'
+const UNREAD_HINT = '(post a message to those channels/peers or call channel_ack to clear)'
 // 1/7 — midpoint of the 1/5–1/10 range from #136. Random rate avoids the
 // pattern-match-and-ignore failure mode of a fixed cadence.
 const REMINDER_PROBABILITY = 1 / 7
@@ -222,7 +223,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
     const unread = client.getUnread()
     if (unread.size === 0) return ''
     return '\nunread:\n' + [...unread.entries()].map(([ch, i]) => `  ${formatUnreadLine(ch, i)}`).join('\n') +
-      '\n(post a message to that channel/peer or call channel_ack to clear)'
+      `\n${UNREAD_HINT}`
   }
 
   // ---- Typed event subscriptions -----------------------------------------
@@ -377,7 +378,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
       text = '[roost] all caught up — no unread messages'
     } else {
       const lines = entries.map(([ch, info]) => `  ${formatUnreadLine(ch, info)}`)
-      text = `[roost] unread activity:\n${lines.join('\n')}\n(post a message to that channel/peer or call channel_ack to clear)`
+      text = `[roost] unread activity:\n${lines.join('\n')}\n${UNREAD_HINT}`
     }
     process.stderr.write(`roost-irc[${NICK}]: unread summary emitted (${entries.length} channels with unread)\n`)
     return pushNotification(text, { event: 'unread-summary', channel: '', sender: '', isDirect: 'false', ts: new Date().toISOString() })
