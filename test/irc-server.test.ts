@@ -219,6 +219,45 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     expect(toolText(list)).not.toMatch(/\(\d+\)/)
   })
 
+  it('channel_leave clears unread', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-unread9')
+    const peer = await connectPeer(ergo, 'ip-unread9-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread9' } })
+    await peer.joinChannel('#ip-unread9')
+
+    peer.say('#ip-unread9', 'bye')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread9' && n.content === 'bye')
+
+    await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#ip-unread9' } })
+
+    // channel_ack on an unrelated channel — no unread suffix means the parted channel was cleared
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread9-b' } })
+    const ack = await mcp.client.callTool({ name: 'channel_ack', arguments: { channel: '#ip-unread9-b' } })
+    expect(toolText(ack)).not.toContain('unread:')
+  })
+
+  it('kick clears unread (handleKick path)', async () => {
+    // peer joins first to get channel-op status, then MCP client joins
+    const peer = await connectPeer(ergo, 'ip-unread10-peer')
+    const mcp = await startMcpInProcess(ergo, 'ip-unread10')
+    await peer.joinChannel('#ip-unread10')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread10' } })
+
+    peer.say('#ip-unread10', 'watch out')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread10' && n.content === 'watch out')
+
+    // peer kicks the MCP client; goes through handleKick not channel_leave
+    const kickSeen = peer.waitForKick('#ip-unread10', 'ip-unread10')
+    peer.kick('#ip-unread10', 'ip-unread10', 'out you go')
+    await kickSeen
+
+    // After the kick echo reaches the peer, the server has already sent KICK to the MCP
+    // client's TCP connection. The next event-loop turn (the callTool await) drains it.
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread10-b' } })
+    const ack = await mcp.client.callTool({ name: 'channel_ack', arguments: { channel: '#ip-unread10-b' } })
+    expect(toolText(ack)).not.toContain('unread:')
+  })
+
   it('channel_ack response includes unread suffix for other channels, omits if none', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-unread8')
     const peer = await connectPeer(ergo, 'ip-unread8-peer')

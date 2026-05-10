@@ -429,6 +429,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
         this.partResolvers.delete(channel)
       }
       this.channelUsers.delete(channel)
+      this.unread.delete(channel)
       return
     }
     this.channelUsers.get(channel)?.delete(event.nick)
@@ -442,6 +443,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     const victim = event.kicked
     if (victim === this.nick) {
       this.channelUsers.delete(channel)
+      this.unread.delete(channel)
       return
     }
     this.channelUsers.get(channel)?.delete(victim)
