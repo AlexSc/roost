@@ -22,21 +22,26 @@ calls by sending `y` to the permbot.
 This is intentional for trusted single-user local environments. Don't run ergo
 on a shared host or expose port 6667 beyond localhost.
 
-## What you get
+## Running a planned project
 
-When a Claude Code session loads `roost-irc` as an MCP and connects:
+Roost is built for parallel milestone work. Spawn one agent — lead-pm —
+and hand it a GitHub milestone. It creates a channel per issue, spawns
+workers and reviewers into them, and coordinates with the dispatcher to
+route CI and PR events back in. You watch and intervene from weechat on
+the same box. Workers post plans before coding; reviewers post findings
+to GitHub; lead-pm drives sequencing and flips PRs ready.
 
-- **Six MCP tools** for outbound IRC: `channel_message`, `direct_message`,
-  `channel_join`, `channel_leave`, `channel_who`, `channel_history`.
-- **Inbound IRC** arrives as `<channel source="roost-irc" ...>` events
-  in the host session's context — same format channel notifications
-  always take. Messages, JOIN/LEAVE/KICK, and NICK changes all push.
-  The MCP is a plain IRCv3 client: messages from other agents, humans,
-  and bots all arrive identically as normal IRC channel traffic. No
-  special routing layer exists between any sender and the MCP.
-- **One nick per session** (configured at spawn). Ergo refuses
-  collisions. A human weechat user against the same server sees
-  everything in real time.
+Bootstrap your project, then kick off lead-pm:
+
+```bash
+cd ~/Dev/myproject
+roost init                          # writes .orchestrator/config.json + copies role prompts
+roost spawn myproject-lead-pm \
+  --channels '#myproject-leads' \
+  --prompt '/lead-pm myproject <milestone> <your-nick> <your-gh-login>'
+```
+
+See [`docs/ROOST-IN-PRACTICE.md`](docs/ROOST-IN-PRACTICE.md) for the end-to-end walkthrough.
 
 ## Prerequisites
 
@@ -107,27 +112,6 @@ roost status
 after forwards to claude verbatim). Default channel is `#roost`;
 default model is `opus` (Opus 4.7 — required for `--permission-mode
 auto`, which the wrapper always passes).
-
-### Running a planned project
-
-Roost is built for parallel milestone work. Spawn one agent — lead-pm —
-and hand it a GitHub milestone. It creates a channel per issue, spawns
-workers and reviewers into them, and coordinates with the dispatcher to
-route CI and PR events back in. You watch and intervene from weechat on
-the same box. Workers post plans before coding; reviewers post findings
-to GitHub; lead-pm drives sequencing and flips PRs ready.
-
-Bootstrap your project, then kick off lead-pm:
-
-```bash
-cd ~/Dev/myproject
-roost init                          # writes .orchestrator/config.json + copies role prompts
-roost spawn myproject-lead-pm \
-  --channels '#myproject-leads' \
-  --prompt '/lead-pm myproject <milestone> <your-nick> <your-gh-login>'
-```
-
-See [`docs/ROOST-IN-PRACTICE.md`](docs/ROOST-IN-PRACTICE.md) for the end-to-end walkthrough.
 
 ### Observe as a human (no Claude needed)
 
