@@ -55,6 +55,22 @@ export class GitHubPrsPlugin extends GhBase {
     for (const { key, snap, events, entryChannels } of scraped) {
       curState.prs[key] = snap
       for (const event of events) {
+        if (event.kind === 'pr_added_to_watch') {
+          const linked = event.linked_issues ?? []
+          // Suppress when no linked issues — pr_no_linked_issues already fires
+          // with the clearer "events won't be routed" message on the same tick.
+          if (linked.length) {
+            const routingChannels = this.resolveChannels(
+              GitHubPrsPlugin.prEventChannels(project, event, projectChannel),
+              entryChannels
+            ).filter(ch => ch !== projectChannel)
+            taggedEvents.push({
+              channels: [projectChannel],
+              payload: { kind: 'oneline', text: `now watching PR ${key} — routing events to ${routingChannels.join(', ')}` },
+            })
+          }
+          continue
+        }
         if (!shouldPush(event)) continue
         taggedEvents.push({
           channels: this.resolveChannels(GitHubPrsPlugin.prEventChannels(project, event, projectChannel), entryChannels),
