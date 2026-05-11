@@ -20,12 +20,16 @@ export function computePrEvents(
   snap: PrSnapInternal,
   prevSnap: PrSnap | null | undefined,
   agentLogins: Set<string>
-): OrchestratorEvent[] {
-  if (prevSnap === undefined) return []   // seeding tick — no events
-  if (prevSnap !== null) return diffPr(prevSnap, snap, agentLogins)
+): { events: OrchestratorEvent[], nextWarnedNoLinked: boolean } {
+  const linked = snap.linked_issues ?? []
+
+  if (prevSnap === undefined) return { events: [], nextWarnedNoLinked: false }  // seeding tick
+
+  if (prevSnap !== null) {
+    return { events: diffPr(prevSnap, snap, agentLogins), nextWarnedNoLinked: linked.length === 0 }
+  }
 
   // New PR added to watch list
-  const linked = snap.linked_issues ?? []
   const base = { repo: snap.repo, pr: snap.number, url: snap.url ?? '', title: snap.title ?? '', ...(linked.length ? { linked_issues: linked } : {}) }
   const events: OrchestratorEvent[] = [{ kind: 'pr_added_to_watch', ...base }]
   if (linked.length === 0) events.push({ kind: 'pr_no_linked_issues', ...base })
@@ -37,7 +41,7 @@ export function computePrEvents(
   if (snap.ci_state === 'SUCCESS' || snap.ci_state === 'FAILURE') {
     events.push({ kind: 'pr_has_existing_ci_state', ci_state: snap.ci_state, ...base })
   }
-  return events
+  return { events, nextWarnedNoLinked: linked.length === 0 }
 }
 
 export function computeIssueEvents(
@@ -65,16 +69,9 @@ export async function scrapePr(
   agentLogins: Set<string>
 ): Promise<ScrapeResult<PrSnap>> {
   const snap = await snapshotPr(repo, number, prevSnap ?? undefined)
-  const events = computePrEvents(snap, prevSnap, agentLogins)
+  const { events, nextWarnedNoLinked } = computePrEvents(snap, prevSnap, agentLogins)
   const stripped = stripInternals(snap) as PrSnap
-  const linked = stripped.linked_issues ?? []
-  if (linked.length > 0) {
-    stripped.warned_no_linked = false
-  } else if (events.some(e => e.kind === 'pr_no_linked_issues')) {
-    stripped.warned_no_linked = true
-  } else {
-    stripped.warned_no_linked = prevSnap?.warned_no_linked ?? false
-  }
+  stripped.warned_no_linked = nextWarnedNoLinked
   return { snap: stripped, events }
 }
 

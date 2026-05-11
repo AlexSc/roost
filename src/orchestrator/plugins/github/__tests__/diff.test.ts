@@ -203,8 +203,9 @@ describe('diffPr — pr_no_linked_issues', () => {
     expect(events.some(e => e.kind === 'pr_no_linked_issues')).toBe(false)
   })
 
-  it('warns again after linked_issues cleared (warned_no_linked reset to false)', () => {
-    const prev: PrSnap = { ...basePrSnap({ linked_issues: [], warned_no_linked: false }) }
+  it('warns again after linked_issues cleared ([N] → [] transition)', () => {
+    // prev had linked issues so warned_no_linked was reset to false
+    const prev: PrSnap = { ...basePrSnap({ linked_issues: [42], warned_no_linked: false }) }
     const cur = basePrSnap({ linked_issues: [] })
     const events = diffPr(prev, cur)
     expect(events.some(e => e.kind === 'pr_no_linked_issues')).toBe(true)
@@ -221,22 +222,25 @@ describe('diffPr — pr_no_linked_issues', () => {
 })
 
 describe('computePrEvents — pr_no_linked_issues', () => {
-  it('emits pr_no_linked_issues for new PR with empty linked_issues', () => {
+  it('emits pr_no_linked_issues and sets nextWarnedNoLinked for new PR with empty linked_issues', () => {
     const snap = basePrSnap({ linked_issues: [] })
-    const events = computePrEvents(snap, null, new Set())
+    const { events, nextWarnedNoLinked } = computePrEvents(snap, null, new Set())
     expect(events.some(e => e.kind === 'pr_no_linked_issues')).toBe(true)
+    expect(nextWarnedNoLinked).toBe(true)
   })
 
-  it('does not emit pr_no_linked_issues for new PR with linked issues', () => {
+  it('does not emit pr_no_linked_issues and clears flag for new PR with linked issues', () => {
     const snap = basePrSnap({ linked_issues: [5] })
-    const events = computePrEvents(snap, null, new Set())
+    const { events, nextWarnedNoLinked } = computePrEvents(snap, null, new Set())
     expect(events.some(e => e.kind === 'pr_no_linked_issues')).toBe(false)
+    expect(nextWarnedNoLinked).toBe(false)
   })
 
-  it('does not emit for seeding tick (prevSnap undefined)', () => {
+  it('does not emit for seeding tick (prevSnap undefined), nextWarnedNoLinked false', () => {
     const snap = basePrSnap({ linked_issues: [] })
-    const events = computePrEvents(snap, undefined, new Set())
+    const { events, nextWarnedNoLinked } = computePrEvents(snap, undefined, new Set())
     expect(events).toHaveLength(0)
+    expect(nextWarnedNoLinked).toBe(false)
   })
 })
 
