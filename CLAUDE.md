@@ -66,8 +66,8 @@ To cut a release:
 
 1. Bump `package.json` version on a `maint/bump-version-X.Y.Z` branch, PR, merge.
 2. From main, after the bump merges: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-3. The tag fires `.github/workflows/release.yml` — creates the GitHub release and opens a formula-bump PR against `AvesAlight/homebrew-tap`.
-4. Watch the tap repo for the bump PR: `gh pr list --repo AvesAlight/homebrew-tap` (or the web UI). Merge it once it lands.
+3. The tag fires `.github/workflows/release.yml` — creates the GitHub release and pushes a formula-bump commit directly to `main` on `AvesAlight/homebrew-tap` (no PR; the action commits straight to the tap repo).
+4. Watch the tap repo's commit log for the bump: `gh api repos/AvesAlight/homebrew-tap/commits --jq '.[0].commit.message'` (or the web UI).
 5. Operators on the box: `brew upgrade roost`, then restart any running dispatchers so they pick up new code.
 
 The version bump and the tag are separate steps — the workflow only fires on tag push, and only tags that don't contain a hyphen (so `v1.0.0-rc1` is skipped).
