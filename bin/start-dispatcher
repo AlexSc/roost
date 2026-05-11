@@ -11,7 +11,7 @@
 # for this config-dir a second copy will start. The watcher calls this
 # once on boot; avoiding double-starts is the caller's responsibility.
 
-set -uo pipefail
+set -euo pipefail
 
 if [ "$#" -lt 1 ]; then
   echo "start-dispatcher: usage: start-dispatcher <config-dir>" >&2
