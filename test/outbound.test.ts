@@ -86,6 +86,47 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     expect(n.content).toBe(longText)
   })
 
+  it('channel_message: response includes [#channel: N members] suffix', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-out-bcast-mcp1')
+    const peer = await connectPeer(ergo, 'ip-out-bcast-peer1')
+
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-out-bcast' } })
+    await peer.joinChannel('#ip-out-bcast')
+    // wait for MCP to process peer's JOIN so channelUsers cache reflects 2 members
+    await mcp.waitForNotification(n => n.meta.event === 'join' && n.meta.channel === '#ip-out-bcast' && n.meta.sender === 'ip-out-bcast-peer1')
+
+    const result = await mcp.client.callTool({
+      name: 'channel_message',
+      arguments: { channel: '#ip-out-bcast', text: 'broadcast test' },
+    })
+    expect(result.isError).toBeFalsy()
+    // mcp + peer = 2 members
+    expect(toolText(result)).toContain('[#ip-out-bcast: 2 members]')
+  })
+
+  it('channel_message: no member hint when not joined', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-out-bcast-mcp2')
+
+    const result = await mcp.client.callTool({
+      name: 'channel_message',
+      arguments: { channel: '#ip-out-bcast-nojoin', text: 'should have no hint' },
+    })
+    expect(toolText(result)).not.toContain('[#ip-out-bcast-nojoin:')
+  })
+
+  it('direct_message: response has no member hint', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-out-bcast-mcp3')
+    const peer = await connectPeer(ergo, 'ip-out-bcast-peer3')
+
+    const result = await mcp.client.callTool({
+      name: 'direct_message',
+      arguments: { nick: 'ip-out-bcast-peer3', text: 'dm no hint' },
+    })
+    expect(result.isError).toBeFalsy()
+    expect(toolText(result)).not.toMatch(/\[.*members\]/)
+    void peer
+  })
+
   it('channel_join: cache hit — second join returns ok without IRC round-trip', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-out-cache1')
 
