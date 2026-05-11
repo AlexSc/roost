@@ -193,7 +193,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
         tools: {},
         experimental: { 'claude/channel': {} },
       },
-      instructions: `roost IRC MCP. You are connected to IRC as nick "${NICK}". This MCP is a plain IRCv3 client — there is no special pipeline between it and any other component. Every message that arrives in a channel (from another agent, a human, or a bot) reaches you identically, as a normal IRC channel message. Outbound: use channel_message, direct_message, channel_join, channel_leave, channel_who, channel_history, channel_list, channel_ack. channel_message supports multiline — long messages are sent as IRCv3 draft/multiline batches. Inbound: IRC traffic arrives as <channel> events. Regular messages carry event="message"; membership events (join/leave/nick) carry the corresponding event= value. All carry sender, channel, isDirect, ts, and seq. event="message" events carry mention="true" when your nick appears in the body or it's a DM. After compaction a special event with event=unread-summary lists channels with pending unread messages — check those channels. channel_message responses include a [#channel: N members] line after the body showing current channel membership from the local cache — this is a broadcast reminder, not a live query. channel_message, direct_message, channel_list, and channel_ack responses include a trailing 'unread:' block listing other channels with pending messages. channel_history returns historical <channel> elements with historical="true"; parse them the same way as live events. Auto-joined: ${AUTO_JOIN.join(', ') || '(none)'}.`,
+      instructions: `roost IRC MCP. You are connected to IRC as nick "${NICK}". This MCP is a plain IRCv3 client — there is no special pipeline between it and any other component. Every message that arrives in a channel (from another agent, a human, or a bot) reaches you identically, as a normal IRC channel message. Outbound: use channel_message, direct_message, channel_join, channel_leave, channel_who, channel_history, channel_list, channel_ack. channel_message supports multiline — long messages are sent as IRCv3 draft/multiline batches. Inbound: IRC traffic arrives as <channel> events. Regular messages carry event="message"; membership events (join/leave/nick) carry the corresponding event= value. All carry sender, channel, isDirect, ts, and seq. event="message" events carry mention="true" when your nick appears in the body or it's a DM. After compaction a special event with event=unread-summary lists channels with pending unread messages — check those channels. channel_message responses always include a [#channel: N members] line after the body — current member count from the local cache, not a live query. channel_message, direct_message, channel_list, and channel_ack responses include a trailing 'unread:' block listing other channels with pending messages. channel_history returns historical <channel> elements with historical="true"; parse them the same way as live events. Auto-joined: ${AUTO_JOIN.join(', ') || '(none)'}.`,
     },
   )
 
@@ -294,7 +294,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
 
   // ---- Tool definitions --------------------------------------------------
 
-  const handleSay = (target: string, text: string, label: string, broadcastChannel?: string) => {
+  const handleSay = (target: string, text: string, label: string) => {
     const { chunks, mode } = client.say(target, text)
     client.ackUnread(target)
     const suffix = unreadSuffix()
@@ -303,8 +303,8 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
       : chunks > 1 ? ` (split into ${chunks} chunks for IRC line cap)`
       : ''
     const preview = text.length > 120 ? text.slice(0, 117) + '...' : text
-    const memberHint = broadcastChannel && client.isJoined(broadcastChannel)
-      ? `\n[${broadcastChannel}: ${client.getUsers(broadcastChannel).length} members]`
+    const memberHint = target.startsWith('#')
+      ? `\n[${target}: ${client.getUsers(target).length} members]`
       : ''
     return { content: [{ type: 'text', text: `${label}: ${preview}${note}${memberHint}${suffix}` }] }
   }
@@ -325,7 +325,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
       case 'channel_message': {
         const ch = args.channel as string
         const text = args.text as string
-        return handleSay(ch, text, `sent to ${ch}`, ch)
+        return handleSay(ch, text, `sent to ${ch}`)
       }
       case 'direct_message': {
         const nick = args.nick as string
