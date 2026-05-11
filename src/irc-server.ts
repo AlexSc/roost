@@ -193,7 +193,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
         tools: {},
         experimental: { 'claude/channel': {} },
       },
-      instructions: `roost IRC MCP. You are connected to IRC as nick "${NICK}". This MCP is a plain IRCv3 client — there is no special pipeline between it and any other component. Every message that arrives in a channel (from another agent, a human, or a bot) reaches you identically, as a normal IRC channel message. Outbound: use channel_message, direct_message, channel_join, channel_leave, channel_who, channel_history, channel_list, channel_ack. channel_message supports multiline — long messages are sent as IRCv3 draft/multiline batches. Inbound: IRC traffic arrives as <channel> events. Regular messages carry event="message"; membership events (join/leave/nick) carry the corresponding event= value. All carry sender, channel, isDirect, ts, and seq. event="message" events carry mention="true" when your nick appears in the body or it's a DM. After compaction a special event with event=unread-summary lists channels with pending unread messages — check those channels. channel_message, direct_message, channel_list, and channel_ack responses include a trailing 'unread:' block listing other channels with pending messages. Auto-joined: ${AUTO_JOIN.join(', ') || '(none)'}.`,
+      instructions: `roost IRC MCP. You are connected to IRC as nick "${NICK}". This MCP is a plain IRCv3 client — there is no special pipeline between it and any other component. Every message that arrives in a channel (from another agent, a human, or a bot) reaches you identically, as a normal IRC channel message. Outbound: use channel_message, direct_message, channel_join, channel_leave, channel_who, channel_history, channel_list, channel_ack. channel_message supports multiline — long messages are sent as IRCv3 draft/multiline batches. Inbound: IRC traffic arrives as <channel> events. Regular messages carry event="message"; membership events (join/leave/nick) carry the corresponding event= value. All carry sender, channel, isDirect, ts, and seq. event="message" events carry mention="true" when your nick appears in the body or it's a DM. After compaction a special event with event=unread-summary lists channels with pending unread messages — check those channels. channel_message, direct_message, channel_list, and channel_ack responses include a trailing 'unread:' block listing other channels with pending messages. channel_history returns historical <channel> elements with historical="true"; parse them the same way as live events. Auto-joined: ${AUTO_JOIN.join(', ') || '(none)'}.`,
     },
   )
 
@@ -208,6 +208,10 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
       process.stderr.write(`roost-irc[${NICK}]: pushNotification error: ${msg}\n`)
     })
   }
+
+  const escAttr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#39;')
+  const escBody = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const wireMention = (msg: { mention?: boolean; isDirect: boolean }) => msg.mention || msg.isDirect
 
   const formatUnreadLine = (ch: string, info: UnreadInfo, previewLength = 40): string => {
     const hasMention = info.mentionCount > 0
@@ -241,7 +245,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
       if (meta.chunkCount && meta.chunkCount > 1) metaRecord.chunkCount = String(meta.chunkCount)
     }
     if (meta.historical) metaRecord.historical = 'true'
-    if (meta.mention || msg.isDirect) metaRecord.mention = 'true'
+    if (wireMention({ mention: meta.mention, isDirect: msg.isDirect })) metaRecord.mention = 'true'
 
     pushNotification(msg.text, metaRecord)
     process.stderr.write(
@@ -347,8 +351,11 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
         const limit = (args.limit as number | undefined) ?? 20
         client.ackUnread(key)
         const slice = client.getHistory(key, limit)
-        if (slice.length === 0) return { content: [{ type: 'text', text: `no history for ${key} (since this MCP started)` }] }
-        const lines = slice.map(m => `[${m.ts}] ${m.isDirect ? `(DM from ${m.sender})` : `${m.channel} <${m.sender}>`} ${m.text}`)
+        if (slice.length === 0) return { content: [{ type: 'text', text: `<channel event="no-history" channel="${escAttr(key)}">no history for ${key} (since this MCP started)</channel>` }] }
+        const lines = slice.map(m => {
+          const mention = wireMention(m) ? ' mention="true"' : ''
+          return `<channel sender="${escAttr(m.sender)}" channel="${escAttr(m.channel)}" isDirect="${m.isDirect}" ts="${escAttr(m.ts)}" event="message" historical="true"${mention}>${escBody(m.text)}</channel>`
+        })
         return { content: [{ type: 'text', text: lines.join('\n') }] }
       }
       case 'channel_list': {
