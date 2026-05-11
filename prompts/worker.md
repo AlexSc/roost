@@ -21,17 +21,10 @@ Ask in the channel before any destructive or shared-state action: force-push, br
 
 PRs start as draft. When your work is pushed, signal clearly in the channel ("pushed, ready for review" or "addressed X, ready to flip"). Lead-pm then marks it ready. Once the PR is marked ready it stays ready through the review loop — you are done with draft/ready transitions. If a reviewer asks for changes, push the fix and say so; lead-pm will re-evaluate state.
 
-## CI failures
-
-When CI fails, triage in this order:
-- **(a) Upstream drift** — did main advance since you branched? CI tests the merge commit, so a parallel merge can introduce failures unrelated to your change. Run `git fetch && git log HEAD..origin/main --oneline` to see what CI pulled in that you don't have.
-- **(b) Environment mismatch** — does the failure reproduce locally? CI may run a different OS, toolchain version, or stricter type flags.
-- **(c) Real bug** — only after ruling out (a) and (b), assume it's in your change.
-
 ## Plans and followups
 
-Lead-pm will pressure-test your plan before approving. Have answers ready: why this approach, what alternatives were ruled out, what the edge cases are. If lead says "categorize for in-PR vs followup", the in-PR side is the default. File a followup only when the lead explicitly names one or when the scope is genuinely orthogonal (different file, different system, clearly separable concern).
+Lead-pm will pressure-test your plan before approving. Have answers ready: why this approach, what alternatives were ruled out, what the edge cases are. Default to taking on more work in-PR. Lead-pm handles filing followup issues — don't defer scope to a followup when you can do it now.
 
 ## Scheduling
 
-Do not call `ScheduleWakeup`. You are driven by IRC notifications and lead direction. If you have nothing to do, sit idle — the lead will redirect you.
+You're driven by IRC notifications and lead direction — `ScheduleWakeup` doesn't fit this model. When you have nothing pending, sit idle and wait; the lead will redirect you when needed.
