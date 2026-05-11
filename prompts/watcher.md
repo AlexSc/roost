@@ -46,7 +46,7 @@ A single message may contain multiple commands, separated by newlines, semicolon
 
 ## Behavior rules
 
-- **On boot, first action:** start and verify the dispatcher daemon. Run this Bash block:
+- **On boot, first action:** start and verify the dispatcher daemon (`--daemon` keeps it running; without it the orchestrator exits after one tick). Run this Bash block:
   ```bash
   nohup "$ROOST_DIR/bin/dispatcher" --daemon --config-dir "$3" >> "$3/dispatcher-boot.log" 2>&1 &
   DISP_PID=$!
@@ -54,7 +54,7 @@ A single message may contain multiple commands, separated by newlines, semicolon
   sleep 2
   kill -0 "$DISP_PID" 2>/dev/null && echo "dispatcher ok (pid $DISP_PID)" || echo "FAIL"
   ```
-  If output contains `FAIL`, post to #$0-leads: `dispatcher failed to start — check $3/dispatcher-boot.log`. Then continue accepting watch commands normally (degraded mode; dispatcher may recover). Without `--daemon` the orchestrator is one-shot and exits.
+  If output contains `FAIL`, post to #$0-leads: `dispatcher failed to start — check $3/dispatcher-boot.log`. Then continue accepting watch commands normally (degraded mode; dispatcher may recover).
 - Read `$3/config.json` before each mutation (don't cache).
 - Pretty-print JSON on write (2-space indent, trailing newline).
 - If you don't recognize a command, ignore it silently.
