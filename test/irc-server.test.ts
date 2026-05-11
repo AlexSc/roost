@@ -156,6 +156,85 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     expect(toolText(hist)).toContain('no history')
   })
 
+  it('channel_history returns <channel> XML elements with historical="true"', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-histshape1')
+    const peer = await connectPeer(ergo, 'ip-histshape1-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-histshape1' } })
+    await peer.joinChannel('#ip-histshape1')
+
+    peer.say('#ip-histshape1', 'shape-test-msg')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-histshape1' && n.content === 'shape-test-msg')
+
+    const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-histshape1' } })
+    const text = toolText(hist)
+    expect(text).toMatch(/^<channel /)
+    expect(text).toContain('sender="ip-histshape1-peer"')
+    expect(text).toContain('channel="#ip-histshape1"')
+    expect(text).toContain('isDirect="false"')
+    expect(text).toContain('event="message"')
+    expect(text).toContain('historical="true"')
+    expect(text).toContain('>shape-test-msg<')
+    expect(text).not.toContain('mention="true"')
+  })
+
+  it('channel_history emits mention="true" for DMs', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-histshape2')
+    const peer = await connectPeer(ergo, 'ip-histshape2-peer')
+
+    peer.say('ip-histshape2', 'hi directly')
+    await mcp.waitForNotification(n => n.meta.isDirect === 'true' && n.content === 'hi directly')
+
+    const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: 'ip-histshape2-peer' } })
+    const text = toolText(hist)
+    expect(text).toContain('isDirect="true"')
+    expect(text).toContain('mention="true"')
+  })
+
+  it('channel_history emits mention="true" for nick mention in channel', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-histshape3')
+    const peer = await connectPeer(ergo, 'ip-histshape3-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-histshape3' } })
+    await peer.joinChannel('#ip-histshape3')
+
+    peer.say('#ip-histshape3', 'hey ip-histshape3 are you there?')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-histshape3' && n.meta.mention === 'true')
+
+    const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-histshape3' } })
+    expect(toolText(hist)).toContain('mention="true"')
+  })
+
+  it('channel_history XML-escapes special characters in body and attrs', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-histshape4')
+    const peer = await connectPeer(ergo, 'ip-histshape4-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-histshape4' } })
+    await peer.joinChannel('#ip-histshape4')
+
+    peer.say('#ip-histshape4', 'a <b> & "c"')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-histshape4' && n.content.includes('<b>'))
+
+    const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-histshape4' } })
+    const text = toolText(hist)
+    expect(text).toContain('&lt;b&gt;')
+    expect(text).toContain('&amp;')
+    expect(text).not.toMatch(/<b>/)
+  })
+
+  it('channel_history handles multiline message body', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-histshape5')
+    const peer = await connectPeer(ergo, 'ip-histshape5-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-histshape5' } })
+    await peer.joinChannel('#ip-histshape5')
+
+    peer.say('#ip-histshape5', 'line one\nline two')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-histshape5' && n.content.includes('line one'))
+
+    const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-histshape5' } })
+    const text = toolText(hist)
+    expect(text).toContain('line one')
+    expect(text).toContain('line two')
+    expect(text).toMatch(/historical="true"/)
+  })
+
   // ---- Unread tracking (issue #9) ----------------------------------------
 
   it('inbound message increments unread; channel_list shows sender+preview', async () => {

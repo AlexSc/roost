@@ -6,6 +6,7 @@ export interface IrcMessage {
   text: string
   ts: string
   isDirect: boolean
+  mention?: boolean
 }
 
 // Split at natural boundaries when possible — prefer sentence end, then any
