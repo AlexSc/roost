@@ -246,9 +246,9 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     return set
   }
 
-  // Record a message in history and dedupe set; increment unread unless historical.
-  // Empty-sender messages (server NOTICEs) are recorded to history/fingerprint but excluded from unread.
-  // Returns whether the message body contains a nick mention (text-only; callers OR with isDirect for wire attr).
+  // Record a message in history and dedupe set. Always sets msg.mention (text-only regex).
+  // Increments unread only for non-historical, non-empty-sender messages.
+  // Returns true iff the message body contains a nick mention (same value as msg.mention after the call).
   private recordMessage(msg: IrcMessage, historical = false): boolean {
     const isMention = this.nickMentionRegex.test(msg.text)
     msg.mention = isMention
@@ -543,7 +543,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
         continue
       }
       this.recordMessage(msg, true)
-      this.emitMessage(msg, { historical: true })
+      this.emitMessage(msg, { historical: true, mention: msg.mention })
     }
   }
 

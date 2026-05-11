@@ -6,6 +6,7 @@ export interface IrcMessage {
   text: string
   ts: string
   isDirect: boolean
+  /** Memoized result of the nick mention regex (text-only). Set by recordMessage; OR'd with isDirect at wire-emit time. */
   mention?: boolean
 }
 

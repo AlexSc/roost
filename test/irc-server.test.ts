@@ -153,7 +153,9 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     const mcp = await startMcpInProcess(ergo, 'ip-hist2')
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-hist2' } })
     const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-hist2' } })
-    expect(toolText(hist)).toContain('no history')
+    const text = toolText(hist)
+    expect(text).toContain('event="no-history"')
+    expect(text).toContain('no history')
   })
 
   it('channel_history returns <channel> XML elements with historical="true"', async () => {

@@ -209,6 +209,10 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
     })
   }
 
+  const escAttr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#39;')
+  const escBody = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const wireMention = (msg: { mention?: boolean; isDirect: boolean }) => msg.mention || msg.isDirect
+
   const formatUnreadLine = (ch: string, info: UnreadInfo, previewLength = 40): string => {
     const hasMention = info.mentionCount > 0
     const [sender, preview] = hasMention
@@ -241,7 +245,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
       if (meta.chunkCount && meta.chunkCount > 1) metaRecord.chunkCount = String(meta.chunkCount)
     }
     if (meta.historical) metaRecord.historical = 'true'
-    if (meta.mention || msg.isDirect) metaRecord.mention = 'true'
+    if (wireMention({ mention: meta.mention, isDirect: msg.isDirect })) metaRecord.mention = 'true'
 
     pushNotification(msg.text, metaRecord)
     process.stderr.write(
@@ -347,11 +351,9 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
         const limit = (args.limit as number | undefined) ?? 20
         client.ackUnread(key)
         const slice = client.getHistory(key, limit)
-        if (slice.length === 0) return { content: [{ type: 'text', text: `no history for ${key} (since this MCP started)` }] }
-        const escAttr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#39;')
-        const escBody = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        if (slice.length === 0) return { content: [{ type: 'text', text: `<channel event="no-history" channel="${escAttr(key)}">no history for ${key} (since this MCP started)</channel>` }] }
         const lines = slice.map(m => {
-          const mention = (m.mention || m.isDirect) ? ' mention="true"' : ''
+          const mention = wireMention(m) ? ' mention="true"' : ''
           return `<channel sender="${escAttr(m.sender)}" channel="${escAttr(m.channel)}" isDirect="${m.isDirect}" ts="${escAttr(m.ts)}" event="message" historical="true"${mention}>${escBody(m.text)}</channel>`
         })
         return { content: [{ type: 'text', text: lines.join('\n') }] }
