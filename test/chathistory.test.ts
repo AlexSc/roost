@@ -106,6 +106,38 @@ describe.if(isErgoAvailable())('chathistory backfill', () => {
     expect(idx2).toBeGreaterThan(idx1)
   })
 
+  it('own-nick messages sent before join appear as historical on join', async () => {
+    const peer = await connectPeer(ergo, 'ip-own-peer1')
+    const mcp = await startMcpInProcess(ergo, 'ip-own-mcp1')
+
+    // MCP joins, sends a message, then parts
+    await peer.joinChannel('#ip-hist-own1')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-hist-own1' } })
+    await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-hist-own1', text: 'own-msg-before-part' } })
+    await sleep(100)
+    await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#ip-hist-own1' } })
+
+    // Rejoin — own message must appear in chathistory backfill
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-hist-own1' } })
+    await mcp.waitForNotification(n => n.meta.historical === 'true' && n.content === 'own-msg-before-part')
+  })
+
+  it('own-nick messages sent while joined do not produce live notifications', async () => {
+    const peer = await connectPeer(ergo, 'ip-own-peer2')
+    const mcp = await startMcpInProcess(ergo, 'ip-own-mcp2')
+
+    await peer.joinChannel('#ip-hist-own2')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-hist-own2' } })
+    await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-hist-own2', text: 'own-live-msg' } })
+    await sleep(200)
+
+    // Must not arrive as a live notification
+    const live = mcp.notifications.filter(
+      n => n.content === 'own-live-msg' && n.meta.historical !== 'true',
+    )
+    expect(live).toHaveLength(0)
+  })
+
   it('live messages are not re-emitted as historical on part+rejoin', async () => {
     const peer = await connectPeer(ergo, 'ip-dedup-peer1')
     const mcp = await startMcpInProcess(ergo, 'ip-dedup-mcp1')

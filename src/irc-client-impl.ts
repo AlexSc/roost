@@ -553,7 +553,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     for (const c of commands) {
       if (c.command !== 'PRIVMSG') continue
       const sender = c.nick
-      if (!sender || sender === this.nick) continue
+      if (!sender) continue
       const text = c.params[c.params.length - 1] ?? ''
       const isDirect = target === this.nick
       const channel = isDirect ? sender.toLowerCase() : target.toLowerCase()
