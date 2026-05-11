@@ -3,10 +3,10 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
-const POLL_BIN = join(import.meta.dirname, '../../../bin/orchestrator_poll')
+const DISPATCHER_BIN = join(import.meta.dirname, '../../../bin/dispatcher')
 
 async function runPoll(cwd: string, args: string[] = []): Promise<{ stderr: string; exitCode: number }> {
-  const proc = Bun.spawn([POLL_BIN, ...args], { cwd, stderr: 'pipe', stdout: 'ignore' })
+  const proc = Bun.spawn([DISPATCHER_BIN, ...args], { cwd, stderr: 'pipe', stdout: 'ignore' })
   const stderr = await new Response(proc.stderr).text()
   const exitCode = await proc.exited
   return { stderr, exitCode }
