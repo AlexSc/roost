@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "bun test",
-    "lint": "eslint src/ test/",
+    "lint": "eslint src/ test/ && shellcheck bin/*",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
