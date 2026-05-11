@@ -25,7 +25,7 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
     await sender.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-ml-ec1', text } })
 
     const n = await receiver.waitForNotification(
-      n => n.meta.channel === '#ip-ml-ec1' && n.meta.sender === 'ip-ml-ec1-s' && !n.meta.event,
+      n => n.meta.channel === '#ip-ml-ec1' && n.meta.sender === 'ip-ml-ec1-s' && n.meta.event === 'message',
     )
     expect(n.content).toBe(text)
   })
@@ -42,7 +42,7 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
     await sender.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-ml-ec2', text } })
 
     const n = await receiver.waitForNotification(
-      n => n.meta.channel === '#ip-ml-ec2' && n.meta.sender === 'ip-ml-ec2-s' && !n.meta.event,
+      n => n.meta.channel === '#ip-ml-ec2' && n.meta.sender === 'ip-ml-ec2-s' && n.meta.event === 'message',
     )
     expect(n.content).toBe(text)
   })
@@ -82,7 +82,7 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
     expect(toolText(result)).toContain('draft/multiline batch')
 
     const n = await receiver.waitForNotification(
-      n => n.meta.channel === '#ip-ml-ec4' && n.meta.sender === 'ip-ml-ec4-s' && !n.meta.event,
+      n => n.meta.channel === '#ip-ml-ec4' && n.meta.sender === 'ip-ml-ec4-s' && n.meta.event === 'message',
     )
     expect(n.content).toBe(text)
   })
@@ -138,7 +138,7 @@ describe.if(isErgoAvailable())('multiline edge cases (subprocess)', () => {
     expect(toolText(result)).toContain('draft/multiline batch')
 
     const n = await receiver.waitForNotification(
-      n => n.meta.channel === '#ml-ec6' && n.meta.sender === 'ml-ec6-s' && !n.meta.event,
+      n => n.meta.channel === '#ml-ec6' && n.meta.sender === 'ml-ec6-s' && n.meta.event === 'message',
     )
     expect(n.content).toBe(text)
   })

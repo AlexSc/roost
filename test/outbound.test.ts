@@ -81,7 +81,7 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     expect(toolText(result)).toContain('draft/multiline batch')
 
     const n = await receiver.waitForNotification(
-      n => n.meta.channel === '#ip-out-ml' && n.meta.sender === 'ip-out-mcp4' && !n.meta.event,
+      n => n.meta.channel === '#ip-out-ml' && n.meta.sender === 'ip-out-mcp4' && n.meta.event === 'message',
     )
     expect(n.content).toBe(longText)
   })
