@@ -43,7 +43,8 @@ destinations on top of the auto-routed `#<project>-issue-N` (PR events also go
 to `#<project>-issue-N` for each linked issue).
 
 A plugin not listed under `plugins` is not instantiated — there is no top-level
-fallback.
+fallback. The supported set is the first-party plugins shipped in this repo
+(`github-prs`, `github-issues`); external plugin discovery is tracked in #255.
 
 ## Running
 
