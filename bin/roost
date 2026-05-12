@@ -330,30 +330,53 @@ cmd_init() {
     [ -f "$_pf" ] && prompt_files+=("$_pf")
   done
 
+  # Decide what would actually be written. Same logic used by both
+  # dry-run and the real path so dry-run matches what the real run
+  # would do against the current filesystem state.
+  local write_config=0
+  local write_gitignore=0
+  if [ ! -f "$config_path" ] || [ "$force" -eq 1 ]; then
+    write_config=1
+  fi
+  if [ ! -f "$gitignore_path" ] || [ "$force" -eq 1 ]; then
+    write_gitignore=1
+  fi
+
+  # --force-prompts is a prompt-only refresh; don't error on existing
+  # config (and don't rewrite it either).
+  if [ "$write_config" -eq 0 ] && [ "$force_prompts" -eq 0 ]; then
+    echo "error: ${config_path} already exists — pass \`--force\` to overwrite (or \`--force-prompts\` to refresh prompts only)" >&2
+    exit 1
+  fi
+
   if [ "$dry_run" -eq 1 ]; then
-    echo "--- ${config_path} ---"
-    _init_config_json "$project" "$repo" "$logins_json"
-    echo "--- ${gitignore_path} ---"
-    _init_gitignore
+    if [ "$write_config" -eq 1 ]; then
+      echo "--- ${config_path} ---"
+      _init_config_json "$project" "$repo" "$logins_json"
+    fi
+    if [ "$write_gitignore" -eq 1 ]; then
+      echo "--- ${gitignore_path} ---"
+      _init_gitignore
+    fi
     if [ "$no_prompts" -eq 0 ] && [ "${#prompt_files[@]}" -gt 0 ]; then
       for _pf in "${prompt_files[@]}"; do
-        local _name
+        local _name _dst
         _name="$(basename "$_pf" .md)"
-        echo "--- ${commands_dir}/${_name}.md (copied verbatim from plugin prompts/${_name}.md) ---"
+        _dst="${commands_dir}/${_name}.md"
+        if [ ! -f "$_dst" ] || [ "$force_prompts" -eq 1 ] || [ "$force" -eq 1 ]; then
+          echo "--- ${_dst} (copied verbatim from plugin prompts/${_name}.md) ---"
+        fi
       done
     fi
     exit 0
   fi
 
-  if [ -f "$config_path" ] && [ "$force" -eq 0 ]; then
-    echo "error: ${config_path} already exists — pass \`--force\` to overwrite" >&2
-    exit 1
-  fi
-
   mkdir -p .orchestrator
-  _init_config_json "$project" "$repo" "$logins_json" > "$config_path"
-  echo "Wrote ${config_path}"
-  if [ ! -f "$gitignore_path" ] || [ "$force" -eq 1 ]; then
+  if [ "$write_config" -eq 1 ]; then
+    _init_config_json "$project" "$repo" "$logins_json" > "$config_path"
+    echo "Wrote ${config_path}"
+  fi
+  if [ "$write_gitignore" -eq 1 ]; then
     _init_gitignore > "$gitignore_path"
     echo "Wrote ${gitignore_path}"
   fi
