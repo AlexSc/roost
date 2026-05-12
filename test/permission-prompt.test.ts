@@ -5,6 +5,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { summarize, extractIntent, resolveTranscriptPath } from '../src/permission-prompt.js'
 import { suppressLateRejection } from './helpers/tool.js'
+import { startPermbotStub, makeSock, captureIRC } from './helpers/permbot-stub.js'
 
 const HOOK = path.join(import.meta.dirname, '../src/permission-prompt.ts')
 
@@ -165,46 +166,6 @@ describe('resolveTranscriptPath', () => {
 
 // ---- hook integration (subprocess) -----------------------------------------
 
-/**
- * Spin up a minimal IRC stub that handles CAP negotiation (needed by
- * RoostIrcClientImpl which sends CAP LS before NICK/USER). Sends 001 after
- * CAP END is received, collects all lines until the connection closes.
- */
-function captureIRC(): Promise<{ port: number; lines: () => Promise<string[]> }> {
-  return new Promise((resolve) => {
-    const collected: string[] = []
-    let closed!: () => void
-    const done = new Promise<string[]>(res => { closed = () => res(collected) })
-    const server = net.createServer((sock) => {
-      let buf = ''
-      let nick = 'unknown'
-      let sentWelcome = false
-      sock.on('data', (d) => {
-        buf += d.toString()
-        for (const line of buf.split('\r\n').slice(0, -1)) {
-          if (line.startsWith('CAP LS')) {
-            sock.write(':s CAP * LS :\r\n')  // advertise no caps
-          } else if (line.startsWith('CAP END') && !sentWelcome) {
-            sentWelcome = true
-            sock.write(`:s 001 ${nick} :Welcome\r\n`)
-          } else if (line.startsWith('NICK ')) {
-            nick = line.slice(5).trim()
-          } else if (line.startsWith('QUIT')) {
-            sock.end()
-          }
-          collected.push(line)
-        }
-        buf = buf.slice(buf.lastIndexOf('\r\n') + 2)
-      })
-      sock.on('close', () => { server.close(); closed() })
-    })
-    server.listen(0, '127.0.0.1', () => {
-      const port = (server.address() as net.AddressInfo).port
-      resolve({ port, lines: () => done })
-    })
-  })
-}
-
 const PAYLOAD = JSON.stringify({
   tool_name: 'Bash',
   tool_input: { command: 'rm /tmp/x', description: 'delete temp file' },
@@ -224,31 +185,6 @@ async function runHook(env: Record<string, string>): Promise<{ stdout: string; s
   ])
   await proc.exited
   return { stdout, stderr, exit: proc.exitCode ?? 0 }
-}
-
-/** Minimal permbot socket stub: reads one JSON line, responds immediately. */
-function startPermbotStub(sockPath: string, reply: object): { ready: Promise<void>; done: Promise<void> } {
-  let onReady!: () => void
-  const ready = new Promise<void>(r => { onReady = r })
-  let onDone!: () => void
-  const done = new Promise<void>(r => { onDone = r })
-  const server = net.createServer((sock) => {
-    let buf = ''
-    sock.on('data', (d) => {
-      buf += d.toString('utf8')
-      if (!buf.includes('\n')) return
-      sock.write(JSON.stringify(reply) + '\n')
-      sock.end()
-      server.close()
-      onDone()
-    })
-  })
-  server.listen(sockPath, () => { onReady() })
-  return { ready, done }
-}
-
-function makeSock(): string {
-  return path.join(os.tmpdir(), `perm-hook-test-${process.pid}-${Math.random().toString(36).slice(2)}.sock`)
 }
 
 describe('permission-prompt hook', () => {
@@ -292,7 +228,7 @@ describe('permission-prompt hook', () => {
   })
 
   it('allow carries default reason when operator replies with bare y', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('perm-hook')
     const stub = startPermbotStub(sockPath, { reply: 'y' })
     await stub.ready
 
@@ -311,7 +247,7 @@ describe('permission-prompt hook', () => {
   }, 10_000)
 
   it('deny carries default reason when operator replies with bare n', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('perm-hook')
     const stub = startPermbotStub(sockPath, { reply: 'n' })
     await stub.ready
 
@@ -330,7 +266,7 @@ describe('permission-prompt hook', () => {
   }, 10_000)
 
   it('emits ask when operator reply is unrecognized', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('perm-hook')
     const stub = startPermbotStub(sockPath, { reply: 'maybe later' })
     await stub.ready
 
@@ -350,7 +286,7 @@ describe('permission-prompt hook', () => {
   }, 10_000)
 
   it('emits ask when permbot times out', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('perm-hook')
     // Stub accepts connection but never responds — exercises the timeout path.
     const server = net.createServer(() => {})
     await suppressLateRejection(new Promise<void>(r => server.listen(sockPath, r)))

@@ -5,6 +5,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { classifyBash } from '../src/pretooluse-prompt.js'
 import { suppressLateRejection } from './helpers/tool.js'
+import { startPermbotStub, makeSock } from './helpers/permbot-stub.js'
 
 const HOOK = path.join(import.meta.dirname, '../src/pretooluse-prompt.ts')
 
@@ -145,32 +146,6 @@ describe('classifyBash', () => {
 
 // ---- Hook subprocess --------------------------------------------------------
 
-/** Minimal permbot socket stub: reads one JSON line, responds immediately.
- *  Returns a ready promise (server is listening) and a done promise (response sent). */
-function startPermbotStub(sockPath: string, reply: object): { ready: Promise<void>; done: Promise<void> } {
-  let onReady!: () => void
-  const ready = new Promise<void>(r => { onReady = r })
-  let onDone!: () => void
-  const done = new Promise<void>(r => { onDone = r })
-  const server = net.createServer((sock) => {
-    let buf = ''
-    sock.on('data', (d) => {
-      buf += d.toString('utf8')
-      if (!buf.includes('\n')) return
-      sock.write(JSON.stringify(reply) + '\n')
-      sock.end()
-      server.close()
-      onDone()
-    })
-  })
-  server.listen(sockPath, () => { onReady() })
-  return { ready, done }
-}
-
-function makeSock(): string {
-  return path.join(os.tmpdir(), `pretooluse-hook-test-${process.pid}-${Math.random().toString(36).slice(2)}.sock`)
-}
-
 const SAFETY_CHECK_PAYLOAD = JSON.stringify({
   tool_name: 'Bash',
   tool_input: { command: 'cd /tmp && ls > out', description: 'compound with cd + redirect' },
@@ -200,7 +175,7 @@ async function runHook(env: Record<string, string>, stdin = SAFETY_CHECK_PAYLOAD
 
 describe('pretooluse-prompt hook subprocess', () => {
   it('allows on operator y reply', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('pretooluse-hook')
     const stub = startPermbotStub(sockPath, { reply: 'y' })
     await stub.ready
 
@@ -219,7 +194,7 @@ describe('pretooluse-prompt hook subprocess', () => {
   }, 10_000)
 
   it('denies on operator n reply', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('pretooluse-hook')
     const stub = startPermbotStub(sockPath, { reply: 'n' })
     await stub.ready
 
@@ -237,7 +212,7 @@ describe('pretooluse-prompt hook subprocess', () => {
   }, 10_000)
 
   it('emits ask + falls back when operator reply is unrecognized', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('pretooluse-hook')
     const stub = startPermbotStub(sockPath, { reply: 'maybe later' })
     await stub.ready
 
@@ -258,7 +233,7 @@ describe('pretooluse-prompt hook subprocess', () => {
   }, 10_000)
 
   it('allow carries default reason when operator replies with bare y', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('pretooluse-hook')
     const stub = startPermbotStub(sockPath, { reply: 'y' })
     await stub.ready
 
@@ -277,7 +252,7 @@ describe('pretooluse-prompt hook subprocess', () => {
   }, 10_000)
 
   it('emits ask when permbot times out', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('pretooluse-hook')
     // Stub accepts connection but never responds — socket-level timeout path.
     const server = net.createServer(() => {})
     await suppressLateRejection(new Promise<void>(r => server.listen(sockPath, r)))

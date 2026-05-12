@@ -1,51 +1,10 @@
 import { describe, it, expect } from 'bun:test'
 import * as net from 'node:net'
-import * as os from 'node:os'
-import * as path from 'node:path'
 import { join } from 'node:path'
+import { startPermbotStub, makeSock, captureIRC } from './helpers/permbot-stub.js'
 
 const HOOK = join(import.meta.dirname, '../src/permission-prompt.ts')
 const PAYLOAD = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'rm /tmp/x', description: 'test' }, transcript_path: '' })
-
-/**
- * Spin up a minimal IRC stub that handles CAP negotiation (RoostIrcClientImpl
- * sends CAP LS before NICK/USER), sends 001 after CAP END, and closes on QUIT.
- */
-function captureIRC(): Promise<{ port: number; lines: () => Promise<string[]> }> {
-  return new Promise((resolve) => {
-    const collected: string[] = []
-    let closed!: () => void
-    const done = new Promise<string[]>((res) => { closed = () => res(collected) })
-
-    const server = net.createServer((sock) => {
-      let buf = '', nick = 'unknown', sentWelcome = false
-      sock.on('data', (d) => {
-        buf += d.toString()
-        const lines = buf.split('\r\n'); buf = lines.pop() ?? ''
-        for (const line of lines) {
-          if (!line) continue
-          if (line.startsWith('CAP LS')) {
-            sock.write(':s CAP * LS :\r\n')
-          } else if (line.startsWith('CAP END') && !sentWelcome) {
-            sentWelcome = true
-            sock.write(`:s 001 ${nick} :Welcome\r\n`)
-          } else if (line.startsWith('NICK ')) {
-            nick = line.slice(5).trim()
-          } else if (line.startsWith('QUIT')) {
-            sock.end()
-          }
-          collected.push(line)
-        }
-      })
-      sock.on('close', () => { server.close(); closed() })
-    })
-
-    server.listen(0, '127.0.0.1', () => {
-      const port = (server.address() as net.AddressInfo).port
-      resolve({ port, lines: () => done })
-    })
-  })
-}
 
 async function runHook(env: Record<string, string>): Promise<{ stdout: string; stderr: string }> {
   const proc = Bun.spawn(['bun', HOOK], {
@@ -60,30 +19,6 @@ async function runHook(env: Record<string, string>): Promise<{ stdout: string; s
   ])
   await proc.exited
   return { stdout, stderr }
-}
-
-function makeSock(): string {
-  return path.join(os.tmpdir(), `irc-perm-hook-test-${process.pid}-${Math.random().toString(36).slice(2)}.sock`)
-}
-
-function startPermbotStub(sockPath: string, reply: object): { ready: Promise<void>; done: Promise<void> } {
-  let onReady!: () => void
-  const ready = new Promise<void>(r => { onReady = r })
-  let onDone!: () => void
-  const done = new Promise<void>(r => { onDone = r })
-  const server = net.createServer((sock) => {
-    let buf = ''
-    sock.on('data', (d) => {
-      buf += d.toString('utf8')
-      if (!buf.includes('\n')) return
-      sock.write(JSON.stringify(reply) + '\n')
-      sock.end()
-      server.close()
-      onDone()
-    })
-  })
-  server.listen(sockPath, () => { onReady() })
-  return { ready, done }
 }
 
 describe('irc-permission-prompt fallback DM', () => {
@@ -106,7 +41,7 @@ describe('irc-permission-prompt fallback DM', () => {
   }, 15_000)
 
   it('sends fallback DM when operator reply is unrecognized', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('irc-perm-hook')
     const stub = startPermbotStub(sockPath, { reply: 'maybe' })
     await stub.ready
 
