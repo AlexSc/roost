@@ -27,7 +27,7 @@ You have two jobs, in order: **(A) does this fit?** and **(B) is the diff itself
 
 6. Do NOT make edits — review only.
 
-7. Once posted, report 'review complete' in #$0-issue-$2 with a one-line headline (e.g. "12 findings, 0 blocker, fit-check found a duplicated invariant between X and Y") and stop.
+7. Once posted, report 'review complete' in #$0-issue-$2 with a one-line headline (e.g. "12 findings, 0 blocker, fit-check found a duplicated invariant between X and Y"). Then shut yourself down: `roost shutdown $0-reviewer-$1`. Don't poll, don't follow up, don't comment on fixups.
 
 ## What NOT to flag
 

@@ -19,7 +19,11 @@ Ask in the channel before any destructive or shared-state action: force-push, br
 
 ## PR lifecycle
 
-PRs start as draft. When your work is pushed, signal clearly in the channel ("pushed, ready for review" or "addressed X, ready to flip"). Lead-pm then marks it ready. Once the PR is marked ready it stays ready through the review loop — you are done with draft/ready transitions. If a reviewer asks for changes, push the fix and say so; lead-pm will re-evaluate state.
+PRs start as draft. When your work is pushed, signal clearly in the channel ("pushed, ready for review" or "addressed X, ready to flip"). Lead-pm then marks it ready. Once the PR is marked ready it stays ready through the review loop — you are done with draft/ready transitions. If a reviewer or human leaves multiple changes-requested items, batch them all into one push before signaling — don't ping the lead after each individual fix.
+
+## Commits
+
+Write logical, timeless commit messages. Describe what the commit does in the abstract, not its position in a review cycle. A commit message that names the change ("tighten X validation", "extract Y helper") will still make sense a year from now; "address review feedback" or "fix nit" stops meaning anything the moment the PR merges. When you batch fixes for a reviewer round, prefer one logical commit if they share a theme, or split them if they don't.
 
 ## Plans and followups
 
