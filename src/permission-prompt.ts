@@ -26,7 +26,7 @@ function emit(decision: 'ask', reason?: string): never
 function emit(decision: 'allow' | 'deny', reason?: string): never
 function emit(decision: string, reason = ''): never {
   if (decision === 'ask') {
-    process.stderr.write(`perm-hook: deferring to terminal (${reason})\n`)
+    process.stderr.write(`perm-hook[${WORKER}]: deferring to terminal (${reason})\n`)
     process.exit(0)
   }
   const dec: { behavior: string; message?: string } = { behavior: decision }
@@ -160,7 +160,7 @@ export function resolveTranscriptPath(transcriptPath: string, agentId: string): 
 export async function askDaemon(summary: string): Promise<string | null> {
   const req: Record<string, unknown> = { summary, timeout: SOCKET_SAFETY_TIMEOUT, kind: 'permission' }
   if (PERM_TARGET) req['replyTarget'] = PERM_TARGET
-  return socketRoundtrip(SOCK_PATH, req, (msg) => { process.stderr.write(`perm-hook: ${msg}\n`) })
+  return socketRoundtrip(SOCK_PATH, req, (msg) => { process.stderr.write(`perm-hook[${WORKER}]: ${msg}\n`) })
 }
 
 // ---- Fallback DM via RoostIrcClient (transient connection) ------------------
@@ -204,7 +204,7 @@ if (import.meta.main) {
   try {
     payload = JSON.parse(await Bun.stdin.text()) as Record<string, unknown>
   } catch (e) {
-    process.stderr.write(`perm-hook: bad stdin JSON: ${e}\n`)
+    process.stderr.write(`perm-hook[${WORKER}]: bad stdin JSON: ${e}\n`)
     emit('ask', 'hook input parse error')
   }
 
