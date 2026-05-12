@@ -23,7 +23,7 @@ export function startPermbotStub(sockPath: string, reply: object): { ready: Prom
   return { ready, done }
 }
 
-export function makeSock(prefix = 'permbot-stub'): string {
+export function makeSock(prefix: string): string {
   return path.join(os.tmpdir(), `${prefix}-test-${process.pid}-${Math.random().toString(36).slice(2)}.sock`)
 }
 
@@ -42,7 +42,7 @@ export function captureIRC(): Promise<{ port: number; lines: () => Promise<strin
         buf += d.toString()
         const lines = buf.split('\r\n'); buf = lines.pop() ?? ''
         for (const line of lines) {
-          if (!line) continue
+          if (!line) continue  // skip blank framing lines from split('\r\n')
           if (line.startsWith('CAP LS')) {
             sock.write(':s CAP * LS :\r\n')
           } else if (line.startsWith('CAP END') && !sentWelcome) {

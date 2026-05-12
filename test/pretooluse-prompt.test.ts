@@ -175,7 +175,7 @@ async function runHook(env: Record<string, string>, stdin = SAFETY_CHECK_PAYLOAD
 
 describe('pretooluse-prompt hook subprocess', () => {
   it('allows on operator y reply', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('pretooluse-hook')
     const stub = startPermbotStub(sockPath, { reply: 'y' })
     await stub.ready
 
@@ -194,7 +194,7 @@ describe('pretooluse-prompt hook subprocess', () => {
   }, 10_000)
 
   it('denies on operator n reply', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('pretooluse-hook')
     const stub = startPermbotStub(sockPath, { reply: 'n' })
     await stub.ready
 
@@ -212,7 +212,7 @@ describe('pretooluse-prompt hook subprocess', () => {
   }, 10_000)
 
   it('emits ask + falls back when operator reply is unrecognized', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('pretooluse-hook')
     const stub = startPermbotStub(sockPath, { reply: 'maybe later' })
     await stub.ready
 
@@ -233,7 +233,7 @@ describe('pretooluse-prompt hook subprocess', () => {
   }, 10_000)
 
   it('allow carries default reason when operator replies with bare y', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('pretooluse-hook')
     const stub = startPermbotStub(sockPath, { reply: 'y' })
     await stub.ready
 
@@ -252,7 +252,7 @@ describe('pretooluse-prompt hook subprocess', () => {
   }, 10_000)
 
   it('emits ask when permbot times out', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('pretooluse-hook')
     // Stub accepts connection but never responds — socket-level timeout path.
     const server = net.createServer(() => {})
     await suppressLateRejection(new Promise<void>(r => server.listen(sockPath, r)))

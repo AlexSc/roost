@@ -176,7 +176,7 @@ async function runHook(env: Record<string, string>, stdin = QUESTION_PAYLOAD): P
 
 describe('ask-question-hook subprocess', () => {
   it('resolves via permbot socket and returns allow + answers', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('ask-hook')
     const stub = startPermbotStub(sockPath, { reply: '1' })
     await stub.ready  // ensure server is listening before hook tries to connect
 
@@ -196,7 +196,7 @@ describe('ask-question-hook subprocess', () => {
   }, 10_000)
 
   it('returns deny when permbot times out', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('ask-hook')
     // Stub that accepts connections but never responds → triggers socket timeout
     const server = net.createServer(() => {})
     await suppressLateRejection(new Promise<void>(r => server.listen(sockPath, r)))
@@ -259,7 +259,7 @@ describe('ask-question-hook subprocess', () => {
   }, 5_000)
 
   it('returns deny when operator replies with chat keyword', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('ask-hook')
     const stub = startPermbotStub(sockPath, { reply: 'chat' })
     await stub.ready
 
@@ -278,7 +278,7 @@ describe('ask-question-hook subprocess', () => {
   }, 10_000)
 
   it('passes the questions array through to updatedInput', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('ask-hook')
     const stub = startPermbotStub(sockPath, { reply: 'Vue' })
     await stub.ready
 

@@ -41,7 +41,7 @@ describe('irc-permission-prompt fallback DM', () => {
   }, 15_000)
 
   it('sends fallback DM when operator reply is unrecognized', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('irc-perm-hook')
     const stub = startPermbotStub(sockPath, { reply: 'maybe' })
     await stub.ready
 

@@ -228,7 +228,7 @@ describe('permission-prompt hook', () => {
   })
 
   it('allow carries default reason when operator replies with bare y', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('perm-hook')
     const stub = startPermbotStub(sockPath, { reply: 'y' })
     await stub.ready
 
@@ -247,7 +247,7 @@ describe('permission-prompt hook', () => {
   }, 10_000)
 
   it('deny carries default reason when operator replies with bare n', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('perm-hook')
     const stub = startPermbotStub(sockPath, { reply: 'n' })
     await stub.ready
 
@@ -266,7 +266,7 @@ describe('permission-prompt hook', () => {
   }, 10_000)
 
   it('emits ask when operator reply is unrecognized', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('perm-hook')
     const stub = startPermbotStub(sockPath, { reply: 'maybe later' })
     await stub.ready
 
@@ -286,7 +286,7 @@ describe('permission-prompt hook', () => {
   }, 10_000)
 
   it('emits ask when permbot times out', async () => {
-    const sockPath = makeSock()
+    const sockPath = makeSock('perm-hook')
     // Stub accepts connection but never responds — exercises the timeout path.
     const server = net.createServer(() => {})
     await suppressLateRejection(new Promise<void>(r => server.listen(sockPath, r)))
