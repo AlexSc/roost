@@ -39,19 +39,20 @@ const SOCKET_SAFETY_TIMEOUT = Math.min(570, Math.max(1, Number(process.env['ROOS
 // `decisionReason` strings. We collapse several harness kinds (e.g.
 // cd-git-compound / cd-compound-write / cd-compound-redirect → `cd-compound`)
 // and rename others (`semantics` → `newline-hash` for legibility in operator
-// summaries). Don't grep the Claude Code binary for these — they won't be
-// there. Tests pin one example per kind from the issue table so any
-// classifier drift surfaces as a test failure.
+// summaries). The literal Claude Code strings are listed in the trailing
+// comment on each variant so a grep for the CC binary's `bashMissKind` value
+// (e.g. `cd-git-compound`) lands here. Tests pin one example per kind from
+// the issue table so any classifier drift surfaces as a test failure.
 export type BashMissKind =
-  | 'newline-hash'
-  | 'process-substitution'
-  | 'multi-cd'
-  | 'cd-compound'
-  | 'cd-multi-positional'
-  | 'sed-dangerous'
-  | 'shell-operators'
-  | 'flag-validation'
-  | 'too-complex'
+  | 'newline-hash'          // CC: "semantics"
+  | 'process-substitution'  // CC: "process-substitution"
+  | 'multi-cd'              // CC: "multi-cd"
+  | 'cd-compound'           // CC: "cd-git-compound" | "cd-compound-write" | "cd-compound-redirect"
+  | 'cd-multi-positional'   // CC: "cd-multi-positional"
+  | 'sed-dangerous'         // CC: "sed-dangerous"
+  | 'shell-operators'       // CC: "shell-operators"
+  | 'flag-validation'       // CC: "flag-validation"
+  | 'too-complex'           // CC: "too-complex"
 
 /**
  * Returns the bashMissKind a command resembles, or null if it should pass
@@ -62,10 +63,11 @@ export type BashMissKind =
 export function classifyBash(command: string): BashMissKind | null {
   if (!command) return null
 
-  // newline-hash: literal newline followed by optional whitespace then '#'.
-  // The original bug (worker-202 27-min hang) was a heredoc with this shape.
-  // Checked against the raw command — the analyzer's trigger explicitly
-  // requires the newline to be inside a quoted arg, env value, or redirect.
+  // CC bashMissKind: "semantics" (newline-hash).
+  // Literal newline followed by optional whitespace then '#'. The original
+  // bug (worker-202 27-min hang) was a heredoc with this shape. Checked
+  // against the raw command — the analyzer's trigger explicitly requires
+  // the newline to be inside a quoted arg, env value, or redirect.
   if (/\n[ \t]*#/.test(command)) return 'newline-hash'
 
   // Command-start anchor for cd patterns: start-of-string, shell operator
@@ -77,40 +79,48 @@ export function classifyBash(command: string): BashMissKind | null {
   // uncommon enough to accept the gap; commit messages are daily traffic.
   const CD_START = '(?:^|[;&|`(]\\s*|\\n\\s*)'
 
-  // process-substitution: <(...) or >(...).
+  // CC bashMissKind: "process-substitution".
+  // <(...) or >(...) anywhere in the command.
   if (/[<>]\(/.test(command)) return 'process-substitution'
 
-  // multi-cd: more than one cd/pushd/popd at command-start positions.
+  // CC bashMissKind: "multi-cd".
+  // More than one cd/pushd/popd at command-start positions.
   const cdMatches = command.match(new RegExp(`${CD_START}(?:cd|pushd|popd)(?=\\s|$)`, 'g')) ?? []
   if (cdMatches.length > 1) return 'multi-cd'
 
-  // cd-multi-positional: zsh `cd OLD NEW`. Two non-flag non-operator words
-  // after cd, terminated by end-of-string or a shell operator.
+  // CC bashMissKind: "cd-multi-positional".
+  // zsh `cd OLD NEW`. Two non-flag non-operator words after cd, terminated
+  // by end-of-string or a shell operator.
   if (new RegExp(`${CD_START}cd\\s+(?!-)[^\\s&|;<>(){}]+\\s+(?!-)[^\\s&|;<>(){}]+(?=\\s|$|[&|;<>])`).test(command)) {
     return 'cd-multi-positional'
   }
 
-  // cd-compound: cd/pushd/popd followed by &&, ||, or ; — covers
-  // cd-git-compound, cd-compound-write, cd-compound-redirect from the table.
+  // CC bashMissKinds: "cd-git-compound", "cd-compound-write", "cd-compound-redirect".
+  // Collapsed here into one detector: cd/pushd/popd followed by &&, ||, or ;.
   if (new RegExp(`${CD_START}(?:cd|pushd|popd)\\s+\\S+.*?(?:&&|\\|\\||;)`).test(command)) return 'cd-compound'
 
-  // sed-dangerous: sed with -i (in-place) or w/e/W/E command letters.
+  // CC bashMissKind: "sed-dangerous".
+  // sed with -i (in-place) or w/e/W/E command letters in the script.
   if (/\bsed\b(?:[^|&;<>]*?-[a-zA-Z]*i\b|[^|&;<>]*?['"]\s*[weWE])/.test(command)) {
     return 'sed-dangerous'
   }
 
-  // shell-operators: top-level subshell ( ... ) or command group { ... }.
-  // Excludes $( ), <( ), >( ), ${ }, and escaped \(.
+  // CC bashMissKind: "shell-operators".
+  // Top-level subshell ( ... ) or command group { ... }. Excludes $( ),
+  // <( ), >( ), ${ }, and escaped \(.
   if (/(?:^|[\s;&|`])\((?!\s*\))/.test(command)) return 'shell-operators'
   if (/(?:^|[\s;&|`])\{\s/.test(command)) return 'shell-operators'
 
-  // flag-validation: wrapper commands (env/timeout/xargs/nice/nohup) with
-  // chdir-shaped flags that can change cwd outside the harness's view.
+  // CC bashMissKind: "flag-validation".
+  // Wrapper commands (env/timeout/xargs/nice/nohup) with chdir-shaped flags
+  // that can change cwd outside the harness's view.
   if (/\b(?:env|timeout|xargs|nice|nohup)\b[^|;&\n]*--(?:chdir|directory|working-dir|workdir|cwd)=/.test(command)) {
     return 'flag-validation'
   }
 
-  // too-complex: arithmetic expansion with non-literal contents.
+  // CC bashMissKind: "too-complex".
+  // Arithmetic expansion with non-literal contents (variables, function
+  // refs) — the bash AST parser rejects these.
   if (/\$\(\([^)]*[a-zA-Z_][^)]*\)\)/.test(command)) return 'too-complex'
 
   return null
