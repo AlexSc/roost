@@ -10,6 +10,8 @@ import type { PrSnap, PrPluginState } from './types.js'
 
 export class GitHubPrsPlugin extends GhBase {
   readonly name = 'github-prs'
+  protected readonly target = 'pr'
+  protected readonly label = 'pr'
 
   desiredChannels(config: OrchestratorConfig): string[] {
     return this.entryChannels(config, this.watched(config))

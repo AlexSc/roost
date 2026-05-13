@@ -267,3 +267,107 @@ describe('desiredChannels', () => {
     expect(new GitHubIssuesPlugin('#proj').desiredChannels({})).toEqual([])
   })
 })
+
+describe('GhBase.handleCommand — issues plugin (target=null)', () => {
+  const issues = () => new GitHubIssuesPlugin('#proj')
+
+  it('claims bare watch (target=null)', () => {
+    const config: OrchestratorConfig = {}
+    const out = issues().handleCommand!(config, { kind: 'watch', target: null, number: 5, channels: [] })
+    expect(out).toMatch(/watching issue #5/)
+    expect((config.plugins?.['github-issues'] as { watched: unknown[] }).watched).toEqual([{ number: 5 }])
+  })
+
+  it('ignores `watch pr` (returns null)', () => {
+    const config: OrchestratorConfig = {}
+    const out = issues().handleCommand!(config, { kind: 'watch', target: 'pr', number: 5, channels: [] })
+    expect(out).toBeNull()
+    expect(config.plugins?.['github-issues']).toBeUndefined()
+  })
+
+  it('is idempotent on duplicate watch', () => {
+    const config: OrchestratorConfig = { plugins: { 'github-issues': { watched: [{ number: 5 }] } } }
+    const out = issues().handleCommand!(config, { kind: 'watch', target: null, number: 5, channels: [] })
+    expect(out).toMatch(/already watching/)
+  })
+
+  it('appends + dedupes channels onto existing entry', () => {
+    const config: OrchestratorConfig = {
+      plugins: { 'github-issues': { watched: [{ number: 5, channels: ['#a'] }] } },
+    }
+    issues().handleCommand!(config, { kind: 'watch', target: null, number: 5, channels: ['#a', '#b'] })
+    const entry = (config.plugins!['github-issues'] as { watched: { channels: string[] }[] }).watched[0]
+    expect(entry.channels).toEqual(['#a', '#b'])
+  })
+
+  it('no-op channel add does not dirty entry.channels', () => {
+    const before = ['#a', '#b']
+    const config: OrchestratorConfig = {
+      plugins: { 'github-issues': { watched: [{ number: 5, channels: before }] } },
+    }
+    const out = issues().handleCommand!(config, { kind: 'watch', target: null, number: 5, channels: ['#a', '#b'] })
+    expect(out).toMatch(/channels unchanged/)
+    const after = (config.plugins!['github-issues'] as { watched: { channels: string[] }[] }).watched[0].channels
+    expect(after).toBe(before)
+  })
+
+  it('removes an entry on unwatch', () => {
+    const config: OrchestratorConfig = {
+      plugins: { 'github-issues': { watched: [{ number: 5 }, { number: 6 }] } },
+    }
+    issues().handleCommand!(config, { kind: 'unwatch', target: null, number: 5 })
+    expect((config.plugins!['github-issues'] as { watched: { number: number }[] }).watched).toEqual([{ number: 6 }])
+  })
+
+  it('reports not-watching on unwatch of unknown entry', () => {
+    const out = issues().handleCommand!({}, { kind: 'unwatch', target: null, number: 5 })
+    expect(out).toMatch(/not watching/)
+  })
+
+  it('list returns the github-issues section', () => {
+    const config: OrchestratorConfig = {
+      plugins: { 'github-issues': { watched: [{ number: 5 }, { number: 6, channels: ['#a'] }] } },
+    }
+    const out = issues().handleCommand!(config, { kind: 'list' })
+    expect(out).toContain('github-issues (2):')
+    expect(out).toContain('  #5')
+    expect(out).toContain('  #6 + #a')
+  })
+
+  it('list reports (none) for empty slice', () => {
+    expect(issues().handleCommand!({}, { kind: 'list' })).toContain('(none)')
+  })
+
+  it('help returns this plugin\'s usage block', () => {
+    const out = issues().handleCommand!({}, { kind: 'help' })!
+    expect(out).toContain('github-issues commands')
+    expect(out).toMatch(/watch <N>/)
+    expect(out).toMatch(/unwatch <N>/)
+    // No `pr` keyword in issues help.
+    expect(out).not.toContain('pr <N>')
+  })
+})
+
+describe('GhBase.handleCommand — prs plugin (target=pr)', () => {
+  const prs = () => new GitHubPrsPlugin('#proj')
+
+  it('claims `watch pr` (target=pr)', () => {
+    const config: OrchestratorConfig = {}
+    const out = prs().handleCommand!(config, { kind: 'watch', target: 'pr', number: 10, channels: ['#x'] })
+    expect(out).toMatch(/watching pr #10 \+ #x/)
+    expect(config.plugins?.['github-prs']).toEqual({ watched: [{ number: 10, channels: ['#x'] }] })
+    expect(config.plugins?.['github-issues']).toBeUndefined()
+  })
+
+  it('ignores bare watch (returns null)', () => {
+    const out = prs().handleCommand!({}, { kind: 'watch', target: null, number: 10, channels: [] })
+    expect(out).toBeNull()
+  })
+
+  it('help mentions `pr <N>` form', () => {
+    const out = prs().handleCommand!({}, { kind: 'help' })!
+    expect(out).toContain('github-prs commands')
+    expect(out).toMatch(/watch pr <N>/)
+    expect(out).toMatch(/unwatch pr <N>/)
+  })
+})

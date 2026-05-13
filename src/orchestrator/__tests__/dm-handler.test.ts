@@ -3,16 +3,16 @@ import { chmod, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  applyCommand,
-  formatList,
   handleDm,
   parseCommand,
   parseCommands,
   resolveAllowlist,
   splitCommands,
   type Command,
+  type HandlerDeps,
 } from '../dm-handler.js'
 import { loadConfig, writeConfig, type OrchestratorConfig } from '../config.js'
+import type { Plugin, PluginTickResult } from '../plugin.js'
 
 let dir: string
 
@@ -24,6 +24,8 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true })
 })
 
+// ---- Parser ----------------------------------------------------------------
+
 describe('splitCommands', () => {
   it('splits on newlines, semicolons, commas; trims; drops empties', () => {
     expect(splitCommands('watch 5\n watch 6 ; watch 7, ,\nhelp')).toEqual([
@@ -33,32 +35,28 @@ describe('splitCommands', () => {
 })
 
 describe('parseCommand', () => {
-  it('parses bare watch', () => {
-    expect(parseCommand('watch 5')).toEqual({ kind: 'watch', plugin: 'github-issues', number: 5, channels: [] })
+  it('parses bare watch as target=null', () => {
+    expect(parseCommand('watch 5')).toEqual({ kind: 'watch', target: null, number: 5, channels: [] })
   })
 
   it('parses watch with channels', () => {
     expect(parseCommand('watch 5 #foo #bar')).toEqual({
-      kind: 'watch', plugin: 'github-issues', number: 5, channels: ['#foo', '#bar'],
+      kind: 'watch', target: null, number: 5, channels: ['#foo', '#bar'],
     })
   })
 
-  it('parses unwatch', () => {
-    expect(parseCommand('unwatch 5')).toEqual({ kind: 'unwatch', plugin: 'github-issues', number: 5 })
+  it('parses unwatch with target=null', () => {
+    expect(parseCommand('unwatch 5')).toEqual({ kind: 'unwatch', target: null, number: 5 })
   })
 
-  it('parses watch pr', () => {
-    expect(parseCommand('watch pr 10')).toEqual({ kind: 'watch', plugin: 'github-prs', number: 10, channels: [] })
+  it('parses target keyword from any non-numeric first token', () => {
+    expect(parseCommand('watch pr 10')).toEqual({ kind: 'watch', target: 'pr', number: 10, channels: [] })
+    expect(parseCommand('watch linear 99')).toEqual({ kind: 'watch', target: 'linear', number: 99, channels: [] })
+    expect(parseCommand('unwatch pr 10')).toEqual({ kind: 'unwatch', target: 'pr', number: 10 })
   })
 
-  it('parses watch pr with channels', () => {
-    expect(parseCommand('watch pr 10 #x #y')).toEqual({
-      kind: 'watch', plugin: 'github-prs', number: 10, channels: ['#x', '#y'],
-    })
-  })
-
-  it('parses unwatch pr', () => {
-    expect(parseCommand('unwatch pr 10')).toEqual({ kind: 'unwatch', plugin: 'github-prs', number: 10 })
+  it('lowercases the target keyword', () => {
+    expect(parseCommand('watch PR 10')).toEqual({ kind: 'watch', target: 'pr', number: 10, channels: [] })
   })
 
   it('parses watch list', () => {
@@ -70,7 +68,7 @@ describe('parseCommand', () => {
   })
 
   it('is case-insensitive on verbs', () => {
-    expect(parseCommand('WATCH PR 10')).toEqual({ kind: 'watch', plugin: 'github-prs', number: 10, channels: [] })
+    expect(parseCommand('WATCH 5')).toEqual({ kind: 'watch', target: null, number: 5, channels: [] })
     expect(parseCommand('Help')).toEqual({ kind: 'help' })
   })
 
@@ -81,8 +79,6 @@ describe('parseCommand', () => {
   })
 
   it('rejects malformed channel arguments', () => {
-    // Bare `#`, double-`#`, embedded space, embedded `,` all fail at parse
-    // rather than later at the IRC server.
     for (const bad of ['#', '##foo']) {
       const cmd = parseCommand(`watch 5 ${bad}`) as Extract<Command, { kind: 'unknown' }>
       expect(cmd.kind).toBe('unknown')
@@ -96,8 +92,22 @@ describe('parseCommand', () => {
     expect(cmd.error).toMatch(/watch list takes no arguments/)
   })
 
-  it('rejects non-integer numbers', () => {
-    expect(parseCommand('watch foo').kind).toBe('unknown')
+  it('rejects trailing tokens after `help`', () => {
+    const cmd = parseCommand('help me') as Extract<Command, { kind: 'unknown' }>
+    expect(cmd.kind).toBe('unknown')
+    expect(cmd.error).toMatch(/help takes no arguments/)
+  })
+
+  it('rejects a reserved verb in the target slot', () => {
+    // `watch unwatch 5` is almost certainly a typo, not "target=unwatch";
+    // surface the reserved-verb collision rather than silently routing.
+    const cmd = parseCommand('watch unwatch 5') as Extract<Command, { kind: 'unknown' }>
+    expect(cmd.kind).toBe('unknown')
+    expect(cmd.error).toMatch(/reserved verb/)
+  })
+
+  it('rejects non-positive integers', () => {
+    expect(parseCommand('watch foo bar').kind).toBe('unknown')
     expect(parseCommand('watch 5.5').kind).toBe('unknown')
     expect(parseCommand('watch -1').kind).toBe('unknown')
   })
@@ -123,101 +133,13 @@ describe('parseCommand', () => {
 describe('parseCommands', () => {
   it('parses multi-line input', () => {
     expect(parseCommands('watch 5; unwatch pr 10')).toEqual([
-      { kind: 'watch', plugin: 'github-issues', number: 5, channels: [] },
-      { kind: 'unwatch', plugin: 'github-prs', number: 10 },
+      { kind: 'watch', target: null, number: 5, channels: [] },
+      { kind: 'unwatch', target: 'pr', number: 10 },
     ])
   })
 })
 
-describe('applyCommand', () => {
-  it('adds a new issue entry', () => {
-    const config: OrchestratorConfig = {}
-    const out = applyCommand(config, { kind: 'watch', plugin: 'github-issues', number: 5, channels: [] })
-    expect(out).toMatch(/watching issue #5/)
-    expect((config.plugins?.['github-issues'] as { watched: unknown[] }).watched).toEqual([{ number: 5 }])
-  })
-
-  it('is idempotent for re-adding without channels', () => {
-    const config: OrchestratorConfig = { plugins: { 'github-issues': { watched: [{ number: 5 }] } } }
-    const out = applyCommand(config, { kind: 'watch', plugin: 'github-issues', number: 5, channels: [] })
-    expect(out).toMatch(/already watching/)
-  })
-
-  it('appends + dedupes channels onto existing entry', () => {
-    const config: OrchestratorConfig = {
-      plugins: { 'github-issues': { watched: [{ number: 5, channels: ['#a'] }] } },
-    }
-    applyCommand(config, { kind: 'watch', plugin: 'github-issues', number: 5, channels: ['#a', '#b'] })
-    const entry = (config.plugins!['github-issues'] as { watched: { channels: string[] }[] }).watched[0]
-    expect(entry.channels).toEqual(['#a', '#b'])
-  })
-
-  it('removes an entry on unwatch', () => {
-    const config: OrchestratorConfig = {
-      plugins: { 'github-issues': { watched: [{ number: 5 }, { number: 6 }] } },
-    }
-    applyCommand(config, { kind: 'unwatch', plugin: 'github-issues', number: 5 })
-    expect((config.plugins!['github-issues'] as { watched: { number: number }[] }).watched).toEqual([{ number: 6 }])
-  })
-
-  it('reports not-watching on unwatch of unknown entry', () => {
-    const config: OrchestratorConfig = {}
-    const out = applyCommand(config, { kind: 'unwatch', plugin: 'github-issues', number: 5 })
-    expect(out).toMatch(/not watching/)
-  })
-
-  it('watch pr targets the github-prs slice', () => {
-    const config: OrchestratorConfig = {}
-    applyCommand(config, { kind: 'watch', plugin: 'github-prs', number: 10, channels: ['#x'] })
-    expect(config.plugins?.['github-prs']).toEqual({ watched: [{ number: 10, channels: ['#x'] }] })
-    expect(config.plugins?.['github-issues']).toBeUndefined()
-  })
-
-  it('emits help text and list text for those commands', () => {
-    const config: OrchestratorConfig = {}
-    const help = applyCommand(config, { kind: 'help' })
-    expect(help).toMatch(/commands \(DM only\)/)
-    // HELP_TEXT mentions the multi-cmd separator grammar.
-    expect(help).toMatch(/newline, semicolon, or comma/)
-    // And that any parse error aborts the batch.
-    expect(help).toMatch(/aborts the batch/)
-    expect(applyCommand(config, { kind: 'list' })).toMatch(/issues \(0\)/)
-  })
-
-  it('no-op channel add does not dirty entry.channels', () => {
-    // Adding only existing channels reports "unchanged" and leaves the
-    // entry's array reference alone (saves a redundant allocation).
-    const before = ['#a', '#b']
-    const config: OrchestratorConfig = {
-      plugins: { 'github-issues': { watched: [{ number: 5, channels: before }] } },
-    }
-    const out = applyCommand(config, { kind: 'watch', plugin: 'github-issues', number: 5, channels: ['#a', '#b'] })
-    expect(out).toMatch(/channels unchanged/)
-    const after = (config.plugins!['github-issues'] as { watched: { channels: string[] }[] }).watched[0].channels
-    expect(after).toBe(before)
-  })
-})
-
-describe('formatList', () => {
-  it('formats both slices with channel attachments', () => {
-    const config: OrchestratorConfig = {
-      plugins: {
-        'github-issues': { watched: [{ number: 5 }, { number: 6, channels: ['#a', '#b'] }] },
-        'github-prs': { watched: [{ number: 10, channels: ['#x'] }] },
-      },
-    }
-    const out = formatList(config)
-    expect(out).toContain('issues (2):')
-    expect(out).toContain('  #5')
-    expect(out).toContain('  #6 + #a #b')
-    expect(out).toContain('prs (1):')
-    expect(out).toContain('  #10 + #x')
-  })
-
-  it('reports (none) for empty slices', () => {
-    expect(formatList({})).toContain('(none)')
-  })
-})
+// ---- Allowlist -------------------------------------------------------------
 
 describe('resolveAllowlist', () => {
   it('defaults to [leadPmNick(project)] when unset', () => {
@@ -241,7 +163,7 @@ describe('resolveAllowlist', () => {
   })
 })
 
-// ---- handleDm — end-to-end via real config files --------------------------
+// ---- handleDm routing — stub plugins ---------------------------------------
 
 interface FakeIrc {
   dms: Array<{ nick: string; text: string }>
@@ -249,85 +171,129 @@ interface FakeIrc {
   logs: string[]
 }
 
-function makeDeps(stateDir: string): { deps: Parameters<typeof handleDm>[0]; irc: FakeIrc } {
+// A minimal Plugin that claims a target keyword. Records every call so
+// tests can assert routing precisely without depending on slice schemas.
+class StubPlugin implements Plugin {
+  readonly name: string
+  readonly handled: Array<{ cmd: Command; configSnapshot: OrchestratorConfig }> = []
+  constructor(name: string, private readonly target: string | null, private readonly behavior?: (cmd: Command, config: OrchestratorConfig) => string | null) {
+    this.name = name
+  }
+  desiredChannels(): string[] { return [] }
+  async runTick(): Promise<PluginTickResult> {
+    return { state: null, taggedEvents: [], channels: [] }
+  }
+  handleCommand(config: OrchestratorConfig, cmd: Command): string | null {
+    this.handled.push({ cmd, configSnapshot: JSON.parse(JSON.stringify(config)) as OrchestratorConfig })
+    if (this.behavior) return this.behavior(cmd, config)
+    if (cmd.kind === 'list') return `${this.name}: list-section`
+    if (cmd.kind === 'help') return `${this.name}: help-section`
+    if (cmd.kind === 'watch' && cmd.target === this.target) {
+      config.plugins ??= {}
+      config.plugins[this.name] = { watched: cmd.number }
+      return `${this.name}: watched ${cmd.number}`
+    }
+    if (cmd.kind === 'unwatch' && cmd.target === this.target) {
+      return `${this.name}: unwatched ${cmd.number}`
+    }
+    return null
+  }
+}
+
+function makeDeps(stateDir: string, plugins: Plugin[] = []): { deps: HandlerDeps; irc: FakeIrc } {
   const irc: FakeIrc = { dms: [], errors: [], logs: [] }
-  const deps = {
+  const deps: HandlerDeps = {
     stateDir,
-    dm: (nick: string, text: string) => { irc.dms.push({ nick, text }) },
-    postProjectError: (text: string) => { irc.errors.push(text) },
-    log: (line: string) => { irc.logs.push(line) },
+    plugins,
+    dm: (nick, text) => { irc.dms.push({ nick, text }) },
+    postProjectError: (text) => { irc.errors.push(text) },
+    log: (line) => { irc.logs.push(line) },
   }
   return { deps, irc }
 }
 
-describe('handleDm', () => {
+describe('handleDm — routing', () => {
   it('rejects senders outside the allowlist with a tight one-liner', async () => {
     await writeConfig(dir, { project: 'roost', irc: { command_senders: ['alex'] }, plugins: {} })
-    const { deps, irc } = makeDeps(dir)
+    const { deps, irc } = makeDeps(dir, [new StubPlugin('issues', null)])
     await handleDm(deps, { sender: 'mallory', text: 'watch 5' })
     expect(irc.dms).toEqual([{ nick: 'mallory', text: 'not authorized; configure irc.command_senders' }])
-    // No mutation
-    expect((await loadConfig(dir)).plugins?.['github-issues']).toBeUndefined()
+    expect((await loadConfig(dir)).plugins?.['issues']).toBeUndefined()
   })
 
   it('allows the default lead-pm nick when command_senders is unset', async () => {
     await writeConfig(dir, { project: 'roost', plugins: {} })
-    const { deps, irc } = makeDeps(dir)
+    const issues = new StubPlugin('issues', null)
+    const { deps, irc } = makeDeps(dir, [issues])
     await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5' })
     expect(irc.dms).toHaveLength(1)
-    expect(irc.dms[0].text).toMatch(/watching issue #5/)
-    const config = await loadConfig(dir)
-    expect((config.plugins?.['github-issues'] as { watched: unknown[] }).watched).toEqual([{ number: 5 }])
+    expect(irc.dms[0].text).toBe('issues: watched 5')
+    expect(issues.handled).toHaveLength(1)
   })
 
-  it('case-insensitive sender match', async () => {
-    await writeConfig(dir, { project: 'roost', irc: { command_senders: ['Alex'] }, plugins: {} })
-    const { deps, irc } = makeDeps(dir)
-    await handleDm(deps, { sender: 'ALEX', text: 'watch 7' })
-    expect(irc.dms[0].text).toMatch(/watching issue #7/)
-  })
-
-  it('mutates config and replies with a single confirmation for multi-command DMs', async () => {
+  it('routes target=null commands only to the matching plugin', async () => {
     await writeConfig(dir, { project: 'roost', plugins: {} })
-    const { deps, irc } = makeDeps(dir)
-    await handleDm(deps, {
-      sender: 'roost-lead-pm',
-      text: 'watch 5 #foo\nwatch pr 10 #bar',
-    })
+    const issues = new StubPlugin('issues', null)
+    const prs = new StubPlugin('prs', 'pr')
+    const { deps, irc } = makeDeps(dir, [issues, prs])
+    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5' })
+    // Both plugins are invoked, only issues claims it.
+    expect(issues.handled).toHaveLength(1)
+    expect(prs.handled).toHaveLength(1)
+    expect(irc.dms[0].text).toBe('issues: watched 5')
+  })
+
+  it('routes target=pr commands only to the matching plugin', async () => {
+    await writeConfig(dir, { project: 'roost', plugins: {} })
+    const issues = new StubPlugin('issues', null)
+    const prs = new StubPlugin('prs', 'pr')
+    const { deps, irc } = makeDeps(dir, [issues, prs])
+    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch pr 10' })
+    expect(irc.dms[0].text).toBe('prs: watched 10')
+  })
+
+  it('broadcasts `watch list` to every plugin and joins replies with \\n\\n', async () => {
+    await writeConfig(dir, { project: 'roost', plugins: {} })
+    const issues = new StubPlugin('issues', null)
+    const prs = new StubPlugin('prs', 'pr')
+    const { deps, irc } = makeDeps(dir, [issues, prs])
+    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch list' })
     expect(irc.dms).toHaveLength(1)
-    const reply = irc.dms[0].text
-    expect(reply).toMatch(/watching issue #5/)
-    expect(reply).toMatch(/watching pr #10/)
-    const config = await loadConfig(dir)
-    expect(config.plugins?.['github-issues']).toEqual({ watched: [{ number: 5, channels: ['#foo'] }] })
-    expect(config.plugins?.['github-prs']).toEqual({ watched: [{ number: 10, channels: ['#bar'] }] })
+    expect(irc.dms[0].text).toBe('issues: list-section\n\nprs: list-section')
   })
 
-  it('parse failures reply with a one-liner and do not throw', async () => {
+  it('broadcasts `help` to every plugin and joins with \\n\\n', async () => {
     await writeConfig(dir, { project: 'roost', plugins: {} })
-    const { deps, irc } = makeDeps(dir)
-    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5 foo' })
+    const issues = new StubPlugin('issues', null)
+    const prs = new StubPlugin('prs', 'pr')
+    const { deps, irc } = makeDeps(dir, [issues, prs])
+    await handleDm(deps, { sender: 'roost-lead-pm', text: 'help' })
+    expect(irc.dms[0].text).toBe('issues: help-section\n\nprs: help-section')
+  })
+
+  it('surfaces "no plugin handles" when no plugin claims a target', async () => {
+    await writeConfig(dir, { project: 'roost', plugins: {} })
+    const issues = new StubPlugin('issues', null)
+    const { deps, irc } = makeDeps(dir, [issues])
+    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch linear 99' })
     expect(irc.dms).toHaveLength(1)
-    expect(irc.dms[0].text).toMatch(/error: channels must match/)
-    // Config untouched
-    expect((await loadConfig(dir)).plugins?.['github-issues']).toBeUndefined()
+    expect(irc.dms[0].text).toMatch(/no plugin handles `watch linear <N>/)
+    expect(irc.dms[0].text).toMatch(/enabled plugins: issues/)
   })
 
-  it('any unknown in a batch aborts the whole batch — no partial application', async () => {
-    // `watch 5 foo` fails to parse (bareword channel); `watch 6` would
-    // succeed in isolation. The whole batch is rejected and no entry is
-    // written.
+  it('any parse error aborts the batch — no plugin called', async () => {
     await writeConfig(dir, { project: 'roost', plugins: {} })
-    const { deps, irc } = makeDeps(dir)
+    const issues = new StubPlugin('issues', null)
+    const { deps, irc } = makeDeps(dir, [issues])
     await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5 foo; watch 6' })
     expect(irc.dms).toHaveLength(1)
     expect(irc.dms[0].text).toMatch(/error: channels must match/)
-    expect((await loadConfig(dir)).plugins?.['github-issues']).toBeUndefined()
+    expect(issues.handled).toHaveLength(0)
   })
 
-  it('reports all parse errors when multiple commands fail', async () => {
+  it('reports multiple parse errors in one reply', async () => {
     await writeConfig(dir, { project: 'roost', plugins: {} })
-    const { deps, irc } = makeDeps(dir)
+    const { deps, irc } = makeDeps(dir, [new StubPlugin('issues', null)])
     await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch list foo; watch 5 bar' })
     expect(irc.dms).toHaveLength(1)
     const reply = irc.dms[0].text
@@ -335,49 +301,53 @@ describe('handleDm', () => {
     expect(reply).toMatch(/channels must match/)
   })
 
-  it('watch list replies with the formatted lists', async () => {
-    await writeConfig(dir, {
-      project: 'roost',
-      plugins: {
-        'github-issues': { watched: [{ number: 5 }] },
-        'github-prs': { watched: [{ number: 10, channels: ['#x'] }] },
-      },
-    })
-    const { deps, irc } = makeDeps(dir)
-    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch list' })
+  it('multi-cmd write batch lands in one mutateConfig call (single atomic write)', async () => {
+    await writeConfig(dir, { project: 'roost', plugins: {} })
+    const issues = new StubPlugin('issues', null)
+    const prs = new StubPlugin('prs', 'pr')
+    const { deps, irc } = makeDeps(dir, [issues, prs])
+    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5\nwatch pr 10' })
     expect(irc.dms).toHaveLength(1)
-    const reply = irc.dms[0].text
-    expect(reply).toContain('issues (1):')
-    expect(reply).toContain('  #5')
-    expect(reply).toContain('prs (1):')
-    expect(reply).toContain('  #10 + #x')
+    expect(irc.dms[0].text).toBe('issues: watched 5\n\nprs: watched 10')
+    const config = await loadConfig(dir)
+    expect(config.plugins?.['issues']).toEqual({ watched: 5 })
+    expect(config.plugins?.['prs']).toEqual({ watched: 10 })
   })
 
   it('empty-body DMs are ignored silently', async () => {
     await writeConfig(dir, { project: 'roost', plugins: {} })
-    const { deps, irc } = makeDeps(dir)
+    const { deps, irc } = makeDeps(dir, [new StubPlugin('issues', null)])
     await handleDm(deps, { sender: 'roost-lead-pm', text: '   ' })
     expect(irc.dms).toEqual([])
     expect(irc.errors).toEqual([])
   })
 
+  it('case-insensitive sender match', async () => {
+    await writeConfig(dir, { project: 'roost', irc: { command_senders: ['Alex'] }, plugins: {} })
+    const { deps, irc } = makeDeps(dir, [new StubPlugin('issues', null)])
+    await handleDm(deps, { sender: 'ALEX', text: 'watch 7' })
+    expect(irc.dms[0].text).toBe('issues: watched 7')
+  })
+
+  it('explicit empty allowlist blocks everyone (including lead-pm)', async () => {
+    await writeConfig(dir, { project: 'roost', irc: { command_senders: [] }, plugins: {} })
+    const { deps, irc } = makeDeps(dir, [new StubPlugin('issues', null)])
+    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5' })
+    expect(irc.dms).toEqual([{ nick: 'roost-lead-pm', text: 'not authorized; configure irc.command_senders' }])
+  })
+
   it('config load error surfaces to project channel, no throw', async () => {
-    // Point at a non-existent dir to force loadConfig to fail.
     const bogusDir = join(dir, 'does', 'not', 'exist')
-    const { deps, irc } = makeDeps(bogusDir)
+    const { deps, irc } = makeDeps(bogusDir, [new StubPlugin('issues', null)])
     await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5' })
     expect(irc.errors.some(e => e.startsWith('[dispatcher_error] config load'))).toBe(true)
   })
 
   it('config write error surfaces to project channel + DM, no throw', async () => {
-    // Seed a valid config, then revoke write permission on the dir so
-    // loadConfig succeeds (the file is readable) but writeConfig fails
-    // when it tries to create the .tmp sibling. Restored in afterEach
-    // via the chmod 0o700 below so rm -rf can clean up.
     await writeConfig(dir, { project: 'roost', plugins: {} })
     await chmod(dir, 0o555)
     try {
-      const { deps, irc } = makeDeps(dir)
+      const { deps, irc } = makeDeps(dir, [new StubPlugin('issues', null)])
       await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5' })
       expect(irc.errors.some(e => e.startsWith('[dispatcher_error] config write'))).toBe(true)
       expect(irc.dms.some(d => d.text.startsWith('error: failed to update config'))).toBe(true)
@@ -386,10 +356,26 @@ describe('handleDm', () => {
     }
   })
 
-  it('explicit empty allowlist blocks everyone (including lead-pm)', async () => {
-    await writeConfig(dir, { project: 'roost', irc: { command_senders: [] }, plugins: {} })
-    const { deps, irc } = makeDeps(dir)
+  it('plugin.handleCommand that throws is caught + surfaced as [dispatcher_error]', async () => {
+    await writeConfig(dir, { project: 'roost', plugins: {} })
+    const buggy = new StubPlugin('buggy', null, () => { throw new Error('plugin bug') })
+    const { deps, irc } = makeDeps(dir, [buggy])
     await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5' })
-    expect(irc.dms).toEqual([{ nick: 'roost-lead-pm', text: 'not authorized; configure irc.command_senders' }])
+    expect(irc.errors.some(e => e.includes('handleCommand'))).toBe(true)
+    expect(irc.dms.some(d => /handler crashed/.test(d.text))).toBe(true)
+  })
+
+  it('pure-read batches do not call mutateConfig (snapshot path)', async () => {
+    // Seed a watched entry. After `watch list`, config on disk is unchanged
+    // — proves we didn't re-serialize via mutateConfig.
+    await writeConfig(dir, { project: 'roost', plugins: { issues: { watched: [{ number: 99 }] } } })
+    const { mtimeMs: before } = await Bun.file(join(dir, 'config.json')).stat()
+    // Small delay so a write would show a different mtime.
+    await new Promise(r => setTimeout(r, 20))
+    const { deps, irc } = makeDeps(dir, [new StubPlugin('issues', null)])
+    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch list' })
+    expect(irc.dms).toHaveLength(1)
+    const { mtimeMs: after } = await Bun.file(join(dir, 'config.json')).stat()
+    expect(after).toBe(before)
   })
 })

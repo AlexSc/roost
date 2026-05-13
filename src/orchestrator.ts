@@ -132,20 +132,24 @@ async function runDaemon(stateDir: string): Promise<void> {
   await connectAndWait(client, { host: server, port, nick, autoReconnect: true, autoReconnectMaxRetries: 30 }, initialChannels)
   log('orchestrator[daemon]: connected\n')
 
-  // DM command handler — replaces the haiku watcher's LLM-on-JSON loop.
-  // Channel messages are ignored; DMs run the allowlist + parser + mutateConfig
-  // pipeline in dm-handler.ts. handleDm itself never throws.
+  // DM command handler. Channel messages are ignored; DMs flow through
+  // the allowlist + parser + mutateConfig pipeline in dm-handler.ts.
+  // Built once at boot — no per-message closure over the inbound `msg`.
+  const dmHandlerDeps = {
+    stateDir,
+    plugins,
+    dm: (nick: string, text: string) => {
+      try { client.say(nick, text) } catch (e) { log(`orchestrator[daemon]: dm reply failed: ${e}\n`) }
+    },
+    postProjectError: (text: string) => {
+      try { client.say(projectChannel, text) } catch { /* best-effort */ }
+    },
+    log: (line: string) => log(`${line}\n`),
+  }
+
   client.on('message', (msg) => {
     if (!msg.isDirect) return
-    handleDm(
-      {
-        stateDir,
-        dm: (nick, text) => { try { client.say(nick, text) } catch (e) { log(`orchestrator[daemon]: dm reply failed: ${e}\n`) } },
-        postProjectError: (text) => { try { client.say(projectChannel, text) } catch { /* best-effort */ } },
-        log: (line) => log(`${line}\n`),
-      },
-      { sender: msg.sender, text: msg.text },
-    ).catch((e: unknown) => {
+    handleDm(dmHandlerDeps, { sender: msg.sender, text: msg.text }).catch((e: unknown) => {
       log(`orchestrator[daemon]: dm-handler crashed: ${e}\n`)
     })
   })

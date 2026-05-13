@@ -1,56 +1,52 @@
-// Dispatcher DM handler: parses a small command grammar and mutates
-// .orchestrator/config.json. Replaces the haiku watcher's LLM-on-JSON loop
-// (see prompts/watcher.md) with a deterministic in-process path.
+// Dispatcher DM handler: parses a small command grammar and routes parsed
+// commands to plugins that opt in via `Plugin.handleCommand`. The parser
+// only knows verbs (`watch`/`unwatch`/`list`/`help`) and a free-form target
+// keyword; slice schemas, default targets, and reply phrasing all belong to
+// plugins.
 //
 // All commands arrive via DM (msg.isDirect === true). The handler:
 //   1. enforces an allowlist (config.irc.command_senders)
 //   2. parses the message body into Command[] (multi-cmd per line is fine)
-//   3. mutates config via mutateConfig (single serialized writer)
-//   4. DMs back ONE confirmation summarizing what changed
+//   3. inside one mutateConfig pass, asks each plugin to handle each cmd
+//   4. coalesces non-null plugin replies into ONE confirmation DM
 //
-// The handler never throws — parse/apply errors become a one-line DM to
-// the sender, and write errors are surfaced to the project channel by the
-// caller in orchestrator.ts.
+// The handler never throws — parse failures abort the batch with a one-line
+// DM, plugin.handleCommand throws bubble up as [dispatcher_error] on the
+// project channel.
 
-import { loadConfig, mutateConfig, type OrchestratorConfig, type WatchedEntry } from './config.js'
+import { loadConfig, mutateConfig, type OrchestratorConfig } from './config.js'
 import { defaultProject, leadPmNick } from './naming.js'
-
-type WatchPlugin = 'github-issues' | 'github-prs'
+import type { Plugin } from './plugin.js'
 
 export type Command =
-  | { kind: 'watch'; plugin: WatchPlugin; number: number; channels: string[] }
-  | { kind: 'unwatch'; plugin: WatchPlugin; number: number }
+  | { kind: 'watch'; target: string | null; number: number; channels: string[] }
+  | { kind: 'unwatch'; target: string | null; number: number }
   | { kind: 'list' }
   | { kind: 'help' }
   | { kind: 'unknown'; raw: string; error: string }
 
 export interface HandlerDeps {
   stateDir: string
+  // The enabled plugin set. Iterated for handleCommand routing. Built
+  // once at daemon boot — plugins are stateless w.r.t. command handling.
+  plugins: Plugin[]
   // Pure I/O — only the bits we need from RoostIrcClient.
   dm: (nick: string, text: string) => void
   postProjectError: (text: string) => void
   log: (line: string) => void
 }
 
-const HELP_TEXT = [
-  'commands (DM only):',
-  '  watch <N> [#chan ...]       — watch issue N (and route extra channels)',
-  '  unwatch <N>                 — stop watching issue N',
-  '  watch pr <N> [#chan ...]    — watch PR N (and route extra channels)',
-  '  unwatch pr <N>              — stop watching PR N',
-  '  watch list                  — show current watch lists',
-  '  help                        — this message',
-  'separate multiple commands per DM with newline, semicolon, or comma.',
-  'any parse error aborts the batch — nothing is applied.',
-].join('\n')
-
 const CHANNEL_RE = /^#[^\s,#]+$/
+
+// Verbs reserved for the dispatcher grammar — plugins can't override the
+// surface, but they decide what each verb does for their slice.
+const VERBS = new Set(['watch', 'unwatch', 'help'])
 
 // ---- Parser ----------------------------------------------------------------
 
 // Split a raw inbound body into individual command lines. Newlines /
 // semicolons / commas are all separators — matches the watcher prompt
-// grammar (which has been the operator-facing UX since the haiku watcher).
+// grammar (operator-facing UX since the haiku watcher).
 export function splitCommands(text: string): string[] {
   return text
     .split(/[\n;,]+/)
@@ -65,30 +61,37 @@ export function parseCommand(line: string): Command {
   if (tokens.length === 0) return { kind: 'unknown', raw: line, error: 'empty command' }
   const verb = tokens[0].toLowerCase()
 
-  if (verb === 'help') return { kind: 'help' }
-
-  if (verb === 'watch') {
-    if (tokens[1]?.toLowerCase() === 'list') {
-      if (tokens.length > 2) {
-        return { kind: 'unknown', raw: line, error: `watch list takes no arguments; got "${tokens.slice(2).join(' ')}"` }
-      }
-      return { kind: 'list' }
-    }
-    return parseWatchOrUnwatch(line, 'watch', tokens.slice(1))
+  if (verb === 'help') {
+    if (tokens.length > 1) return { kind: 'unknown', raw: line, error: `help takes no arguments; got "${tokens.slice(1).join(' ')}"` }
+    return { kind: 'help' }
   }
 
-  if (verb === 'unwatch') {
-    return parseWatchOrUnwatch(line, 'unwatch', tokens.slice(1))
+  if (verb === 'watch' && tokens[1]?.toLowerCase() === 'list') {
+    if (tokens.length > 2) return { kind: 'unknown', raw: line, error: `watch list takes no arguments; got "${tokens.slice(2).join(' ')}"` }
+    return { kind: 'list' }
   }
+
+  if (verb === 'watch') return parseWatchOrUnwatch(line, 'watch', tokens.slice(1))
+  if (verb === 'unwatch') return parseWatchOrUnwatch(line, 'unwatch', tokens.slice(1))
 
   return { kind: 'unknown', raw: line, error: `unknown command: ${tokens[0]}` }
 }
 
+// Parses `[target] <num> [#chan ...]` for watch, `[target] <num>` for unwatch.
+// `target` is whatever non-numeric keyword precedes the number (e.g. `pr`);
+// plugins choose which target keyword they claim, including `null` for the
+// bare form (no target keyword at all).
 function parseWatchOrUnwatch(raw: string, verb: 'watch' | 'unwatch', rest: string[]): Command {
-  let plugin: WatchPlugin = 'github-issues'
+  let target: string | null = null
   let i = 0
-  if (rest[0]?.toLowerCase() === 'pr') {
-    plugin = 'github-prs'
+  // First token: either the number (no target keyword) or a target keyword
+  // followed by the number. `pr` today; future plugins (linear, etc.) can
+  // claim other words without touching the parser.
+  if (rest[0] !== undefined && !/^\d+$/.test(rest[0])) {
+    if (VERBS.has(rest[0].toLowerCase())) {
+      return { kind: 'unknown', raw, error: `${verb}: "${rest[0]}" is a reserved verb, not a target` }
+    }
+    target = rest[0].toLowerCase()
     i = 1
   }
 
@@ -97,7 +100,7 @@ function parseWatchOrUnwatch(raw: string, verb: 'watch' | 'unwatch', rest: strin
     return { kind: 'unknown', raw, error: `${verb} requires an issue/PR number` }
   }
   const number = parseInt(numTok, 10)
-  if (!Number.isInteger(number) || number <= 0 || String(number) !== numTok) {
+  if (number <= 0 || String(number) !== numTok) {
     return { kind: 'unknown', raw, error: `${verb}: "${numTok}" is not a positive integer` }
   }
 
@@ -106,7 +109,7 @@ function parseWatchOrUnwatch(raw: string, verb: 'watch' | 'unwatch', rest: strin
     if (channels.length) {
       return { kind: 'unknown', raw, error: 'unwatch takes no channel arguments' }
     }
-    return { kind: 'unwatch', plugin, number }
+    return { kind: 'unwatch', target, number }
   }
 
   for (const c of channels) {
@@ -114,94 +117,19 @@ function parseWatchOrUnwatch(raw: string, verb: 'watch' | 'unwatch', rest: strin
       return { kind: 'unknown', raw, error: `channels must match ${CHANNEL_RE.source}: got "${c}"` }
     }
   }
-  return { kind: 'watch', plugin, number, channels }
+  return { kind: 'watch', target, number, channels }
 }
 
 export function parseCommands(text: string): Command[] {
   return splitCommands(text).map(parseCommand)
 }
 
-// ---- Apply -----------------------------------------------------------------
-
-interface WatchSlice {
-  watched?: WatchedEntry[]
-}
-
-function getSlice(config: OrchestratorConfig, plugin: WatchPlugin): WatchSlice {
-  config.plugins ??= {}
-  const existing = config.plugins[plugin]
-  if (existing && typeof existing === 'object') return existing as WatchSlice
-  const fresh: WatchSlice = {}
-  config.plugins[plugin] = fresh
-  return fresh
-}
-
-// One-line summary suitable for inclusion in the per-message confirmation
-// DM. The handler concatenates these with `\n`.
-export function applyCommand(config: OrchestratorConfig, cmd: Command): string {
-  if (cmd.kind === 'help') return HELP_TEXT
-  if (cmd.kind === 'list') return formatList(config)
-  if (cmd.kind === 'unknown') return `error: ${cmd.error} (line: ${cmd.raw})`
-
-  const slice = getSlice(config, cmd.plugin)
-  slice.watched ??= []
-  const watched = slice.watched
-  const label = cmd.plugin === 'github-prs' ? 'pr' : 'issue'
-
-  if (cmd.kind === 'watch') {
-    let entry = watched.find(e => e.number === cmd.number)
-    if (!entry) {
-      entry = { number: cmd.number }
-      if (cmd.channels.length) entry.channels = [...cmd.channels]
-      watched.push(entry)
-      return cmd.channels.length
-        ? `watching ${label} #${cmd.number} + ${cmd.channels.join(' ')}`
-        : `watching ${label} #${cmd.number}`
-    }
-    if (!cmd.channels.length) return `already watching ${label} #${cmd.number}`
-    const existing = new Set(entry.channels ?? [])
-    const added: string[] = []
-    for (const c of cmd.channels) if (!existing.has(c)) { existing.add(c); added.push(c) }
-    if (!added.length) return `${label} #${cmd.number} channels unchanged`
-    entry.channels = [...existing]
-    return `${label} #${cmd.number} + ${added.join(' ')}`
-  }
-
-  // unwatch
-  const idx = watched.findIndex(e => e.number === cmd.number)
-  if (idx < 0) return `not watching ${label} #${cmd.number}`
-  watched.splice(idx, 1)
-  return `unwatched ${label} #${cmd.number}`
-}
-
-// ---- watch list formatter --------------------------------------------------
-
-export function formatList(config: OrchestratorConfig): string {
-  const issues = (config.plugins?.['github-issues'] as WatchSlice | undefined)?.watched ?? []
-  const prs = (config.plugins?.['github-prs'] as WatchSlice | undefined)?.watched ?? []
-
-  const fmtEntry = (e: WatchedEntry): string => {
-    const chans = e.channels?.length ? ` + ${e.channels.join(' ')}` : ''
-    return `  #${e.number}${chans}`
-  }
-
-  const lines: string[] = []
-  lines.push(`issues (${issues.length}):`)
-  if (issues.length) for (const e of issues) lines.push(fmtEntry(e))
-  else lines.push('  (none)')
-  lines.push(`prs (${prs.length}):`)
-  if (prs.length) for (const e of prs) lines.push(fmtEntry(e))
-  else lines.push('  (none)')
-  return lines.join('\n')
-}
-
 // ---- Allowlist -------------------------------------------------------------
 
 // Resolves command_senders. Unset → `[leadPmNick(project)]` (see
 // naming.ts:leadPmNick — the single source of truth for the convention).
-// Explicit `[]` means nobody is allowed; everyone gets rejected silently
-// past the initial DM reply. If project is unresolvable, falls back to
-// `[]` and logs the cause so an operator chasing a "not authorized"
+// Explicit `[]` means nobody is allowed. If project is unresolvable, falls
+// back to `[]` and logs the cause so an operator chasing a "not authorized"
 // reply can find the root cause in daemon.log.
 export function resolveAllowlist(config: OrchestratorConfig, log?: (line: string) => void): string[] {
   const explicit = config.irc?.command_senders
@@ -214,6 +142,44 @@ export function resolveAllowlist(config: OrchestratorConfig, log?: (line: string
   }
 }
 
+// ---- Routing ---------------------------------------------------------------
+
+// One DM-able description of a watch/unwatch the parser produced, used
+// only in the "no plugin handles..." reply. Matches the user's input shape.
+function describeCommand(cmd: Extract<Command, { kind: 'watch' | 'unwatch' }>): string {
+  const target = cmd.target ? `${cmd.target} ` : ''
+  return cmd.kind === 'watch'
+    ? `watch ${target}<N> [#chan ...]`
+    : `unwatch ${target}<N>`
+}
+
+// Ask every plugin to handle `cmd` against the (in-progress) config.
+// Returns the coalesced reply (or null if every plugin abstained — caller
+// surfaces "no plugin handles ..."). watch/unwatch should match exactly
+// one plugin; list/help broadcast to all and join with `\n\n`.
+async function routeOne(
+  config: OrchestratorConfig,
+  cmd: Command,
+  plugins: Plugin[],
+): Promise<string | null> {
+  if (cmd.kind === 'unknown') return `error: ${cmd.error}`
+  const replies: string[] = []
+  for (const p of plugins) {
+    const reply = await p.handleCommand?.(config, cmd)
+    if (reply !== null && reply !== undefined) replies.push(reply)
+  }
+  if (replies.length === 0) return null
+  // list/help broadcast to all enabled plugins — separate sections with a
+  // blank line so the output is readable when multiple plugins contribute.
+  const sep = cmd.kind === 'list' || cmd.kind === 'help' ? '\n\n' : '\n'
+  return replies.join(sep)
+}
+
+function unmatchedReply(cmd: Extract<Command, { kind: 'watch' | 'unwatch' }>, plugins: Plugin[]): string {
+  const names = plugins.map(p => p.name).sort().join(', ') || '(none)'
+  return `error: no plugin handles \`${describeCommand(cmd)}\` — enabled plugins: ${names}`
+}
+
 // ---- Handler entry point ---------------------------------------------------
 
 export interface InboundDm {
@@ -221,21 +187,17 @@ export interface InboundDm {
   text: string
 }
 
-// Top-level DM entry. Never throws — write/load failures are caught and
-// posted to the project channel via deps.postProjectError so the operator
-// notices a broken config.
+// Top-level DM entry. Never throws — load/write/handler failures are caught
+// and surfaced via deps.postProjectError + a DM to the sender so the
+// operator notices a broken handler.
 //
-// Read commands (help, list) and any-unknown batches short-circuit before
-// mutateConfig so we don't acquire the writer queue for a pure read or a
-// parse-failed message. Writes flow through mutateConfig as one atomic
-// commit per DM — a multi-cmd message is one fsync, one reply.
+// Read-only batches (only list/help/unknown) short-circuit before
+// mutateConfig so we don't acquire the writer queue or pay an fsync.
 export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> {
   const senderLower = dm.sender.toLowerCase()
   const body = dm.text.trim()
   if (!body) return
 
-  // Single loadConfig per DM. Used for allowlist + (if pure-read) for the
-  // formatList payload. Writes re-load inside mutateConfig for freshness.
   let snapshot: OrchestratorConfig
   try {
     snapshot = await loadConfig(deps.stateDir)
@@ -255,9 +217,8 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
   const cmds = parseCommands(body)
   if (cmds.length === 0) return
 
-  // If any command failed to parse, report all parse errors and apply
-  // nothing — a typo in one half of a multi-cmd DM shouldn't silently
-  // commit the other half.
+  // Any parse failure aborts the batch — a typo shouldn't silently commit
+  // the half that parsed. Report all parse errors in one reply.
   const unknowns = cmds.filter((c): c is Extract<Command, { kind: 'unknown' }> => c.kind === 'unknown')
   if (unknowns.length) {
     for (const u of unknowns) deps.log(`dm-handler: ${dm.sender} parse: ${u.error}`)
@@ -265,31 +226,57 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
     return
   }
 
-  // Pure-read commands (help, list, or any mix of the two) don't need
-  // the writer queue. Format directly from the snapshot — no fsync.
-  if (cmds.every(c => c.kind === 'help' || c.kind === 'list')) {
-    const replies = cmds.map(c => applyCommand(snapshot, c))
-    for (const c of cmds) deps.log(`dm-handler: ${dm.sender} cmd=${c.kind}`)
-    deps.dm(dm.sender, replies.join('\n'))
+  const isPureRead = cmds.every(c => c.kind === 'list' || c.kind === 'help')
+
+  // Pure-read path: route against the snapshot, no fsync.
+  if (isPureRead) {
+    const replies: string[] = []
+    for (const cmd of cmds) {
+      try {
+        const reply = await routeOne(snapshot, cmd, deps.plugins)
+        if (reply !== null) replies.push(reply)
+        deps.log(`dm-handler: ${dm.sender} cmd=${cmd.kind}`)
+      } catch (e) {
+        deps.log(`dm-handler: handler threw on ${cmd.kind} from ${dm.sender}: ${e}`)
+        deps.postProjectError(`[dispatcher_error] handleCommand(${cmd.kind}): ${e}`)
+        replies.push(`error: handler crashed on ${cmd.kind}`)
+      }
+    }
+    if (replies.length) deps.dm(dm.sender, replies.join('\n\n'))
     return
   }
 
-  // Write path. mutateConfig re-loads inside the mutex for freshness.
+  // Write path: one mutateConfig call wraps the whole batch.
   const replies: string[] = []
+  let writeFailed = false
   try {
-    await mutateConfig(deps.stateDir, (config) => {
-      for (const cmd of cmds) replies.push(applyCommand(config, cmd))
+    await mutateConfig(deps.stateDir, async (config) => {
+      for (const cmd of cmds) {
+        try {
+          const reply = await routeOne(config, cmd, deps.plugins)
+          if (reply !== null) {
+            replies.push(reply)
+          } else if (cmd.kind === 'watch' || cmd.kind === 'unwatch') {
+            replies.push(unmatchedReply(cmd, deps.plugins))
+          }
+        } catch (e) {
+          deps.log(`dm-handler: handler threw on ${cmd.kind} from ${dm.sender}: ${e}`)
+          deps.postProjectError(`[dispatcher_error] handleCommand(${cmd.kind}): ${e}`)
+          replies.push(`error: handler crashed on ${cmd.kind}`)
+        }
+      }
     })
   } catch (e) {
+    writeFailed = true
     deps.log(`dm-handler: mutateConfig failed for ${dm.sender}: ${e}`)
     deps.postProjectError(`[dispatcher_error] config write: ${e}`)
     deps.dm(dm.sender, `error: failed to update config — ${e}`)
-    return
   }
 
+  if (writeFailed) return
   for (const cmd of cmds) {
-    const summary = `cmd=${cmd.kind}${'plugin' in cmd ? ` plugin=${cmd.plugin}` : ''}${'number' in cmd ? ` n=${cmd.number}` : ''}`
+    const summary = `cmd=${cmd.kind}${'target' in cmd ? ` target=${cmd.target ?? '(default)'}` : ''}${'number' in cmd ? ` n=${cmd.number}` : ''}`
     deps.log(`dm-handler: ${dm.sender} ${summary}`)
   }
-  deps.dm(dm.sender, replies.join('\n'))
+  deps.dm(dm.sender, replies.join('\n\n'))
 }
