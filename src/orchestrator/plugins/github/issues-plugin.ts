@@ -10,6 +10,8 @@ import type { IssueSnap, IssuePluginState } from './types.js'
 
 export class GitHubIssuesPlugin extends GhBase {
   readonly name = 'github-issues'
+  protected readonly target = null
+  protected readonly label = 'issue'
 
   desiredChannels(config: OrchestratorConfig): string[] {
     return this.entryChannels(config, this.watched(config))

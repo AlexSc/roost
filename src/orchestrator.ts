@@ -19,6 +19,7 @@ import { dispatchTaggedEvents, connectAndWait } from './orchestrator/dispatch.js
 import { getPluginFactory, registeredPluginNames, type Plugin, type TaggedEvent } from './orchestrator/plugin.js'
 import './orchestrator/registry.js'
 import { resolveProjectChannel } from './orchestrator/naming.js'
+import { handleDm } from './orchestrator/dm-handler.js'
 import { RoostIrcClientImpl } from './irc-client-impl.js'
 
 // ---- Path setup ------------------------------------------------------------
@@ -130,6 +131,27 @@ async function runDaemon(stateDir: string): Promise<void> {
 
   await connectAndWait(client, { host: server, port, nick, autoReconnect: true, autoReconnectMaxRetries: 30 }, initialChannels)
   log('orchestrator[daemon]: connected\n')
+
+  // DM command handler. Channel messages are ignored; DMs flow through
+  // the allowlist + parser + mutateConfig pipeline in dm-handler.ts.
+  const dmHandlerDeps = {
+    stateDir,
+    plugins,
+    dm: (nick: string, text: string) => {
+      try { client.say(nick, text) } catch (e) { log(`orchestrator[daemon]: dm reply failed: ${e}\n`) }
+    },
+    postProjectError: (text: string) => {
+      try { client.say(projectChannel, text) } catch { /* best-effort */ }
+    },
+    log: (line: string) => log(`${line}\n`),
+  }
+
+  client.on('message', (msg) => {
+    if (!msg.isDirect) return
+    handleDm(dmHandlerDeps, { sender: msg.sender, text: msg.text }).catch((e: unknown) => {
+      log(`orchestrator[daemon]: dm-handler crashed: ${e}\n`)
+    })
+  })
 
   let stop = false
   const stopController = new AbortController()
