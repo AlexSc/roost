@@ -114,6 +114,12 @@ Options:
                              path so RVM/bundler/nvm resolve correctly
                              inside the login shell.
   -s, --session NAME         Override tmux session name. Default: roost-<nick>
+  --agent NAME               Run this session as a named agent. Forwards
+                             --agent to claude, which loads the matching
+                             definition from agents/<NAME>.md (locks model
+                             and tool allowlist via the agent frontmatter).
+                             When set, --model is informational only — the
+                             agent file model field wins.
   --mcp-config PATH          Explicit mcp-config path. Not needed when the
                              roost plugin is installed (MCP auto-loads).
   -p, --prompt-file PATH     Paste contents into the TUI input + submit
@@ -448,6 +454,7 @@ cmd_spawn() {
   local channels="#roost"
   local model="opus"
   local session_name=""
+  local agent=""
   local mcp_config=""
   local prompt_file=""
   local prompt_text=""
@@ -472,6 +479,7 @@ cmd_spawn() {
       -c|--channels)    channels="$2"; shift 2 ;;
       -m|--model)       model="$2"; shift 2 ;;
       -s|--session)     session_name="$2"; shift 2 ;;
+      --agent)          agent="$2"; shift 2 ;;
       --mcp-config)     mcp_config="$2"; shift 2 ;;
       -p|--prompt-file) prompt_file="$2"; shift 2 ;;
       --prompt)         prompt_text="$2"; shift 2 ;;
@@ -650,11 +658,19 @@ cmd_spawn() {
     mcp_flag=" --mcp-config ${mcp_config}"
     channel_server="server:roost-irc"
   fi
+  local agent_flag=""
+  if [ -n "${agent}" ]; then
+    if [ ! -f "${ROOST_DIR}/agents/${agent}.md" ]; then
+      echo "error: --agent ${agent}: no agent file at ${ROOST_DIR}/agents/${agent}.md" >&2
+      exit 1
+    fi
+    agent_flag=" --agent $(printf '%q' "${agent}")"
+  fi
   # --plugin-dir points claude at the resolved plugin tree (dev checkout
   # OR brew cellar — ROOST_DIR walks symlinks). Without it, --dangerously-
   # load-development-channels server:plugin:roost:roost-irc has nothing to
   # find unless the plugin's been installed into claude's registry.
-  local inner_cmd="claude --model ${model} --permission-mode ${permission_mode}${mcp_flag} --settings ${ROOST_SETTINGS} --plugin-dir ${ROOST_DIR} --dangerously-load-development-channels ${channel_server}${extra_str}"
+  local inner_cmd="claude --model ${model} --permission-mode ${permission_mode}${mcp_flag}${agent_flag} --settings ${ROOST_SETTINGS} --plugin-dir ${ROOST_DIR} --dangerously-load-development-channels ${channel_server}${extra_str}"
   if [ -n "${prompt_file}" ]; then
     # intentionally single-quoted: fragment is injected into a tmux pane and must expand at runtime in that shell
     # shellcheck disable=SC2016
