@@ -42,6 +42,8 @@ DEFAULT_OPTIONS = {
 	'priority': '0',
 	'sound': '',
 	'device': '',
+	'url': '',
+	'url_title': '',
 	'http_timeout_seconds': '10',
 	'debug': 'off',
 }
@@ -94,6 +96,12 @@ def _send(title, body):
 	device = _opt('device')
 	if device:
 		form['device'] = device
+	url = _opt('url')
+	if url:
+		form['url'] = url
+		url_title = _opt('url_title')
+		if url_title:
+			form['url_title'] = url_title
 	weechat.hook_process_hashtable(
 		'url:https://api.pushover.net/1/messages.json',
 		{'postfields': urllib.parse.urlencode(form)},
