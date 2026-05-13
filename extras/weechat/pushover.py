@@ -1,16 +1,14 @@
 # Pushover (https://pushover.net/) bridge for weechat.
 #
-# Sibling to notification_center.py. The two scripts are independent —
-# notification_center is macOS-only (terminal-notifier), pushover is a remote
-# HTTPS push so it works wherever weechat runs.
+# Sibling to notification_center.py. Same trigger logic and setting names
+# (channels, show_highlights, show_private_message, show_message_text,
+# enabled, ignore_old_messages, ignore_current_buffer_messages) so behavior
+# is mechanically identical — only the delivery transport differs
+# (terminal-notifier vs Pushover HTTPS).
 #
 # Setup:
 #   /set plugins.var.python.pushover.user_key   <your user key>
 #   /set plugins.var.python.pushover.app_token  <your application token>
-#
-# By default fires on highlights + private messages in any channel.
-# Override `channels` to restrict to a comma-separated allowlist (or `*` = all
-# channel messages, like notification_center.py).
 #
 # HTTP is dispatched via weechat.hook_process_hashtable with a `url:` prefix,
 # so the request runs in a forked child and weechat's main loop never blocks.
@@ -33,14 +31,17 @@ weechat.register(SCRIPT_NAME, SCRIPT_AUTHOR, SCRIPT_VERSION, SCRIPT_LICENSE, SCR
 DEFAULT_OPTIONS = {
 	'user_key': '',
 	'app_token': '',
+	'enabled': 'on',
+	'show_highlights': 'on',
+	'show_private_message': 'on',
+	'show_message_text': 'on',
 	'channels': '',
+	'ignore_old_messages': 'off',
+	'ignore_current_buffer_messages': 'off',
+	'max_body_chars': '140',
 	'priority': '0',
 	'sound': '',
 	'device': '',
-	'max_body_chars': '140',
-	'notify_self': 'off',
-	'ignore_old_messages': 'off',
-	'ignore_current_buffer_messages': 'off',
 	'http_timeout_seconds': '10',
 	'debug': 'off',
 }
@@ -104,11 +105,13 @@ def _send(title, body):
 weechat.hook_print('', 'irc_privmsg', '', 1, 'notify', '')
 
 def notify(data, buffer, date, tags, displayed, highlight, prefix, message):
+	if _opt('enabled') != 'on':
+		return weechat.WEECHAT_RC_OK
 	if not _opt('user_key') or not _opt('app_token'):
 		return weechat.WEECHAT_RC_OK
 
 	own_nick = weechat.buffer_get_string(buffer, 'localvar_nick')
-	if _opt('notify_self') != 'on' and (prefix == own_nick or prefix == ('@%s' % own_nick)):
+	if prefix == own_nick or prefix == ('@%s' % own_nick):
 		return weechat.WEECHAT_RC_OK
 
 	if _opt('ignore_current_buffer_messages') == 'on' and buffer == weechat.current_buffer():
@@ -119,20 +122,23 @@ def notify(data, buffer, date, tags, displayed, highlight, prefix, message):
 		if (datetime.datetime.utcnow() - message_time).seconds > 5:
 			return weechat.WEECHAT_RC_OK
 
+	show_text = _opt('show_message_text') == 'on'
+
 	channels_setting = _opt('channels').strip()
 	notify_all = channels_setting == '*'
-	allow_list = [] if (not channels_setting or notify_all) else [c.strip() for c in channels_setting.split(',')]
+	channel_allow_list = [] if (not channels_setting or notify_all) else [c.strip() for c in channels_setting.split(',')]
 	channel = weechat.buffer_get_string(buffer, 'localvar_channel')
 
-	is_private = 'irc_privmsg' in tags and 'notify_private' in tags
-	is_highlight = bool(int(highlight))
-	is_allowed_channel = notify_all or (channel and channel in allow_list)
-
-	if is_private:
-		_send('%s [private]' % prefix, message)
-	elif is_highlight:
-		_send('%s in %s' % (prefix, channel), message)
-	elif is_allowed_channel:
-		_send('%s in %s' % (prefix, channel), message)
-
+	if notify_all or channel in channel_allow_list:
+		title = '%s %s' % (prefix, channel)
+		body = message if show_text else 'In %s by %s' % (channel, prefix)
+		_send(title, body)
+	elif _opt('show_highlights') == 'on' and int(highlight):
+		title = '%s %s' % (prefix, channel) if show_text else 'Highlighted Message'
+		body = message if show_text else 'In %s by %s' % (channel, prefix)
+		_send(title, body)
+	elif _opt('show_private_message') == 'on' and 'irc_privmsg' in tags and 'notify_private' in tags:
+		title = '%s [private]' % prefix if show_text else 'Private Message'
+		body = message if show_text else 'From %s' % prefix
+		_send(title, body)
 	return weechat.WEECHAT_RC_OK
