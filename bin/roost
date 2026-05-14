@@ -660,10 +660,6 @@ cmd_spawn() {
   fi
   local agent_flag=""
   if [ -n "${agent}" ]; then
-    if [ ! -f "${ROOST_DIR}/agents/${agent}.md" ]; then
-      echo "error: --agent ${agent}: no agent file at ${ROOST_DIR}/agents/${agent}.md" >&2
-      exit 1
-    fi
     agent_flag=" --agent $(printf '%q' "${agent}")"
   fi
   # --plugin-dir points claude at the resolved plugin tree (dev checkout

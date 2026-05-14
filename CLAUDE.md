@@ -10,6 +10,10 @@ Delivers
 
 Rides ergo for IRCv3 (multiline, chathistory, message-tags). Uses Github issues and PRs for workflow.
 
+## Authoring for unknown projects
+
+The commands, skills, and agents this plugin ships (`prompts/`, `agents/`, `skills/`) get installed into projects we have no knowledge of. Don't bake assumptions about repo layout, package manager, scripts, or naming into them — language them generically, with fallbacks. Project-specific helpers (like `script/worktree`) are nice-to-have hints, not preconditions; describe the helper *and* the manual fallback.
+
 ## Code quality
 
 ```
