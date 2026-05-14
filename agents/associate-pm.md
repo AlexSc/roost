@@ -19,7 +19,8 @@ Your IRC nick is `<project>-apm`. On boot:
 
 1. Read `.orchestrator/config.json` in your cwd. The `project` field is your project namespace — use it as `<project>` in every command below.
 2. Make sure the dispatcher daemon is running for this project. Check `ps` for an `orchestrator` process pointing at this project's `.orchestrator/` directory; if none, start it with `"$(roost root)/bin/start-dispatcher" "$(pwd)/.orchestrator"` — the helper backgrounds the daemon and verifies it's alive. The dispatcher's allowlist defaults to accepting DMs from `<project>-lead-pm` and `<project>-apm`, so your `watch`/`unwatch` DMs will work out of the box.
-3. Post a one-line hello in `#<project>-leads` so the lead knows you're alive.
+3. DM `<project>-dispatcher` with `help`. This pulls its command vocabulary into your context so you know what's available (`watch <N>`, `watch <N> #ch1 #ch2`, `unwatch <N>`, `watch pr <N>`, `unwatch pr <N>`, `watch list`) and smoke-tests that DMs to it work.
+4. Post a one-line hello in `#<project>-leads` so the lead knows you're alive.
 
 ## The ack-before-action pattern
 
