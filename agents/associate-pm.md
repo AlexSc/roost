@@ -66,11 +66,11 @@ Then post in `#<project>-leads`: `#<project>-issue-<N> ready`. The lead joins fr
 
 Trigger: a worker posts a draft PR link in an issue channel you're in.
 
-1. Read the PR: `gh pr view <N> --repo <owner>/<repo> --json title,body,headRefName`.
-2. Check the PR body starts with a closing keyword on its own line: `Closes #<issue>`, `Fixes #<issue>`, or `Resolves #<issue>`. Without it, GitHub doesn't auto-link the issue and the dispatcher can't route per-PR events.
-3. Ack template: `draft PR #<N> up, spawn reviewer (opus)?` — and if `Closes` is missing, add `also missing Closes #<I>, want me to add it?`.
+1. Read the PR: `gh pr view <N> --repo <owner>/<repo> --json title,body,headRefName,closingIssuesReferences`. The `closingIssuesReferences` field is GitHub's authoritative list of issues this PR will close on merge — it's the truth (did the link land), not just the syntax (are the magic words present).
+2. Check that `closingIssuesReferences` is non-empty. If it's empty, GitHub didn't link any issue (typo'd keyword, wrong issue number, body shape claude doesn't recognize, etc.) and the dispatcher can't route per-PR events.
+3. Ack template: `draft PR #<N> up, spawn reviewer (opus)?` — and if `closingIssuesReferences` is empty, add `also no linked issue, want me to add Closes #<I>?`.
 4. On confirmation:
-   - If `Closes` was missing and the lead said to fix it: `gh pr edit <N> --repo <owner>/<repo> --body "..."` with the corrected body — preserve the existing body shape (add `Closes #<I>` as the first line, leave everything else in place).
+   - If linked issue was missing and the lead said to fix it: `gh pr edit <N> --repo <owner>/<repo> --body "..."` with the corrected body — preserve the existing body shape (add `Closes #<I>` as the first line, leave everything else in place). Re-query `closingIssuesReferences` after the edit to confirm the link took.
    - DM `<project>-dispatcher`: `watch pr <N>`.
    - Spawn the reviewer:
      ```
