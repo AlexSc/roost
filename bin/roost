@@ -54,7 +54,8 @@ usage_init() {
 Usage: roost init [options]
 
 Bootstrap .orchestrator/config.json + .gitignore for a new project and copy
-roost prompt templates to .claude/commands/ for local customization.
+roost prompt templates to .claude/commands/ and agent definitions to
+.claude/agents/ for local customization.
 Autodetects project name, repo, and GitHub user; each value can be overridden.
 
 Options:
@@ -62,11 +63,15 @@ Options:
   --repo OWNER/REPO      GitHub repo (default: parsed from git origin remote).
   --agent-login LOGIN    GitHub login for agent_logins. Repeatable.
                          Default: current gh user.
-  --force                Overwrite everything: config.json, .gitignore, and
-                         .claude/commands/ prompt copies.
+  --force                Overwrite everything: config.json, .gitignore,
+                         .claude/commands/ prompt copies, and .claude/agents/
+                         agent copies.
   --force-prompts        Overwrite only .claude/commands/ prompt copies.
                          Does not touch config.json or .gitignore.
+  --force-agents         Overwrite only .claude/agents/ agent copies.
+                         Does not touch config.json or .gitignore.
   --no-prompts           Skip copying prompts to .claude/commands/.
+  --no-agents            Skip copying agents to .claude/agents/.
   --dry-run              Print what would be written; do not write files.
 
 Examples:
@@ -247,7 +252,9 @@ cmd_init() {
   local login_re='^[a-zA-Z0-9][a-zA-Z0-9-]*$'
   local force=0
   local force_prompts=0
+  local force_agents=0
   local no_prompts=0
+  local no_agents=0
   local dry_run=0
 
   while [ "$#" -gt 0 ]; do
@@ -262,7 +269,9 @@ cmd_init() {
         agent_logins+=("$2");               shift 2 ;;
       --force)         force=1;              shift ;;
       --force-prompts) force_prompts=1;      shift ;;
+      --force-agents)  force_agents=1;       shift ;;
       --no-prompts)    no_prompts=1;         shift ;;
+      --no-agents)     no_agents=1;          shift ;;
       --dry-run)       dry_run=1;            shift ;;
       -h|--help)       usage_init;           exit 0 ;;
       *) echo "error: unknown init option: $1" >&2; exit 1 ;;
@@ -329,13 +338,20 @@ cmd_init() {
   local gitignore_path=".orchestrator/.gitignore"
   local prompts_dir="${ROOST_DIR}/prompts"
   local commands_dir=".claude/commands"
+  local agents_src_dir="${ROOST_DIR}/agents"
+  local agents_dst_dir=".claude/agents"
 
-  # Discover prompt files from the plugin tree at runtime so new prompts
-  # added to prompts/ flow through automatically.
+  # Discover prompt + agent files from the plugin tree at runtime so new
+  # prompts/agents flow through automatically.
   local prompt_files=()
   local _pf
   for _pf in "${prompts_dir}"/*.md; do
     [ -f "$_pf" ] && prompt_files+=("$_pf")
+  done
+  local agent_files=()
+  local _af
+  for _af in "${agents_src_dir}"/*.md; do
+    [ -f "$_af" ] && agent_files+=("$_af")
   done
 
   # Decide what would actually be written. Same logic used by both
@@ -350,10 +366,10 @@ cmd_init() {
     write_gitignore=1
   fi
 
-  # --force-prompts is a prompt-only refresh; don't error on existing
-  # config (and don't rewrite it either).
-  if [ "$write_config" -eq 0 ] && [ "$force_prompts" -eq 0 ]; then
-    echo "error: ${config_path} already exists — pass \`--force\` to overwrite (or \`--force-prompts\` to refresh prompts only)" >&2
+  # --force-prompts and --force-agents are content-only refreshes; don't
+  # error on existing config (and don't rewrite it either).
+  if [ "$write_config" -eq 0 ] && [ "$force_prompts" -eq 0 ] && [ "$force_agents" -eq 0 ]; then
+    echo "error: ${config_path} already exists — pass \`--force\` to overwrite (or \`--force-prompts\` / \`--force-agents\` to refresh those only)" >&2
     exit 1
   fi
 
@@ -373,6 +389,16 @@ cmd_init() {
         _dst="${commands_dir}/${_name}.md"
         if [ ! -f "$_dst" ] || [ "$force_prompts" -eq 1 ] || [ "$force" -eq 1 ]; then
           echo "--- ${_dst} (copied verbatim from plugin prompts/${_name}.md) ---"
+        fi
+      done
+    fi
+    if [ "$no_agents" -eq 0 ] && [ "${#agent_files[@]}" -gt 0 ]; then
+      for _af in "${agent_files[@]}"; do
+        local _aname _adst
+        _aname="$(basename "$_af" .md)"
+        _adst="${agents_dst_dir}/${_aname}.md"
+        if [ ! -f "$_adst" ] || [ "$force_agents" -eq 1 ] || [ "$force" -eq 1 ]; then
+          echo "--- ${_adst} (copied verbatim from plugin agents/${_aname}.md) ---"
         fi
       done
     fi
@@ -405,6 +431,25 @@ cmd_init() {
       printf '\nTip: prompts under %s/ are project-local copies of the roost\n' "$commands_dir"
       printf '     defaults. Edit them to fit your conventions. Re-run\n'
       printf "     \`roost init --force-prompts\` to refresh from the plugin tree.\n"
+    fi
+  fi
+
+  local wrote_agents=0
+  if [ "$no_agents" -eq 0 ] && [ "${#agent_files[@]}" -gt 0 ]; then
+    mkdir -p "$agents_dst_dir"
+    for _af in "${agent_files[@]}"; do
+      local _adst
+      _adst="${agents_dst_dir}/$(basename "$_af" .md).md"
+      if [ ! -f "$_adst" ] || [ "$force_agents" -eq 1 ] || [ "$force" -eq 1 ]; then
+        cp "$_af" "$_adst"
+        echo "Wrote ${_adst}"
+        wrote_agents=1
+      fi
+    done
+    if [ "$wrote_agents" -eq 1 ]; then
+      printf '\nTip: agents under %s/ are project-local copies of the roost\n' "$agents_dst_dir"
+      printf '     defaults. Edit them to fit your conventions. Re-run\n'
+      printf "     \`roost init --force-agents\` to refresh from the plugin tree.\n"
     fi
   fi
 
