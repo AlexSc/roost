@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import { mkdtemp, rm, writeFile, readFile, access } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import {
   DISPATCHER_PID_FILE,
   readDispatcherPid,
@@ -9,6 +11,21 @@ import {
   removeDispatcherPid,
   writeJoinedChannels,
 } from '../config.js'
+
+const execFileP = promisify(execFile)
+
+// Bun.spawn returns before exec completes — on linux the kernel may report
+// the pre-exec command line for a beat. Poll ps until it shows the dir.
+async function waitForPsToShow(pid: number, needle: string): Promise<void> {
+  for (let i = 0; i < 50; i++) {
+    try {
+      const { stdout } = await execFileP('ps', ['-p', String(pid), '-o', 'args='])
+      if (stdout.includes(needle)) return
+    } catch { /* process not yet visible */ }
+    await new Promise(r => setTimeout(r, 20))
+  }
+  throw new Error(`ps never reported pid ${pid} with needle ${needle}`)
+}
 
 let dir: string
 
@@ -35,10 +52,16 @@ describe('writeDispatcherPid', () => {
 
   it('refuses to overwrite a PID file owned by a live process whose cmdline matches stateDir', async () => {
     // Spawn a real child whose command line includes `dir`, mimicking a
-    // live dispatcher started with `--config-dir <dir>`. `ps -p <child>`
-    // will report the embedded path, so readDispatcherPid sees it as live.
-    const child = Bun.spawn(['bash', '-c', `: ${dir}; sleep 5`])
+    // live dispatcher started with `--config-dir <dir>`. Using a script
+    // path under `dir` is the most portable way to get `ps` to surface the
+    // path — `bash -c "..."` argv handling varies between darwin/linux ps.
+    const script = join(dir, 'fake-daemon.sh')
+    await writeFile(script, '#!/usr/bin/env bash\nsleep 5\n')
+    const child = Bun.spawn(['bash', script])
     try {
+      // Bun.spawn returns before exec completes — poll ps until the dir
+      // shows up in args so the test fails fast if the contract breaks.
+      await waitForPsToShow(child.pid, dir)
       await writeFile(
         join(dir, DISPATCHER_PID_FILE),
         JSON.stringify({ pid: child.pid, started_at_ms: 0, cmdline: `bash ${dir}` })
