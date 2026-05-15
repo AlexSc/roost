@@ -7,6 +7,9 @@ import {
   loadState,
   writeState,
   writeHeartbeat,
+  writeJoinedChannels,
+  writeDispatcherPid,
+  removeDispatcherPid,
   writeLastError,
   clearLastError,
   getPluginState,
@@ -108,6 +111,11 @@ async function runDaemon(stateDir: string): Promise<void> {
     logWriter.flush()
   }
 
+  // Claim the PID file exclusively — defense-in-depth against accidental
+  // double-starts that bypass bin/start-dispatcher's mkdir lock.
+  const pidInfo = await writeDispatcherPid(stateDir)
+  log(`orchestrator[daemon]: pid ${pidInfo.pid} written to ${stateDir}/dispatcher.pid\n`)
+
   let config = await loadConfig(stateDir)
   const ircCfg = config.irc ?? {}
   const nick = ircCfg.nick
@@ -206,6 +214,15 @@ async function runDaemon(stateDir: string): Promise<void> {
       log(`orchestrator[daemon]: channel sync failed: ${e}\n`)
     }
 
+    // Snapshot of channels we believe we're joined to, for operator
+    // readiness checks. Freshness is "last successful tick", not "now".
+    try {
+      const joined = (await client.whoisChannels()) ?? []
+      await writeJoinedChannels(stateDir, joined.sort())
+    } catch (e) {
+      log(`orchestrator[daemon]: joined-channels snapshot failed: ${e}\n`)
+    }
+
     if (result.taggedEvents.length) {
       try {
         await dispatchTaggedEvents(result.taggedEvents, client)
@@ -222,6 +239,7 @@ async function runDaemon(stateDir: string): Promise<void> {
   }
 
   client.quit()
+  await removeDispatcherPid(stateDir)
   logWriter.flush()
   log('orchestrator[daemon]: exited cleanly\n')
 }
