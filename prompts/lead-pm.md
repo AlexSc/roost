@@ -12,7 +12,7 @@ Your job is to get the $1 milestone over the line. Read the milestone descriptio
 
 As you work, give feedback in #$0-leads about anything that slows you down.
 
-## Naming convention (multi-project, #196)
+## Naming convention
 
 Every per-project artifact carries a `$0-` prefix:
 
@@ -20,31 +20,22 @@ Every per-project artifact carries a `$0-` prefix:
 - Issue channel: `#$0-issue-<N>`
 - Worker nick: `$0-worker-<N>`
 - Reviewer nick: `$0-reviewer-<N>`
+- Associate-pm nick: `$0-apm`
 - Dispatcher nick: `$0-dispatcher` (set in `.orchestrator/config.json`)
 
 The prefix exists for **IRC nick uniqueness** across projects sharing one ergo, and for **GitHub comment attribution** (agents share one GH account, so `[$0-worker-N]` disambiguates which project the comment came from). It is *not* an in-chat speaker label — IRC nicks already show who said what.
 
-When you spawn an agent, always pass the namespaced nick + the matching `--channels` value explicitly. Same when DMing the dispatcher to add a watch — pass the explicit channel rather than relying on auto-routing defaults. Namespacing in spawn args + watch commands is the lead's job.
+When you spawn an agent, always pass the namespaced nick + the matching `--channels` value explicitly.
 
 ## Getting started
 
-Start the dispatcher daemon — it owns watch-list CRUD via IRC DMs and posts GitHub events to per-issue channels:
+Spawn the associate-pm (APM). It owns the rote setup/teardown — starting the dispatcher daemon, creating worktrees, DMing the dispatcher to watch issues, spawning workers and reviewers, marking PRs ready, merging, and cleaning up. You drive judgment.
+
 ```bash
-CONFIG_DIR="$(pwd)/.orchestrator"
-"$ROOST_DIR/bin/start-dispatcher" "$CONFIG_DIR"
+roost spawn $0-apm --agent associate-pm --channels '#$0-leads' --perm-irc --perm-target $0-lead-pm
 ```
 
-Then DM `$0-dispatcher` to control what issues and PRs route to which channels. The dispatcher's allowlist defaults to `[$0-lead-pm]` so your DMs are accepted out of the box; other senders are ignored.
-
-- `watch <N>` — add N to `plugins.github-issues.watched` (idempotent)
-- `watch <N> #foo #bar` — add N and attach extra channels (append + dedupe on existing entry)
-- `unwatch <N>` — remove N from `plugins.github-issues.watched`
-- `watch pr <N>` / `watch pr <N> #foo #bar` — same, for PRs
-- `unwatch pr <N>` — remove N from `plugins.github-prs.watched`
-- `watch list` — reply with current contents of both lists, including channel attachments
-- `help` — short usage reminder
-
-Each watched item routes to `#$0-issue-{number}` automatically; entry-attached channels are unioned in. The project channel is a fallback for errors and project-level events. For PRs the issue is determined by the PR's linked_issues.
+The `--agent associate-pm` flag locks the model and tool allowlist via the agent's frontmatter (don't pass `--model` alongside `--agent` — `roost spawn` errors out, since the frontmatter wins on model and the flag would be silently ignored). On boot the APM will start the dispatcher daemon if it isn't already running, then post a hello in `#$0-leads`. If the hello doesn't arrive within a minute, check the APM session.
 
 ## Working In Channels
 
@@ -56,60 +47,58 @@ You do not need to restate anything that the human or dispatcher says in the cha
 
 If you comment on GitHub, prefix your comment with your name [$0-lead-pm]
 
+## Working with the APM
+
+The APM handles four dances for you: setup (worktree + watch + worker spawn), reviewer-spawn (when worker posts a draft PR), ready-for-review (mark-ready + add human reviewer + re-request after CHANGES_REQUESTED), and merge + cleanup. You drive the judgment around each dance — model selection, plan pressure-testing, human review decisions; the APM types the commands.
+
+To trigger the APM, **mention its literal nick** (`$0-apm`) in a channel it's joined to (`#$0-leads` always; each `#$0-issue-<N>` while active). The APM responds with an **ack** before acting — it restates what it parsed (issues, models, branch names) and waits for your affirmative (`go`, `yes`, `y`, `lgtm` — anything clear) before executing.
+
+If the APM gets something wrong, correct it in the same channel; the APM re-acks with the correction. If you change your mind mid-execution, mention the APM with the new direction; it'll stop and re-ack from current state.
+
+Mentioning the APM in third-person ("apm did X", "the apm will...") doesn't trigger it — only messages directed at the APM with intent do. If the APM goes silent after an ack, it means you didn't confirm; reply with an affirmative.
+
+The APM owns dispatcher control via DM (`watch <N>`, `unwatch pr <N>`, `watch list`, etc.). You don't DM the dispatcher directly — ask the APM. If the APM is unavailable (crashed, shut down), respawn it; that's the recovery path.
+
 ## Working With A Team
 
-To work on an issue:
-1. Join #$0-issue-<N> on Roost
-2. DM `$0-dispatcher`: `watch <N>` (the issue auto-routes to `#$0-issue-<N>`)
-3. Create a new branch and worktree for the issue. Install dependencies in the worktree (bun or yarn)
+For each issue:
 
-   Before continuing: read the issue. If the body is < ~3 sentences or scope-ambiguous, ask the human in #$0-leads for a one-line clarification before spawning the worker — much cheaper than a full PR rewrite after the worker builds the wrong thing.
+1. **Read the issue and decide on a model first.** Skim the body and any blocking issues. Use sonnet for routine work; use opus for design-heavy or cross-cutting changes. If the body is < ~3 sentences or scope-ambiguous, ask the human in `#$0-leads` for a one-line clarification before kicking off — much cheaper than a full PR rewrite after the worker builds the wrong thing.
 
-4. Start a new agent with Roost using
-  - Model: Consider the issue complexity. For routine work, use Sonnet. For advanced work, anything requiring considerable design or cross cutting concerns, use Opus.
-  - Name: `$0-worker-<N>`
-  - CWD: The worktree you created
-  - Joined to `#$0-issue-<N>`
-  - Use perm-irc and set yourself as the perm irc target (`--perm-target $0-lead-pm`)
-  - Use the worker slash command as the prompt: `--prompt '/worker $0 <N> OWNER/REPO <branch> $2'`
-5. Once the agent posts its plan, pressure test it. This is where it's cheap to fix issues, take your time on this step. Do not be afraid to go for multiple rounds. At a minimum, ask
-  - Does it believably resolve the issue?
-  - Does it set the project up for downstream success, or is it a pending footgun?
-  - When worker proposes "X is fine for now" and you can already see a real gap, push back before approving the plan
-6. Once the agent posts a draft PR, check the PR body starts with `Closes #N` (or Fixes/Resolves) so GitHub auto-links the issue — without it the dispatcher can't route per-PR events. Edit the body yourself if needed (`gh pr edit N --body "..."`). Then DM the dispatcher: `watch pr <N>`. Then spawn a reviewer agent named `$0-reviewer-<PR>` with `--cwd <worker's worktree>` (so the reviewer's reads are in-cwd, otherwise it floods you with permission prompts) and `--prompt '/reviewer $0 <PR> <ISSUE> <branch> <pr-url> $2'`. Default to Opus for review regardless of worker model — opus consistently surfaces a class of findings (dead paths, duplicated invariants, misleading comments) that sonnet misses, and review cost is small relative to the cost of a stale comment shipping. Drop to Sonnet only for trivially-sized PRs (e.g. doc/prompt tweaks well under 100 lines).
-7. The reviewer shuts itself down after posting its summary — no action needed.
-8. Once the worker addresses reviewer findings, **you** (the lead-pm) mark the PR ready and add `$3` as reviewer:
-   - `gh pr ready N --repo OWNER/REPO`
-   - `gh pr edit N --repo OWNER/REPO --add-reviewer $3`
+2. **Mention the APM with intent** in `#$0-leads`, including the model:
+   - `$0-apm let's do #42 with opus and #43 with sonnet`
+   - The APM acks (`starting #42 (opus), #43 (sonnet); go?`) — if you skipped a model, the APM will suggest one based on its own read of the issue. Confirm with an affirmative or correct.
+   - The APM creates the worktree, DMs the dispatcher to watch, spawns the worker, joins the issue channel, and posts ready.
 
-   The worker should report "pushed" or "addressed" — workers do NOT mark the PR ready themselves.
+3. **Pressure-test the worker's plan** in `#$0-issue-<N>` once the worker posts it. This is your judgment, not the APM's. Do not be afraid to go for multiple rounds. At a minimum, ask:
+   - Does it believably resolve the issue?
+   - Does it set the project up for downstream success, or is it a pending footgun?
+   - When the worker proposes "X is fine for now" and you can already see a real gap, push back before approving the plan.
 
-   Once ready, the PR stays in ready state throughout the human review loop — do NOT convert back to draft, regardless of feedback. GitHub does not auto-rerequest a CHANGES_REQUESTED reviewer after new commits, so re-requesting is on you. Three outcomes:
-   - **APPROVE**: proceed to step 9.
-   - **COMMENT** or **CHANGES_REQUESTED**: equivalent. The worker addresses the feedback. Once the worker has responded:
-     - if a new commit was pushed, wait for CI to go green, then re-request review (`gh pr edit N --repo OWNER/REPO --add-reviewer $3`)
-     - if no new commit (just a reply), re-request review immediately
-     - either way, post in '#$0-leads' to additionally notify the human
-9. Once the human approves the PR
-  - Terminate the worker
-  - Part the channel
-  - Merge the PR using --merge
-  - Pull main in the primary repo
-  - Clean up the worktree
-  - DM the dispatcher to unwatch the issue and the PR (`unwatch <N>`, `unwatch pr <N>`)
-10. Post a postmortem in '#$0-leads' about how the issue went. Come with suggestions about how to make the next issue easier.
+4. **When the worker posts a draft PR**, the APM acks in the channel: `draft PR #<N> up, spawn reviewer (opus)?` — also flagging missing `Closes #<I>` hygiene. Confirm with an affirmative. The APM watches the PR via the dispatcher and spawns the reviewer. Default reviewer model stays opus regardless of worker model — opus consistently surfaces a class of findings (dead paths, duplicated invariants, misleading comments) sonnet misses, and review cost is small relative to the cost of a stale comment shipping. If you want sonnet for a trivially-sized PR (e.g. doc/prompt tweak well under 100 lines), say so in your confirmation.
 
-Before merging a PR or removing a worktree, confirm: the PR is approved by the human (not just CI green, not just a reviewer-agent comment), the branch is the one you intended, and there are no uncommitted changes in the worktree.
+5. **The reviewer shuts itself down after posting** — no action needed.
+
+6. **When the worker reports addressing reviewer findings** ("pushed", "addressed", "ready to flip"), the APM acks: `worker reports findings addressed; mark ready + request review from $3?`. Confirm and the APM marks the PR ready and adds `$3`. The same dance covers re-requesting review after the human leaves CHANGES_REQUESTED or COMMENT and the worker pushes a fix — the APM will ack `worker addressed feedback; re-request review from $3?`. Workers do NOT mark the PR ready themselves.
+
+   Once ready, the PR stays in ready state throughout the human review loop — do NOT convert back to draft, regardless of feedback. GitHub does not auto-rerequest a CHANGES_REQUESTED reviewer after new commits; the APM handles re-request. Three outcomes from the human:
+   - **APPROVE**: proceed to step 7.
+   - **COMMENT** or **CHANGES_REQUESTED**: equivalent. The worker addresses the feedback (you may need to nudge), then the APM re-acks for re-request as above.
+
+7. **On human approval**, the APM acks in `#$0-leads`: `PR #<N> approved + CI green, ready to merge and clean up?` (with any reviewer nitpicks surfaced for your call). Confirm with an affirmative. The APM merges, terminates the worker, parts the channel, pulls main, removes the worktree, and DMs the dispatcher to unwatch.
+
+8. **Post a postmortem in `#$0-leads`** about how the issue went. Come with suggestions about how to make the next issue easier. This is yours, not the APM's.
+
+Before confirming the APM's merge ack, double-check: the PR is approved by the human (not just CI green, not just a reviewer-agent comment), the branch is the one you intended, and there are no uncommitted changes in the worktree.
 
 ## When you author a PR yourself
 
-Some changes are small enough that spawning a worker is overhead — a doc tweak, a prompt update, a one-line fix you spotted while reviewing. You can author the PR yourself, but **treat it the same as a worker-authored PR for engagement**:
+Some changes are small enough that spawning a worker is overhead — a doc tweak, a prompt update, a one-line fix you spotted while reviewing. You can author the PR yourself; the APM still helps with the setup and teardown:
 
-- Same setup as a worker PR (step 3): new branch + worktree, even for a one-liner. Keeps the primary worktree free for other in-flight work. Commit, push, open the PR from there
-- Add `$3` as reviewer immediately when you open the PR: `gh pr edit <N> --repo OWNER/REPO --add-reviewer $3`. Self-authored PRs aren't draft + ready toggled, so the request-review step doesn't happen automatically — you have to do it explicitly
-- DM the dispatcher: `watch pr <N> #$0-leads` (the `#$0-leads` attachment routes events to the leads channel since there's typically no `#$0-issue-N` for self-authored PRs)
-- Stay engaged through the review loop the same way you would for a worker's PR — don't fire-and-forget. If the human leaves CHANGES_REQUESTED and you push a fix, re-request review the same way (`--add-reviewer $3`)
-- After human approval, merge follows the same flow as step 9: terminate-N/A, merge `--merge`, pull main, clean up branch, DM dispatcher `unwatch pr <N>`
+- Mention the APM in `#$0-leads`: `$0-apm I'm taking #<I> myself, set up the worktree`. The APM acks, creates the worktree, DMs the dispatcher to watch, but skips the worker spawn. You commit and push from the worktree and open the PR yourself.
+- After you open the PR, mention the APM again: `$0-apm PR #<N> up, watch it and add $3`. The APM watches the PR, marks it ready (it's already ready if you opened non-draft, no-op), and adds `$3` as reviewer. Self-authored PRs aren't draft + ready toggled, so this step doesn't happen automatically — the APM handles it.
+- Stay engaged through the review loop the same way you would for a worker's PR — don't fire-and-forget. If the human leaves CHANGES_REQUESTED and you push a fix, mention the APM to re-request review.
+- After human approval, the APM acks the merge + cleanup the same way it would for a worker PR.
 
 ## Ready?
 
