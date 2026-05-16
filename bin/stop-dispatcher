@@ -4,7 +4,7 @@
 # Gracefully stops the roost dispatcher daemon for the given config directory.
 # Idempotent — exits 0 if no live dispatcher is found.
 #
-# Sends SIGTERM and waits up to STOP_TIMEOUT seconds (default: 20) for the
+# Sends SIGTERM and waits up to STOP_TIMEOUT seconds (default: 30) for the
 # process to exit. The daemon finishes its current tick then exits cleanly.
 # Does NOT send SIGKILL — if the daemon hangs, inspect and kill manually.
 #
@@ -26,7 +26,7 @@ fi
 
 CONFIG_DIR="$1"
 PID_FILE="$CONFIG_DIR/dispatcher.pid"
-STOP_TIMEOUT="${STOP_TIMEOUT:-20}"
+STOP_TIMEOUT="${STOP_TIMEOUT:-30}"
 
 # Pull pid out of the JSON without depending on jq. Portable across BSD sed
 # (darwin) and GNU sed (linux).
@@ -84,6 +84,6 @@ cat >&2 <<EOF
 stop-dispatcher: FAIL: dispatcher (pid $PID) did not exit within ${STOP_TIMEOUT}s.
   Check:   ps -p $PID -o args=
   Kill:    kill -9 $PID
-  Retry with longer timeout: STOP_TIMEOUT=60 $(dirname "$(realpath "$0" 2>/dev/null || echo "$0")")/stop-dispatcher $CONFIG_DIR
+  Retry with longer timeout: STOP_TIMEOUT=60 $(command -v realpath >/dev/null && realpath "$0" || echo "$0") $CONFIG_DIR
 EOF
 exit 1

@@ -44,13 +44,16 @@ else
 fi
 rm -rf "$TDIR"
 
-# -- Test 3: PID-recycle (live but cmdline doesn't match) → exit 0, file removed --
+# -- Test 3: PID-recycle (live but ps args don't reference $TDIR) → exit 0, file removed --
+# pid_file_is_live checks the real ps args for the process, not the JSON cmdline field.
+# The JSON cmdline value in the PID file is decorative from stop-dispatcher's perspective;
+# what matters is that `ps -p $PID -o args=` doesn't mention $TDIR.
 
 TDIR="$(mktemp -d /tmp/stop-dispatcher-test-XXXXXXXX)"
 sleep 30 &
 unrelated_pid=$!
-# Write a PID file pointing at the live-but-unrelated process with our dir
-# NOT in the cmdline (the sleep binary's cmdline is just "sleep 30").
+# Write a PID file pointing at the live sleep process. Its real `ps args` are "sleep 30",
+# which don't include $TDIR — so pid_file_is_live returns false (PID-recycle defense).
 printf '{"pid":%d,"started_at_ms":0,"cmdline":"unrelated"}\n' "$unrelated_pid" > "$TDIR/dispatcher.pid"
 out="$("$STOP" "$TDIR" 2>&1)"
 rc=$?
