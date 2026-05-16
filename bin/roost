@@ -598,15 +598,25 @@ cmd_spawn() {
     esac
   fi
   if [ -n "${agent}" ]; then
-    local _agent_cwd="${cwd}/.claude/agents/${agent}.md"
-    local _agent_home="${HOME}/.claude/agents/${agent}.md"
-    # claude resolves --agent from <cwd>/.claude/agents/ and ~/.claude/agents/ only.
+    # claude searches .claude/agents/ recursively by filename.
     # plugin-tree agents (${ROOST_DIR}/agents/) are NOT searched by claude; operators
     # must run `roost init` to copy/symlink them into <cwd>/.claude/agents/.
-    if [ ! -f "${_agent_cwd}" ] && [ ! -f "${_agent_home}" ]; then
+    local _agent_found=0
+    local _search_root
+    local _found_path=""
+    for _search_root in "${cwd}/.claude/agents" "${HOME}/.claude/agents"; do
+      if [ -d "${_search_root}" ]; then
+        _found_path="$(find "${_search_root}" -name "${agent}.md" -type f 2>/dev/null | head -1)"
+        if [ -n "${_found_path}" ]; then
+          _agent_found=1
+          break
+        fi
+      fi
+    done
+    if [ "${_agent_found}" -eq 0 ]; then
       echo "error: agent '${agent}' not found; searched:" >&2
-      printf '  %s\n' "${_agent_cwd}" >&2
-      printf '  %s\n' "${_agent_home}" >&2
+      printf '  %s/.claude/agents/**/%s.md\n' "${cwd}" "${agent}" >&2
+      printf '  %s/.claude/agents/**/%s.md\n' "${HOME}" "${agent}" >&2
       exit 1
     fi
   fi

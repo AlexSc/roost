@@ -28,7 +28,7 @@ setup
 err="$("${ROOST_BIN}" spawn testnick --agent definitelynotanagent --cwd "$TDIR" 2>&1)"; exit_code=$?
 if [ "$exit_code" -ne 0 ] \
     && echo "$err" | grep -q "agent 'definitelynotanagent' not found" \
-    && echo "$err" | grep -q ".claude/agents/definitelynotanagent.md"; then
+    && echo "$err" | grep -q ".claude/agents/.*definitelynotanagent.md"; then
   ok "missing agent: exits non-zero with agent name and searched paths"
 else
   fail "missing agent: exits non-zero with agent name and searched paths" "exit=$exit_code err=$err"
@@ -54,9 +54,7 @@ teardown
 
 setup
 err="$("${ROOST_BIN}" spawn testnick --agent missing --cwd "$TDIR" 2>&1)"; exit_code=$?
-cwd_path="$TDIR/.claude/agents/missing.md"
-home_path="$HOME/.claude/agents/missing.md"
-if echo "$err" | grep -qF "$cwd_path" && echo "$err" | grep -qF "$home_path"; then
+if echo "$err" | grep -qF "$TDIR/.claude/agents" && echo "$err" | grep -qF "$HOME/.claude/agents"; then
   ok "missing agent: both searched paths printed"
 else
   fail "missing agent: both searched paths printed" "err=$err"
@@ -87,6 +85,19 @@ if ! echo "$err" | grep -q "agent 'homeagent' not found"; then
   ok "home agent found: agent validation passes"
 else
   fail "home agent found: agent validation passes" "err=$err"
+fi
+teardown
+
+# -- Test 6: agent in subdirectory passes validation --------------------------
+
+setup
+mkdir -p "$TDIR/.claude/agents/sub"
+printf -- '---\ndescription: nested agent\n---\nYou are a nested agent.\n' > "$TDIR/.claude/agents/sub/nestedagent.md"
+err="$("${ROOST_BIN}" spawn testnick --agent nestedagent --cwd "$TDIR" 2>&1 || true)"
+if ! echo "$err" | grep -q "agent 'nestedagent' not found"; then
+  ok "nested cwd agent found: agent validation passes"
+else
+  fail "nested cwd agent found: agent validation passes" "err=$err"
 fi
 teardown
 
