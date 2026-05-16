@@ -1,6 +1,9 @@
 # shellcheck shell=bash
 # _dispatcher-pid-lib.sh — source this; do not execute directly.
-# Requires callers to set: PID_FILE, CONFIG_DIR
+# PID_FILE and CONFIG_DIR must be in scope at call time (set by the sourcing script).
+#
+# The two-stage liveness contract (PID alive + ps args references CONFIG_DIR) is
+# mirrored in TS at src/orchestrator/config.ts:readDispatcherPid — keep in sync.
 
 # Pull pid out of the JSON without depending on jq. Portable across BSD sed
 # (darwin) and GNU sed (linux).
@@ -18,6 +21,7 @@ pid_file_is_live() {
   pid="$(read_pid)"
   [ -n "$pid" ] || return 1
   kill -0 "$pid" 2>/dev/null || return 1
+  # `ps -p PID -o args=` works on darwin and linux. Grep for our config-dir.
   # shellcheck disable=SC2154
   ps -p "$pid" -o args= 2>/dev/null | grep -Fq -- "$CONFIG_DIR" || return 1
   return 0
