@@ -606,7 +606,7 @@ cmd_spawn() {
     local _found_path=""
     for _search_root in "${cwd}/.claude/agents" "${HOME}/.claude/agents"; do
       if [ -d "${_search_root}" ]; then
-        _found_path="$(find "${_search_root}" -name "${agent}.md" -type f 2>/dev/null | head -1)"
+        _found_path="$(find -L "${_search_root}" -name "${agent}.md" -type f 2>/dev/null | head -1)"
         if [ -n "${_found_path}" ]; then
           _agent_found=1
           break
