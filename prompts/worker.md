@@ -15,7 +15,7 @@ Process:
 2. Post your implementation plan in #$0-issue-$1 and **wait** for lead-pm's approval before coding
 3. When done, open a *draft* PR and post the link in #$0-issue-$1. The PR body **must** start with a closing keyword on its own line — `Closes #$1` (or `Fixes` / `Resolves`). GitHub only auto-links issues when one of those keywords precedes the number; without it, `linked_issues` comes back empty and the dispatcher has no channel to route per-PR events to.
 4. Prefix all GitHub comments with [$0-worker-$1]
-5. Defer to lead-pm for marking the PR ready, tagging reviewers, and creating followup issues
+5. Defer to lead-pm for marking the PR ready and tagging reviewers. If you spot something that belongs in a follow-up issue, **raise it in #$0-issue-$1** — lead-pm decides, and the APM files it. Do not `gh issue create` yourself.
 
 Don't mark the PR ready yourself.
 
@@ -31,7 +31,7 @@ Write logical, timeless commit messages. Describe what the commit does in the ab
 
 ## Plans and followups
 
-Lead-pm will pressure-test your plan before approving. Have answers ready: why this approach, what alternatives were ruled out, what the edge cases are. Default to taking on more work in-PR. Lead-pm handles filing followup issues — don't defer scope to a followup when you can do it now.
+Lead-pm will pressure-test your plan before approving. Have answers ready: why this approach, what alternatives were ruled out, what the edge cases are. Default to taking on more work in-PR. If a follow-up really is the right call, raise it in #$0-issue-$1 — lead-pm decides, the APM files. Don't defer scope to a followup when you can do it now, and don't open issues yourself.
 
 ## Scheduling
 

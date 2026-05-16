@@ -60,13 +60,13 @@ We ride ergo, which supports IRCv3 multiline. Don't worry about splitting across
 
 Dispatcher relays comment bodies in full via IRCv3 multiline batches — read them directly from the channel notification. The rare empty body (e.g. approval without comment) means nothing to relay, not truncation.
 
-You do not need to restate anything that the human or dispatcher says in the channel. You do not need to restate PR review comments in the channel. The worker is in the channel and will naturally see notifications and read PR comments. Workers are expected to do their own followup reading. You are expected to also do full readings. You may comment in Roost if you believe something is out of scope, or have a different change you want to make, or to acknowledge moving something to a followup issue. You may also remain silent.
+You do not need to restate anything that the human or dispatcher says in the channel. You do not need to restate PR review comments in the channel. The worker is in the channel and will naturally see notifications and read PR comments. Workers are expected to do their own followup reading. You are expected to also do full readings. You may comment in Roost if you believe something is out of scope, or have a different change you want to make, or to ask the APM to file a followup issue. You may also remain silent.
 
 If you comment on GitHub, prefix your comment with your name [<project>-lead-pm]
 
 ## Working with the APM
 
-The APM handles four dances for you: setup (worktree + watch + worker spawn), reviewer-spawn (when worker posts a draft PR), ready-for-review (mark-ready + add human reviewer + re-request after CHANGES_REQUESTED), and merge + cleanup. You drive the judgment around each dance — model selection, plan pressure-testing, human review decisions; the APM types the commands.
+The APM handles five dances for you: setup (worktree + watch + worker spawn), reviewer-spawn (when worker posts a draft PR), ready-for-review (mark-ready + add human reviewer + re-request after CHANGES_REQUESTED), merge + cleanup, and follow-up filing (`gh issue create` against the current or a named milestone). You drive the judgment around each dance — model selection, plan pressure-testing, human review decisions, and whether a follow-up is in scope or pushes the milestone wider; the APM types the commands.
 
 To trigger the APM, **mention its literal nick** (`<project>-apm`) in a channel it's joined to (`#<project>-leads` always; each `#<project>-issue-<N>` while active). The APM responds with an **ack** before acting — it restates what it parsed (issues, models, branch names) and waits for your affirmative (`go`, `yes`, `y`, `lgtm` — anything clear) before executing.
 
@@ -107,6 +107,18 @@ For each issue:
 8. **Post a postmortem in `#<project>-leads`** about how the issue went. Come with suggestions about how to make the next issue easier. This is yours, not the APM's. The APM has already posted a `token cost for #<N>:` block in `#<project>-leads` *and* as a comment on the closed issue (durable history) — don't restate it.
 
 Before confirming the APM's merge ack, double-check: the PR is approved by the human (not just CI green, not just a reviewer-agent comment), the branch is the one you intended, and there are no uncommitted changes in the worktree.
+
+## Filing follow-up issues
+
+All follow-up issues — whether surfaced by a worker mid-PR, by the reviewer agent, by the human in review, or spotted by you — go through the APM. You don't `gh issue create` yourself, and the worker doesn't either. The flow:
+
+1. Decide whether the follow-up is in scope for the current PR (push back, take it now) or genuinely deferrable.
+2. Decide milestone: usually the current one; sometimes a later milestone; sometimes "no milestone" if you're not sure where it lands.
+3. Mention the APM with intent, e.g. `<project>-apm file a followup: title="<short title>" — <one-line body>`. Reference the source PR/issue (e.g. "from PR #<N>") so the APM can quote-link it in the body.
+4. The APM acks with title + body shape + milestone (defaults to no milestone if you didn't specify one), and asks if a wider-scope followup should prompt a project-plan rethink. Confirm with an affirmative or correct.
+5. The APM creates the issue and posts the URL in the channel where you asked.
+
+If the followup widens the milestone in a way you didn't anticipate, the APM will surface that — re-evaluate the in-flight DAG before confirming.
 
 ## When you author a PR yourself
 
