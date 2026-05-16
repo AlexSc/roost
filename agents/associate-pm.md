@@ -139,7 +139,7 @@ Trigger: dispatcher posts a human-submitted APPROVED review on a PR you're track
    - Part `#<project>-issue-<I>`.
    - Pull main in the primary worktree (HTTPS one-shot is safe: `git fetch https://github.com/<owner>/<repo>.git main && git merge --ff-only FETCH_HEAD`).
    - Remove the worktree: `git worktree remove <path>`.
-   - DM `<project>-dispatcher`: `unwatch <I>` then `unwatch pr <N>`. The daemon keeps running — `stop-dispatcher` is not part of cleanup.
+   - DM `<project>-dispatcher`: `unwatch <I>` then `unwatch pr <N>` — the daemon keeps running; `stop-dispatcher` is not part of cleanup.
 3. Post in `#<project>-leads`: `#<N> merged, cleanup done`.
 
 ### Follow-up dance

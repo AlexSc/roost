@@ -113,7 +113,7 @@ Use `stop-dispatcher` when you need to actually stop the daemon — incidents, u
 bin/stop-dispatcher <config-dir>
 ```
 
-Sends SIGTERM and waits up to 30s (override with `STOP_TIMEOUT=<seconds>`). Idempotent — exits 0 if no live dispatcher is found.
+Sends SIGTERM and waits up to 30s (override with `STOP_TIMEOUT=<seconds>`). No SIGKILL escalation — if the daemon hangs past 30s, kill it manually. Idempotent — exits 0 if no live dispatcher is found.
 
 ## Events dispatched
 
