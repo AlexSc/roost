@@ -5,48 +5,79 @@ import { tmpdir } from 'node:os'
 import { collectForNick, main } from '../src/token-usage.js'
 import { mcpConnectionLine } from '../src/mcp-banner.js'
 
-// Build a one-session JSONL containing the MCP banner for `nick` plus the
-// given assistant turns (each contributing one usage block). Returns the
-// path to the written file.
+interface Turn {
+  ts: string
+  model: string
+  input?: number
+  output?: number
+  cache_w?: number
+  cache_r?: number
+  // Optional API duration row that follows this turn.
+  apiDurationMs?: number
+}
+
+// Build a session JSONL containing the MCP banner for `nick` followed by the
+// given assistant turns (and an optional per-turn `system/turn_duration`
+// row using the same ts). Returns the written file path.
 async function writeSessionFile(
   dir: string,
   filename: string,
   nick: string,
-  turns: Array<{ input: number; output: number; cache_w?: number; cache_r?: number }>,
+  turns: Turn[],
 ): Promise<string> {
   const lines: string[] = []
-  // Permission-mode row (mirrors real transcripts; no usage).
   lines.push(JSON.stringify({ type: 'permission-mode', permissionMode: 'auto' }))
-  // MCP attachment row carrying the marker `roost-token-usage` greps for.
-  // Use the centralized banner helper so a wording change there breaks the
-  // marker-matching round-trip rather than silently passing.
   lines.push(JSON.stringify({
     type: 'user',
     message: {
       role: 'user',
-      content: [{
-        type: 'text',
-        text: `roost IRC MCP. ${mcpConnectionLine(nick)}. (test stub)`,
-      }],
+      content: [{ type: 'text', text: `roost IRC MCP. ${mcpConnectionLine(nick)}. (test stub)` }],
     },
   }))
   for (const t of turns) {
     lines.push(JSON.stringify({
       type: 'assistant',
+      timestamp: t.ts,
       message: {
         role: 'assistant',
+        model: t.model,
         usage: {
-          input_tokens: t.input,
-          output_tokens: t.output,
+          input_tokens: t.input ?? 0,
+          output_tokens: t.output ?? 0,
           cache_creation_input_tokens: t.cache_w ?? 0,
           cache_read_input_tokens: t.cache_r ?? 0,
         },
       },
     }))
+    if (typeof t.apiDurationMs === 'number') {
+      lines.push(JSON.stringify({
+        type: 'system',
+        subtype: 'turn_duration',
+        durationMs: t.apiDurationMs,
+        timestamp: t.ts,
+      }))
+    }
   }
   const path = join(dir, filename)
   await writeFile(path, lines.join('\n') + '\n')
   return path
+}
+
+// Capture stdout + stderr writes for one async block, restore afterward.
+async function capture<T>(fn: () => Promise<T>): Promise<{ result: T; out: string; err: string }> {
+  const outChunks: string[] = []
+  const errChunks: string[] = []
+  const origOut = process.stdout.write.bind(process.stdout)
+  const origErr = process.stderr.write.bind(process.stderr)
+  ;(process.stdout as unknown as { write: (s: string) => boolean }).write = (s: string) => { outChunks.push(s); return true }
+  ;(process.stderr as unknown as { write: (s: string) => boolean }).write = (s: string) => { errChunks.push(s); return true }
+  try {
+    const result = await fn()
+    return { result, out: outChunks.join(''), err: errChunks.join('') }
+  } finally {
+    ;(process.stdout as unknown as { write: typeof origOut }).write = origOut
+    ;(process.stderr as unknown as { write: typeof origErr }).write = origErr
+  }
 }
 
 describe('token-usage', () => {
@@ -60,293 +91,261 @@ describe('token-usage', () => {
     stateDir = join(tmp, 'state')
     await mkdir(projects, { recursive: true })
     await mkdir(stateDir, { recursive: true })
+    process.env.CLAUDE_PROJECTS_DIR = projects
   })
 
   afterEach(async () => {
+    delete process.env.CLAUDE_PROJECTS_DIR
     await rm(tmp, { recursive: true, force: true })
   })
 
   describe('collectForNick', () => {
-    it('sums usage across multiple sessions in different project dirs', async () => {
-      const dirA = join(projects, '-foo-project-a')
-      const dirB = join(projects, '-foo-project-b')
-      await mkdir(dirA, { recursive: true })
-      await mkdir(dirB, { recursive: true })
-      await writeSessionFile(dirA, 'sess1.jsonl', 'roost-worker-99', [
-        { input: 10, output: 5, cache_w: 100, cache_r: 200 },
-        { input: 20, output: 7, cache_w: 0, cache_r: 50 },
+    it('sums per-model usage across multiple sessions in different dirs', async () => {
+      const a = join(projects, '-pa')
+      const b = join(projects, '-pb')
+      await mkdir(a, { recursive: true })
+      await mkdir(b, { recursive: true })
+      await writeSessionFile(a, 's1.jsonl', 'roost-worker-99', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 5, cache_w: 100, cache_r: 200, apiDurationMs: 4000 },
+        { ts: '2026-05-16T10:05:00Z', model: 'claude-sonnet-4-6', input: 20, output: 7, apiDurationMs: 1000 },
       ])
-      await writeSessionFile(dirB, 'sess2.jsonl', 'roost-worker-99', [
-        { input: 1, output: 2, cache_w: 3, cache_r: 4 },
+      await writeSessionFile(b, 's2.jsonl', 'roost-worker-99', [
+        { ts: '2026-05-16T11:00:00Z', model: 'claude-opus-4-7', input: 1, output: 2, cache_r: 4, apiDurationMs: 500 },
       ])
-      // Different nick — should NOT contribute.
-      await writeSessionFile(dirA, 'other.jsonl', 'roost-worker-100', [
-        { input: 999, output: 999 },
+      // Different nick — must not contribute.
+      await writeSessionFile(a, 'other.jsonl', 'roost-worker-100', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 999, output: 999 },
       ])
 
       const r = await collectForNick('roost-worker-99', projects)
-      expect(r.usage.input).toBe(31)
-      expect(r.usage.output).toBe(14)
-      expect(r.usage.cache_creation).toBe(103)
-      expect(r.usage.cache_read).toBe(254)
-      expect(r.usage.sessions).toBe(2)
+      const opus = r.byModel.get('claude-opus-4-7')!
+      const sonnet = r.byModel.get('claude-sonnet-4-6')!
+      expect(opus.input).toBe(11)
+      expect(opus.output).toBe(7)
+      expect(opus.cache_creation).toBe(100)
+      expect(opus.cache_read).toBe(204)
+      expect(sonnet.input).toBe(20)
+      expect(sonnet.output).toBe(7)
+      expect(r.apiDurationMs).toBe(5500)
+      expect(r.sessions).toBe(2)
+      expect(r.wallFirst).toBe('2026-05-16T10:00:00Z')
+      expect(r.wallLast).toBe('2026-05-16T11:00:00Z')
       expect(r.files).toHaveLength(2)
     })
 
-    it('returns zero usage / empty files when nick is unknown', async () => {
-      const dir = join(projects, '-foo')
-      await mkdir(dir, { recursive: true })
-      await writeSessionFile(dir, 'sess.jsonl', 'some-other-nick', [{ input: 5, output: 5 }])
+    it('returns empty report when nick is unknown', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 's.jsonl', 'someone-else', [{ ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 5, output: 5 }])
       const r = await collectForNick('roost-worker-missing', projects)
-      expect(r.usage.input).toBe(0)
-      expect(r.usage.sessions).toBe(0)
+      expect(r.byModel.size).toBe(0)
+      expect(r.sessions).toBe(0)
       expect(r.files).toEqual([])
     })
 
     it('does not partial-match: nick "worker-1" must not match "worker-10"', async () => {
-      const dir = join(projects, '-foo')
-      await mkdir(dir, { recursive: true })
-      await writeSessionFile(dir, 'sess.jsonl', 'roost-worker-10', [{ input: 7, output: 3 }])
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 's.jsonl', 'roost-worker-10', [{ ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 7, output: 3 }])
       const r = await collectForNick('roost-worker-1', projects)
-      // Marker uses the exact quoted nick — substring "worker-1" inside
-      // "worker-10" does not match because the closing \" comes after the 0.
       expect(r.files).toEqual([])
     })
 
-    it('handles malformed JSONL lines without crashing', async () => {
-      const dir = join(projects, '-foo')
-      await mkdir(dir, { recursive: true })
-      const path = join(dir, 'broken.jsonl')
-      const good = JSON.stringify({
+    it('handles malformed JSONL rows without crashing', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      const path = join(d, 'broken.jsonl')
+      const banner = JSON.stringify({
         type: 'user',
-        message: { role: 'user', content: [{ type: 'text', text: 'You are connected to IRC as nick "roost-x"' }] },
+        message: { role: 'user', content: [{ type: 'text', text: `roost IRC MCP. ${mcpConnectionLine('roost-x')}.` }] },
       })
       const goodTurn = JSON.stringify({
         type: 'assistant',
-        message: { role: 'assistant', usage: { input_tokens: 8, output_tokens: 4, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } },
+        timestamp: '2026-05-16T10:00:00Z',
+        message: { role: 'assistant', model: 'claude-opus-4-7', usage: { input_tokens: 8, output_tokens: 4, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } },
       })
-      await writeFile(path, [good, '{garbage', goodTurn, '"usage": this is not json', ''].join('\n'))
-
+      await writeFile(path, [banner, '{garbage', goodTurn, '"usage": this is not json', ''].join('\n'))
       const r = await collectForNick('roost-x', projects)
-      expect(r.usage.input).toBe(8)
-      expect(r.usage.output).toBe(4)
-      expect(r.usage.sessions).toBe(1)
+      expect(r.byModel.get('claude-opus-4-7')!.input).toBe(8)
+      expect(r.sessions).toBe(1)
+    })
+
+    it('sinceTs filter excludes pre-window turns', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 's.jsonl', 'roost-lead-pm', [
+        { ts: '2026-05-16T09:00:00Z', model: 'claude-opus-4-7', input: 1000, output: 500, apiDurationMs: 10_000 },
+        { ts: '2026-05-16T11:00:00Z', model: 'claude-opus-4-7', input: 50, output: 25, apiDurationMs: 2_000 },
+      ])
+      const r = await collectForNick('roost-lead-pm', projects, '2026-05-16T10:00:00Z')
+      const opus = r.byModel.get('claude-opus-4-7')!
+      expect(opus.input).toBe(50)
+      expect(opus.output).toBe(25)
+      expect(r.apiDurationMs).toBe(2_000)
+      expect(r.sessions).toBe(1)
+    })
+
+    it('tracks unknown models for later warning', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-mystery-9-0', input: 10, output: 10 },
+      ])
+      const r = await collectForNick('roost-x', projects)
+      expect(r.unknownModels.has('claude-mystery-9-0')).toBe(true)
+    })
+
+    it('skips <synthetic> model rows from unknown-models set', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: '<synthetic>', input: 0, output: 1 },
+      ])
+      const r = await collectForNick('roost-x', projects)
+      expect(r.unknownModels.has('<synthetic>')).toBe(false)
     })
   })
 
-  describe('main: snapshot + report dance', () => {
-    beforeEach(() => {
-      process.env.CLAUDE_PROJECTS_DIR = projects
-    })
-    afterEach(() => {
-      delete process.env.CLAUDE_PROJECTS_DIR
-    })
-
-    it('snapshot writes baseline; report against same data yields zero deltas', async () => {
-      const dir = join(projects, '-stuff')
-      await mkdir(dir, { recursive: true })
-      await writeSessionFile(dir, 's.jsonl', 'roost-lead-pm', [
-        { input: 100, output: 50, cache_w: 500, cache_r: 2000 },
+  describe('main: snapshot + report', () => {
+    it('snapshot records timestamp only; report after no chatter shows no in-window activity', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 's.jsonl', 'roost-lead-pm', [
+        { ts: '2026-05-16T09:00:00Z', model: 'claude-opus-4-7', input: 100, output: 50, apiDurationMs: 5000 },
       ])
+      const snap = await capture(() => main(['snapshot', stateDir, '319', 'roost-lead-pm']))
+      expect(snap.result).toBe(0)
+      const snapFile = JSON.parse(await readFile(join(stateDir, 'token-snapshots.json'), 'utf8')) as Record<string, Record<string, { snapshot_at: string }>>
+      expect(snapFile['319']['roost-lead-pm'].snapshot_at).toBeTruthy()
 
-      const snapCode = await main(['snapshot', stateDir, '319', 'roost-lead-pm'])
-      expect(snapCode).toBe(0)
-
-      const snapText = await readFile(join(stateDir, 'token-snapshots.json'), 'utf8')
-      const snap = JSON.parse(snapText) as Record<string, Record<string, { input: number; snapshot_at: string }>>
-      expect(snap['319']['roost-lead-pm'].input).toBe(100)
-      expect(snap['319']['roost-lead-pm'].snapshot_at).toBeTruthy()
-
-      // No new turns added — report should print zero deltas.
-      const lines: string[] = []
-      const orig = process.stdout.write.bind(process.stdout)
-      ;(process.stdout as unknown as { write: (s: string) => boolean }).write = (s: string) => {
-        lines.push(s)
-        return true
-      }
-      try {
-        const code = await main(['report', stateDir, '319', 'roost-lead-pm'])
-        expect(code).toBe(0)
-      } finally {
-        ;(process.stdout as unknown as { write: typeof orig }).write = orig
-      }
-      const out = lines.join('')
-      expect(out).toContain('roost-lead-pm: in=0 out=0 cache_w=0 cache_r=0 sessions=0')
+      const rep = await capture(() => main(['report', stateDir, '319', 'roost-lead-pm']))
+      expect(rep.result).toBe(0)
+      expect(rep.out).toContain('roost-lead-pm: $0.00 · 0s api / 0s wall')
+      expect(rep.out).toContain('(no in-window activity)')
     })
 
-    it('report after additional turns shows the delta only', async () => {
-      const dir = join(projects, '-stuff')
-      await mkdir(dir, { recursive: true })
-      const path = await writeSessionFile(dir, 's.jsonl', 'roost-lead-pm', [
-        { input: 100, output: 50 },
+    it('report after new turns shows only the post-snapshot delta', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      const path = await writeSessionFile(d, 's.jsonl', 'roost-lead-pm', [
+        { ts: '2026-05-16T09:00:00Z', model: 'claude-opus-4-7', input: 1_000_000, output: 100_000, apiDurationMs: 60_000 },
       ])
+      const snap = await capture(() => main(['snapshot', stateDir, '319', 'roost-lead-pm']))
+      expect(snap.result).toBe(0)
 
-      await main(['snapshot', stateDir, '319', 'roost-lead-pm'])
-
-      // Append a new assistant turn after the snapshot.
+      // Append a new post-snapshot turn. snapshot_at is `now`; using a
+      // future-ish ts here puts the turn unambiguously after it.
       const newTurn = JSON.stringify({
         type: 'assistant',
-        message: { role: 'assistant', usage: { input_tokens: 7, output_tokens: 3, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } },
+        timestamp: '2099-01-01T00:00:00Z',
+        message: { role: 'assistant', model: 'claude-opus-4-7', usage: { input_tokens: 7, output_tokens: 3, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } },
       })
-      const existing = await readFile(path, 'utf8')
-      await writeFile(path, existing + newTurn + '\n')
+      const newDur = JSON.stringify({
+        type: 'system', subtype: 'turn_duration', durationMs: 1500, timestamp: '2099-01-01T00:00:00Z',
+      })
+      await writeFile(path, (await readFile(path, 'utf8')) + newTurn + '\n' + newDur + '\n')
 
-      const lines: string[] = []
-      const orig = process.stdout.write.bind(process.stdout)
-      ;(process.stdout as unknown as { write: (s: string) => boolean }).write = (s: string) => {
-        lines.push(s)
-        return true
-      }
-      try {
-        await main(['report', stateDir, '319', 'roost-lead-pm'])
-      } finally {
-        ;(process.stdout as unknown as { write: typeof orig }).write = orig
-      }
-      const out = lines.join('')
-      expect(out).toContain('roost-lead-pm: in=7 out=3 cache_w=0 cache_r=0 sessions=0')
+      const rep = await capture(() => main(['report', stateDir, '319', 'roost-lead-pm']))
+      // Pre-snapshot 1M-input turn must NOT count; only the 7/3 turn does.
+      expect(rep.out).toContain('opus-4-7: 7 in / 3 out')
+      expect(rep.out).toContain('1s api')
     })
 
-    it('report with no snapshot prints cumulative (ephemeral nick case)', async () => {
-      const dir = join(projects, '-stuff')
-      await mkdir(dir, { recursive: true })
-      await writeSessionFile(dir, 's.jsonl', 'roost-worker-319', [
-        { input: 12_345, output: 4567 },
+    it('report without snapshot prints full cumulative + per-model $ + duration', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 's.jsonl', 'roost-worker-319', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 1_000_000, output: 100_000, apiDurationMs: 60_000 },
+        { ts: '2026-05-16T10:30:00Z', model: 'claude-sonnet-4-6', input: 500_000, output: 50_000, apiDurationMs: 30_000 },
       ])
+      const rep = await capture(() => main(['report', stateDir, '319', 'roost-worker-319']))
+      expect(rep.result).toBe(0)
+      // Opus 1M in × $15 + 100k out × $75 = $15 + $7.50 = $22.50
+      // Sonnet 500k in × $3 + 50k out × $15 = $1.50 + $0.75 = $2.25
+      // Total $24.75
+      expect(rep.out).toContain('roost-worker-319: $24.75')
+      expect(rep.out).toContain('opus-4-7:')
+      expect(rep.out).toContain('($22.50)')
+      expect(rep.out).toContain('sonnet-4-6:')
+      expect(rep.out).toContain('($2.25)')
+      // Wall: 10:00 → 10:30 = 30m. API: 60+30 = 90s = 1m30s.
+      expect(rep.out).toContain('1m30s api / 30m00s wall')
+    })
 
-      const lines: string[] = []
-      const orig = process.stdout.write.bind(process.stdout)
-      ;(process.stdout as unknown as { write: (s: string) => boolean }).write = (s: string) => {
-        lines.push(s)
-        return true
-      }
-      try {
-        await main(['report', stateDir, '319', 'roost-worker-319'])
-      } finally {
-        ;(process.stdout as unknown as { write: typeof orig }).write = orig
-      }
-      const out = lines.join('')
-      // 12345 → 12k, 4567 → 4.6k
-      expect(out).toContain('roost-worker-319: in=12k out=4.6k')
+    it('unknown model renders $? at totals AND warns once on stderr', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-mystery-9-0', input: 100, output: 100 },
+        { ts: '2026-05-16T10:01:00Z', model: 'claude-opus-4-7', input: 1000, output: 500 },
+      ])
+      const rep = await capture(() => main(['report', stateDir, '319', 'roost-x']))
+      // Mystery model → null → total bubbles to $?.
+      expect(rep.out).toContain('roost-x: $?')
+      // Per-model lines: opus has $; mystery has $?.
+      expect(rep.out).toMatch(/mystery-9-0:.*\$\?/)
+      expect(rep.out).toMatch(/opus-4-7:.*\$0\.05/) // 1000×15 + 500×75 = 15000+37500 = 52500 / 1M = $0.0525 → $0.05
+      expect(rep.err).toContain('no pricing for model(s): claude-mystery-9-0')
+      expect(rep.err).toContain('add to src/pricing.ts')
     })
 
     it('exits non-zero when any nick matches zero session files', async () => {
-      const dir = join(projects, '-stuff')
-      await mkdir(dir, { recursive: true })
-      await writeSessionFile(dir, 's.jsonl', 'roost-lead-pm', [{ input: 5, output: 5 }])
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 's.jsonl', 'roost-lead-pm', [{ ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 5, output: 5 }])
+      const rep = await capture(() => main(['report', stateDir, '999', 'roost-lead-pm', 'roost-ghost']))
+      expect(rep.result).toBe(1)
+      expect(rep.err).toContain('roost-ghost')
+    })
 
-      const errs: string[] = []
-      const orig = process.stderr.write.bind(process.stderr)
-      ;(process.stderr as unknown as { write: (s: string) => boolean }).write = (s: string) => {
-        errs.push(s)
-        return true
-      }
-      try {
-        const code = await main(['report', stateDir, '999', 'roost-lead-pm', 'roost-ghost'])
-        expect(code).toBe(1)
-      } finally {
-        ;(process.stderr as unknown as { write: typeof orig }).write = orig
-      }
-      expect(errs.join('')).toContain('roost-ghost')
+    it('snapshot rejects nicks with no transcripts (loud baseline failure)', async () => {
+      const rep = await capture(() => main(['snapshot', stateDir, '999', 'roost-ghost']))
+      expect(rep.result).toBe(1)
+      expect(rep.err).toContain('roost-ghost')
     })
 
     it('rejects non-numeric issue arg', async () => {
-      // No session files needed — bails before scanning.
-      const errs: string[] = []
-      const orig = process.stderr.write.bind(process.stderr)
-      ;(process.stderr as unknown as { write: (s: string) => boolean }).write = (s: string) => {
-        errs.push(s)
-        return true
-      }
-      try {
-        const code = await main(['report', stateDir, 'PR-12', 'whatever'])
-        expect(code).toBe(2)
-      } finally {
-        ;(process.stderr as unknown as { write: typeof orig }).write = orig
-      }
-      expect(errs.join('')).toContain('numeric')
+      const rep = await capture(() => main(['report', stateDir, 'PR-12', 'whatever']))
+      expect(rep.result).toBe(2)
+      expect(rep.err).toContain('numeric')
     })
 
-    it('snapshot for a second issue preserves the first issue entry', async () => {
-      const dir = join(projects, '-stuff')
-      await mkdir(dir, { recursive: true })
-      await writeSessionFile(dir, 'sa.jsonl', 'roost-lead-pm', [{ input: 100, output: 50 }])
-      await writeSessionFile(dir, 'sb.jsonl', 'roost-apm', [{ input: 10, output: 5 }])
-
-      await main(['snapshot', stateDir, '319', 'roost-lead-pm', 'roost-apm'])
-      await main(['snapshot', stateDir, '320', 'roost-lead-pm'])
-
-      const snap = JSON.parse(await readFile(join(stateDir, 'token-snapshots.json'), 'utf8')) as Record<string, Record<string, { input: number }>>
-      expect(snap['319']?.['roost-lead-pm']?.input).toBe(100)
-      expect(snap['319']?.['roost-apm']?.input).toBe(10)
-      expect(snap['320']?.['roost-lead-pm']?.input).toBe(100)
-      // 320 didn't pass roost-apm — earlier entry should not have leaked.
+    it('snapshot for a second issue preserves the first entry', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 'a.jsonl', 'roost-lead-pm', [{ ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 5 }])
+      await writeSessionFile(d, 'b.jsonl', 'roost-apm', [{ ts: '2026-05-16T10:00:00Z', model: 'claude-sonnet-4-6', input: 10, output: 5 }])
+      await capture(() => main(['snapshot', stateDir, '319', 'roost-lead-pm', 'roost-apm']))
+      await capture(() => main(['snapshot', stateDir, '320', 'roost-lead-pm']))
+      const snap = JSON.parse(await readFile(join(stateDir, 'token-snapshots.json'), 'utf8')) as Record<string, Record<string, { snapshot_at: string }>>
+      expect(snap['319']?.['roost-lead-pm']?.snapshot_at).toBeTruthy()
+      expect(snap['319']?.['roost-apm']?.snapshot_at).toBeTruthy()
+      expect(snap['320']?.['roost-lead-pm']?.snapshot_at).toBeTruthy()
       expect(snap['320']?.['roost-apm']).toBeUndefined()
     })
 
-    it('one report invocation handles multiple nicks and prints one line per', async () => {
-      const dir = join(projects, '-stuff')
-      await mkdir(dir, { recursive: true })
-      await writeSessionFile(dir, 'sw.jsonl', 'roost-worker-42', [{ input: 100, output: 10 }])
-      await writeSessionFile(dir, 'sr.jsonl', 'roost-reviewer-42', [{ input: 50, output: 5 }])
-      await writeSessionFile(dir, 'sl.jsonl', 'roost-lead-pm', [{ input: 1000, output: 500 }])
-      await writeSessionFile(dir, 'sa.jsonl', 'roost-apm', [{ input: 200, output: 100 }])
-
-      // Snapshot only the long-lived agents at "setup" time.
-      await main(['snapshot', stateDir, '42', 'roost-lead-pm', 'roost-apm'])
-
-      const lines: string[] = []
-      const orig = process.stdout.write.bind(process.stdout)
-      ;(process.stdout as unknown as { write: (s: string) => boolean }).write = (s: string) => {
-        lines.push(s)
-        return true
-      }
-      try {
-        const code = await main([
-          'report', stateDir, '42',
-          'roost-worker-42', 'roost-reviewer-42', 'roost-lead-pm', 'roost-apm',
-        ])
-        expect(code).toBe(0)
-      } finally {
-        ;(process.stdout as unknown as { write: typeof orig }).write = orig
-      }
-      const out = lines.join('')
-      const printed = out.trim().split('\n')
-      expect(printed).toHaveLength(4)
-      // Workers/reviewers report cumulative (no snapshot); lead/apm diff to zero.
-      expect(printed[0]).toContain('roost-worker-42: in=100 out=10')
-      expect(printed[0]).toContain('sessions=1')
-      expect(printed[1]).toContain('roost-reviewer-42: in=50 out=5')
-      expect(printed[2]).toBe('roost-lead-pm: in=0 out=0 cache_w=0 cache_r=0 sessions=0')
-      expect(printed[3]).toBe('roost-apm: in=0 out=0 cache_w=0 cache_r=0 sessions=0')
-    })
-
-    it('negative diff (snapshot drift) renders raw and stderr-warns', async () => {
-      const dir = join(projects, '-stuff')
-      await mkdir(dir, { recursive: true })
-      const path = await writeSessionFile(dir, 's.jsonl', 'roost-lead-pm', [{ input: 100, output: 50 }])
-      await main(['snapshot', stateDir, '42', 'roost-lead-pm'])
-
-      // Simulate drift: rewrite the session so cumulative dropped below the snapshot.
-      await rm(path)
-      await writeSessionFile(dir, 's.jsonl', 'roost-lead-pm', [{ input: 30, output: 10 }])
-
-      const outLines: string[] = []
-      const errLines: string[] = []
-      const origOut = process.stdout.write.bind(process.stdout)
-      const origErr = process.stderr.write.bind(process.stderr)
-      ;(process.stdout as unknown as { write: (s: string) => boolean }).write = (s: string) => { outLines.push(s); return true }
-      ;(process.stderr as unknown as { write: (s: string) => boolean }).write = (s: string) => { errLines.push(s); return true }
-      try {
-        const code = await main(['report', stateDir, '42', 'roost-lead-pm'])
-        expect(code).toBe(0)
-      } finally {
-        ;(process.stdout as unknown as { write: typeof origOut }).write = origOut
-        ;(process.stderr as unknown as { write: typeof origErr }).write = origErr
-      }
-      // No Math.max clamp — the raw negative renders.
-      expect(outLines.join('')).toContain('in=-70')
-      expect(errLines.join('')).toContain('negative diff')
-      expect(errLines.join('')).toContain('roost-lead-pm')
+    it('one report invocation prints multi-line output per nick for 4 nicks', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 'w.jsonl', 'roost-worker-42', [{ ts: '2026-05-16T10:00:00Z', model: 'claude-sonnet-4-6', input: 100, output: 10, apiDurationMs: 500 }])
+      await writeSessionFile(d, 'r.jsonl', 'roost-reviewer-42', [{ ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 50, output: 5, apiDurationMs: 300 }])
+      await writeSessionFile(d, 'l.jsonl', 'roost-lead-pm', [{ ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 1000, output: 500, apiDurationMs: 5000 }])
+      await writeSessionFile(d, 'a.jsonl', 'roost-apm', [{ ts: '2026-05-16T10:00:00Z', model: 'claude-sonnet-4-6', input: 200, output: 100, apiDurationMs: 1000 }])
+      await capture(() => main(['snapshot', stateDir, '42', 'roost-lead-pm', 'roost-apm']))
+      const rep = await capture(() => main([
+        'report', stateDir, '42',
+        'roost-worker-42', 'roost-reviewer-42', 'roost-lead-pm', 'roost-apm',
+      ]))
+      expect(rep.result).toBe(0)
+      // Each nick produces a head line + at least one model sub-line.
+      // 4 nicks: 2 with model data (worker, reviewer — pre-snapshot for them
+      // doesn't apply since they had no snapshot), 2 without (lead/apm have
+      // a snapshot but no post-snapshot activity).
+      expect(rep.out).toContain('roost-worker-42:')
+      expect(rep.out).toContain('roost-reviewer-42:')
+      expect(rep.out).toContain('roost-lead-pm: $0.00')
+      expect(rep.out).toContain('roost-apm: $0.00')
+      expect(rep.out).toContain('(no in-window activity)')
     })
   })
 })

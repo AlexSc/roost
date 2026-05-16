@@ -1,81 +1,88 @@
 #!/usr/bin/env bun
-// token-usage — sum token usage from Claude Code session transcripts for a
-// given roost nick, and snapshot/diff totals across an issue's lifecycle.
+// token-usage — read Claude Code session transcripts and summarize per-nick
+// API spend in a format inspired by Claude Code's own `/usage` panel:
 //
-// Sessions are matched by the marker that src/irc-server.ts injects into
-// every MCP `instructions` payload:
+//   <nick>: $14.38 · 18m57s api / 44m42s wall
+//     opus-4-7:    7.4k in / 63.4k out / 17.5M cache_r / 644.6k cache_w  ($14.38)
+//     sonnet-4-6:  1.2k in /  2.4k out /  300k cache_r /   8.5k cache_w  ($0.42)
 //
-//   You are connected to IRC as nick "<nick>"
-//
-// Every roost-spawned session contains this exact line (the comment in
-// src/irc-server.ts notes the coupling). We grep all
-// ~/.claude/projects/*/*.jsonl files for it, then sum the `usage` blocks
-// emitted by assistant turns.
+// Sessions are matched by the MCP banner produced by src/mcp-banner.ts —
+// every roost-spawned session writes `You are connected to IRC as nick
+// "<nick>"` into its MCP instructions payload, which lands verbatim (with
+// JSON escaping) inside the transcript JSONL.
 //
 // Subcommands:
 //   snapshot <stateDir> <issue> <nick>...
-//     Sum cumulative usage for each nick, store under issue in
-//     <stateDir>/token-snapshots.json. Used at issue setup to mark the
-//     long-lived agents' starting position so we can diff at cleanup.
+//     Record the current timestamp under <issue> for each <nick> in
+//     <stateDir>/token-snapshots.json. Subsequent `report` calls filter
+//     transcript turns to those with `timestamp > snapshot_at`, which is
+//     how we slice per-issue spend for long-lived agents (lead-pm, APM)
+//     out of their cumulative transcript.
 //
 //   report <stateDir> <issue> <nick>...
-//     For each nick, sum current cumulative usage. If a snapshot exists for
-//     <issue>+<nick>, output the delta (cumulative - snapshot); otherwise
-//     output the cumulative as-is (workers/reviewers are ephemeral so their
-//     full lifetime == the issue). One line per nick.
+//     For each nick: walk all matching session transcripts, sum per-model
+//     token usage + API duration (from `system/turn_duration` rows), pull
+//     wall duration from the first/last in-scope turn timestamps, and
+//     price each model via src/pricing.ts. If a snapshot exists for
+//     <issue>+<nick>, only turns with `timestamp > snapshot_at` count;
+//     otherwise the full cumulative is reported (which matches per-issue
+//     for ephemeral nicks like workers/reviewers that live one issue).
 //
-// Exits non-zero if a requested nick matches zero JSONL files — silent zero
-// reports are worse than a loud failure the APM can relay.
+// Cost is an estimate — rates in src/pricing.ts may lag Anthropic price
+// changes. Unknown model IDs render `$?` and emit a stderr warning rather
+// than guessing a rate.
+//
+// Exits 1 if any requested nick matches zero session transcripts.
 
 import { readdir, readFile, mkdir, rename, unlink, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { mcpConnectionLine } from './mcp-banner.js'
+import { costFor, type UsageCounts } from './pricing.js'
 
-interface Usage {
-  input: number
-  output: number
-  cache_creation: number
-  cache_read: number
+type ModelUsage = UsageCounts
+
+interface NickReport {
+  byModel: Map<string, ModelUsage>
+  apiDurationMs: number
+  wallFirst?: string
+  wallLast?: string
   sessions: number
+  unknownModels: Set<string>
+  files: string[]
 }
 
 interface SnapshotFile {
   // issue number → nick → snapshot record
   [issue: string]: {
-    [nick: string]: Usage & { snapshot_at: string }
+    [nick: string]: { snapshot_at: string }
   }
 }
 
-const ZERO: Usage = { input: 0, output: 0, cache_creation: 0, cache_read: 0, sessions: 0 }
-
-function add(a: Usage, b: Usage): Usage {
+function emptyReport(): NickReport {
   return {
-    input: a.input + b.input,
-    output: a.output + b.output,
-    cache_creation: a.cache_creation + b.cache_creation,
-    cache_read: a.cache_read + b.cache_read,
-    sessions: a.sessions + b.sessions,
+    byModel: new Map(),
+    apiDurationMs: 0,
+    sessions: 0,
+    unknownModels: new Set(),
+    files: [],
   }
 }
 
-function sub(a: Usage, b: Usage): Usage {
-  // No clamp: cumulative usage only grows, so a negative diff means the
-  // baseline drifted (transcript file deleted, snapshot manually edited,
-  // session moved). We render the negative number and the caller is
-  // expected to stderr-warn so the drift surfaces in the post-mortem
-  // rather than getting silently zeroed.
-  return {
-    input: a.input - b.input,
-    output: a.output - b.output,
-    cache_creation: a.cache_creation - b.cache_creation,
-    cache_read: a.cache_read - b.cache_read,
-    sessions: a.sessions - b.sessions,
-  }
+function addToModel(report: NickReport, model: string, u: UsageCounts): void {
+  const cur = report.byModel.get(model) ?? { input: 0, output: 0, cache_creation: 0, cache_read: 0 }
+  cur.input += u.input
+  cur.output += u.output
+  cur.cache_creation += u.cache_creation
+  cur.cache_read += u.cache_read
+  report.byModel.set(model, cur)
 }
 
-// Project dir name encoding used by Claude Code: '/' → '-'. Lookup is by
-// scanning rather than by computing the inverse, so we don't need to care.
+function trackTs(report: NickReport, ts: string): void {
+  if (!report.wallFirst || ts < report.wallFirst) report.wallFirst = ts
+  if (!report.wallLast || ts > report.wallLast) report.wallLast = ts
+}
+
 async function listSessionFiles(projectsRoot: string): Promise<string[]> {
   let dirs: string[]
   try {
@@ -101,55 +108,88 @@ async function listSessionFiles(projectsRoot: string): Promise<string[]> {
 }
 
 // JSONL stores MCP instructions inside a JSON-encoded string, so the inner
-// quotes around the nick are backslash-escaped. JSON.stringify produces the
-// exact file-form substring (and adds outer quotes we strip off) — no need
-// to write the escape by hand here.
+// quotes around the nick are backslash-escaped. JSON.stringify gives us the
+// file-form substring (and adds outer quotes we strip off).
 function markerFor(nick: string): string {
   const encoded = JSON.stringify(mcpConnectionLine(nick))
   return encoded.slice(1, -1)
 }
 
-// Sum usage across all assistant turns in one JSONL file. Each assistant
-// message has `message.usage` with input_tokens / output_tokens /
-// cache_creation_input_tokens / cache_read_input_tokens. Resumed sessions
-// can show inflated cache_read on later turns (cache hits accumulate);
-// that's the honest report — we don't try to deduplicate cache hits across
-// turns within a session.
-function sumUsageInJson(text: string): Usage {
-  let total: Usage = { ...ZERO }
-  // Cheap line-by-line; each JSONL row is one JSON object.
+// Parsed row shape (only fields we care about — JSONL has many more).
+interface AnyRow {
+  type?: string
+  subtype?: string
+  timestamp?: string
+  durationMs?: number
+  message?: {
+    model?: string
+    usage?: {
+      input_tokens?: number
+      output_tokens?: number
+      cache_creation_input_tokens?: number
+      cache_read_input_tokens?: number
+    }
+  }
+}
+
+// Walk one JSONL file, accumulate into `report`. Only rows with
+// `timestamp > sinceTs` (when sinceTs is set) contribute. Returns whether
+// the file contributed at all (used as the session-counter signal).
+function scanFile(text: string, report: NickReport, sinceTs?: string): boolean {
+  let contributed = false
   for (const line of text.split('\n')) {
-    if (!line || !line.includes('"usage"')) continue
-    let obj: unknown
+    if (!line) continue
+    let row: AnyRow
     try {
-      obj = JSON.parse(line)
+      row = JSON.parse(line) as AnyRow
     } catch {
       continue
     }
-    const u = (obj as { message?: { usage?: Record<string, unknown> } }).message?.usage
-    if (!u) continue
-    total = add(total, {
-      input: typeof u.input_tokens === 'number' ? u.input_tokens : 0,
-      output: typeof u.output_tokens === 'number' ? u.output_tokens : 0,
-      cache_creation: typeof u.cache_creation_input_tokens === 'number' ? u.cache_creation_input_tokens : 0,
-      cache_read: typeof u.cache_read_input_tokens === 'number' ? u.cache_read_input_tokens : 0,
-      sessions: 0,
-    })
+    const ts = row.timestamp
+    if (sinceTs && (!ts || ts <= sinceTs)) continue
+
+    // Assistant turn: model + usage block.
+    if (row.type === 'assistant' && row.message?.usage && row.message.model) {
+      const u = row.message.usage
+      const tokens: UsageCounts = {
+        input: u.input_tokens ?? 0,
+        output: u.output_tokens ?? 0,
+        cache_creation: u.cache_creation_input_tokens ?? 0,
+        cache_read: u.cache_read_input_tokens ?? 0,
+      }
+      // A purely-empty usage row contributes nothing — skip so an idle
+      // session doesn't get tagged as "contributed".
+      if (tokens.input || tokens.output || tokens.cache_creation || tokens.cache_read) {
+        addToModel(report, row.message.model, tokens)
+        if (costFor(row.message.model, tokens) === null) {
+          report.unknownModels.add(row.message.model)
+        }
+        if (ts) trackTs(report, ts)
+        contributed = true
+      }
+      continue
+    }
+
+    // System turn_duration row: one per assistant API call, carries the
+    // model's wall time for that call. Use these for API-time total.
+    if (row.type === 'system' && row.subtype === 'turn_duration' && typeof row.durationMs === 'number') {
+      report.apiDurationMs += row.durationMs
+      if (ts) trackTs(report, ts)
+      contributed = true
+      continue
+    }
   }
-  return { ...total, sessions: 1 }
+  return contributed
 }
 
-export interface CollectResult {
-  nick: string
-  usage: Usage
-  files: string[]
-}
-
-export async function collectForNick(nick: string, projectsRoot: string): Promise<CollectResult> {
+export async function collectForNick(
+  nick: string,
+  projectsRoot: string,
+  sinceTs?: string,
+): Promise<NickReport> {
   const marker = markerFor(nick)
   const files = await listSessionFiles(projectsRoot)
-  let total: Usage = { ...ZERO }
-  const matched: string[] = []
+  const report = emptyReport()
   for (const f of files) {
     let text: string
     try {
@@ -157,11 +197,14 @@ export async function collectForNick(nick: string, projectsRoot: string): Promis
     } catch {
       continue
     }
+    // Cheap pre-filter: if the file never mentions this nick's MCP banner,
+    // skip the parse entirely.
     if (!text.includes(marker)) continue
-    matched.push(f)
-    total = add(total, sumUsageInJson(text))
+    report.files.push(f)
+    const contributed = scanFile(text, report, sinceTs)
+    if (contributed) report.sessions += 1
   }
-  return { nick, usage: total, files: matched }
+  return report
 }
 
 async function readSnapshots(stateDir: string): Promise<SnapshotFile> {
@@ -186,26 +229,79 @@ async function writeSnapshots(stateDir: string, data: SnapshotFile): Promise<voi
   }
 }
 
-function fmt(n: number): string {
-  // Compact: 12345 → "12.3k", 1234567 → "1.2M". Below 1000 stay raw.
+// 12345 → "12.3k", 1_234_567 → "1.2M". Tokens-style compaction.
+function fmtTokens(n: number): string {
   if (n < 1000) return String(n)
   if (n < 1_000_000) return (n / 1000).toFixed(n < 10_000 ? 1 : 0) + 'k'
   return (n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0) + 'M'
 }
 
-function formatLine(nick: string, u: Usage): string {
-  return `${nick}: in=${fmt(u.input)} out=${fmt(u.output)} cache_w=${fmt(u.cache_creation)} cache_r=${fmt(u.cache_read)} sessions=${u.sessions}`
+// /usage renders seconds granularity ("18m 57s") — match it. Sub-second
+// quantities collapse to "0s" rather than "Xms" so the column is uniform.
+function fmtDuration(ms: number): string {
+  const totalSec = Math.floor(ms / 1000)
+  const h = Math.floor(totalSec / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const s = totalSec % 60
+  if (h > 0) return `${h}h${m.toString().padStart(2, '0')}m`
+  if (m > 0) return `${m}m${s.toString().padStart(2, '0')}s`
+  return `${s}s`
+}
+
+function fmtDollars(n: number | null): string {
+  if (n === null) return '$?'
+  return `$${n.toFixed(2)}`
+}
+
+// `claude-opus-4-7` → `opus-4-7`. Cosmetic shortening to keep output tight.
+function shortModel(model: string): string {
+  return model.startsWith('claude-') ? model.slice('claude-'.length) : model
+}
+
+function formatNick(nick: string, r: NickReport): string {
+  let totalCost: number | null = 0
+  const perModel: Array<{ model: string; line: string }> = []
+  // Stable order so output is reproducible across runs.
+  const models = [...r.byModel.keys()].sort()
+  for (const model of models) {
+    const u = r.byModel.get(model)!
+    const c = costFor(model, u)
+    if (totalCost !== null) {
+      if (c === null) totalCost = null
+      else totalCost += c
+    }
+    perModel.push({
+      model,
+      line: `  ${shortModel(model)}: ${fmtTokens(u.input)} in / ${fmtTokens(u.output)} out / ${fmtTokens(u.cache_read)} cache_r / ${fmtTokens(u.cache_creation)} cache_w  (${fmtDollars(c)})`,
+    })
+  }
+  let wallMs = 0
+  if (r.wallFirst && r.wallLast) {
+    wallMs = Date.parse(r.wallLast) - Date.parse(r.wallFirst)
+    if (wallMs < 0) wallMs = 0
+  }
+  const head = `${nick}: ${fmtDollars(totalCost)} · ${fmtDuration(r.apiDurationMs)} api / ${fmtDuration(wallMs)} wall`
+  if (perModel.length === 0) {
+    return `${head}\n  (no in-window activity)`
+  }
+  return [head, ...perModel.map((p) => p.line)].join('\n')
 }
 
 function usage(stream: NodeJS.WriteStream): void {
   stream.write(`Usage: roost-token-usage <subcommand> <stateDir> <issue> <nick>...
 
 Subcommands:
-  snapshot   Record cumulative token usage for each nick under <issue>.
-             Used at issue setup so cleanup can diff against this baseline.
-  report     For each nick, print one line summarizing tokens used.
-             If a snapshot exists for <issue>+<nick>, output the delta;
-             otherwise output the cumulative total.
+  snapshot   Record a per-nick snapshot timestamp under <issue> in
+             <stateDir>/token-snapshots.json. Subsequent reports for the
+             same <issue> only count turns after this time.
+  report     For each nick, print a multi-line cost report:
+                <nick>: $X.XX · 18m57s api / 44m42s wall
+                  <model>: in/out/cache_r/cache_w  ($X.XX)
+             If a snapshot exists for <issue>+<nick>, only in-window turns
+             count; otherwise the full transcript cumulative is reported.
+
+Cost is an estimate. Unknown model IDs render '$?' and emit a stderr
+warning; update src/pricing.ts to add them.
 
 Exits 1 if any requested nick matches zero session transcripts.
 
@@ -237,12 +333,42 @@ export async function main(argv: string[]): Promise<number> {
 
   const projectsRoot = process.env.CLAUDE_PROJECTS_DIR ?? join(homedir(), '.claude', 'projects')
 
-  const results: CollectResult[] = []
+  if (subcommand === 'snapshot') {
+    // Snapshotting just records `now` per nick — no need to scan
+    // transcripts. We still verify each nick has at least one transcript
+    // so a typo doesn't silently set a baseline against nothing.
+    const missing: string[] = []
+    for (const nick of nicks) {
+      const probe = await collectForNick(nick, projectsRoot)
+      if (probe.files.length === 0) missing.push(nick)
+    }
+    if (missing.length > 0) {
+      process.stderr.write(`roost-token-usage: no session transcripts found for: ${missing.join(', ')}\n`)
+      process.stderr.write(`  scanned: ${projectsRoot}\n`)
+      process.stderr.write('  (a session must contain the MCP banner "You are connected to IRC as nick \\"<nick>\\"" — check the nick spelling, or that the agent ever booted.)\n')
+      return 1
+    }
+    const snaps = await readSnapshots(stateDir)
+    const now = new Date().toISOString()
+    snaps[issue] = snaps[issue] ?? {}
+    for (const nick of nicks) {
+      snaps[issue][nick] = { snapshot_at: now }
+      process.stdout.write(`snapshot ${issue} ${nick} at ${now}\n`)
+    }
+    await writeSnapshots(stateDir, snaps)
+    return 0
+  }
+
+  // report
+  const snaps = await readSnapshots(stateDir)
+  const baseline = snaps[issue] ?? {}
+  const reports: Array<{ nick: string; report: NickReport }> = []
   const missing: string[] = []
   for (const nick of nicks) {
-    const r = await collectForNick(nick, projectsRoot)
+    const since = baseline[nick]?.snapshot_at
+    const r = await collectForNick(nick, projectsRoot, since)
     if (r.files.length === 0) missing.push(nick)
-    results.push(r)
+    reports.push({ nick, report: r })
   }
   if (missing.length > 0) {
     process.stderr.write(`roost-token-usage: no session transcripts found for: ${missing.join(', ')}\n`)
@@ -251,48 +377,12 @@ export async function main(argv: string[]): Promise<number> {
     return 1
   }
 
-  if (subcommand === 'snapshot') {
-    const snaps = await readSnapshots(stateDir)
-    const now = new Date().toISOString()
-    snaps[issue] = snaps[issue] ?? {}
-    for (const r of results) {
-      snaps[issue][r.nick] = { ...r.usage, snapshot_at: now }
+  for (const { nick, report } of reports) {
+    if (report.unknownModels.size > 0) {
+      const list = [...report.unknownModels].sort().join(', ')
+      process.stderr.write(`roost-token-usage: warning: ${nick}: no pricing for model(s): ${list} (add to src/pricing.ts)\n`)
     }
-    await writeSnapshots(stateDir, snaps)
-    for (const r of results) {
-      process.stdout.write(`snapshot ${issue} ${formatLine(r.nick, r.usage)}\n`)
-    }
-    return 0
-  }
-
-  // report
-  const snaps = await readSnapshots(stateDir)
-  const baseline = snaps[issue] ?? {}
-  for (const r of results) {
-    const base = baseline[r.nick]
-    if (base) {
-      const baseUsage: Usage = {
-        input: base.input,
-        output: base.output,
-        cache_creation: base.cache_creation,
-        cache_read: base.cache_read,
-        sessions: base.sessions,
-      }
-      const diff = sub(r.usage, baseUsage)
-      // Cumulative usage only grows. A negative component means the
-      // baseline drifted (transcript pruned, snapshot hand-edited,
-      // session relocated). Render anyway, but warn so the lead sees it.
-      const negative = diff.input < 0 || diff.output < 0
-        || diff.cache_creation < 0 || diff.cache_read < 0 || diff.sessions < 0
-      if (negative) {
-        process.stderr.write(
-          `roost-token-usage: warning: negative diff for ${r.nick} (snapshot drift suspected — transcript pruned or snapshot edited?)\n`,
-        )
-      }
-      process.stdout.write(formatLine(r.nick, diff) + '\n')
-    } else {
-      process.stdout.write(formatLine(r.nick, r.usage) + '\n')
-    }
+    process.stdout.write(formatNick(nick, report) + '\n')
   }
   return 0
 }

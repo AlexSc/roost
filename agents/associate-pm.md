@@ -113,12 +113,12 @@ Trigger: dispatcher posts a human-submitted APPROVED review on a PR you're track
      "$(roost root)/bin/roost-token-usage" report "$(pwd)/.orchestrator" <I> \
        <project>-worker-<I> <project>-reviewer-<I> <project>-lead-pm <project>-apm
      ```
-     Post the four output lines verbatim to `#<project>-leads` under a header like:
+     The tool emits one block per nick (a `$cost · api / wall` head line plus a `<model>: …` sub-line per model used). Post the whole stdout verbatim to `#<project>-leads` under a header like:
      ```
-     token cost for #<I>:
-     (worker/reviewer lines are the full per-issue total; lead-pm/apm lines are the diff over this issue's window — not strictly attributable when issues overlap, so don't sum the four lines and call it a per-issue total)
+     token cost for #<I> (estimate — pricing table per-release, see src/pricing.ts):
+     (worker/reviewer blocks are full per-issue totals; lead-pm/apm blocks are post-snapshot in-window only — when issues overlap the windows overlap too, so don't sum the four head-line dollars and call it a per-issue total)
      ```
-     If a reviewer was never spawned for this issue (e.g. lead-authored PR), drop the reviewer nick from the args. If the tool prints a stderr warning about "negative diff" / "snapshot drift", relay it under the cost block — it means the snapshot baseline drifted (transcript pruned, snapshot edited) and the diff isn't trustworthy.
+     If a reviewer was never spawned for this issue (e.g. lead-authored PR), drop the reviewer nick from the args. If the tool stderr-warns about an unknown model (`$?` somewhere in the output), relay the warning under the cost block — that means `src/pricing.ts` needs a bump for the new model id before the dollar figure is trustworthy.
    - Terminate the worker: `roost shutdown <project>-worker-<I>`.
    - Part `#<project>-issue-<I>`.
    - Pull main in the primary worktree (HTTPS one-shot is safe: `git fetch https://github.com/<owner>/<repo>.git main && git merge --ff-only FETCH_HEAD`).
