@@ -19,7 +19,7 @@ import {
 } from './orchestrator/config.js'
 
 import { dispatchTaggedEvents, connectAndWait } from './orchestrator/dispatch.js'
-import { getPluginFactory, registeredPluginNames, type Plugin, type PluginLogger, type TaggedEvent } from './orchestrator/plugin.js'
+import { defaultPluginLogger, getPluginFactory, registeredPluginNames, type Plugin, type PluginLogger, type TaggedEvent } from './orchestrator/plugin.js'
 import './orchestrator/registry.js'
 import { resolveProjectChannel } from './orchestrator/naming.js'
 import { handleDm } from './orchestrator/dm-handler.js'
@@ -90,10 +90,6 @@ function buildPlugins(config: OrchestratorConfig, defaultChannel: string, log: P
     return factory(defaultChannel, log)
   })
 }
-
-// One-shot modes (--dispatch-irc, plain CLI) log plugin diagnostics straight
-// to stderr — they don't own a daemon.log to fan out to.
-const stderrLog: PluginLogger = (msg) => { process.stderr.write(msg) }
 
 function bootChannels(plugins: Plugin[], config: OrchestratorConfig, projectChannel: string): string[] {
   const chans = new Set<string>([projectChannel])
@@ -265,7 +261,7 @@ async function runDispatchIrc(stateDir: string, seed: boolean): Promise<void> {
   const server = ircCfg.server ?? '127.0.0.1'
   const port = ircCfg.port ?? 6667
 
-  const plugins = buildPlugins(config, projectChannel, stderrLog)
+  const plugins = buildPlugins(config, projectChannel, defaultPluginLogger)
   const channels = bootChannels(plugins, config, projectChannel)
 
   const client = new RoostIrcClientImpl({
@@ -322,7 +318,7 @@ async function main(): Promise<void> {
     // One-shot: fetch + diff, print events JSON
     const config = await loadConfig(stateDir)
     const projectChannel = resolveProjectChannel(config)
-    const plugins = buildPlugins(config, projectChannel, stderrLog)
+    const plugins = buildPlugins(config, projectChannel, defaultPluginLogger)
     const result = await runOneTick(stateDir, config, plugins, {
       seed: values['seed'] as boolean,
       dryRun: values['dry-run'] as boolean,
