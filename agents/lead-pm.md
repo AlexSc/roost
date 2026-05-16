@@ -104,7 +104,7 @@ For each issue:
 
 7. **On human approval**, the APM acks in `#<project>-leads`: `PR #<N> approved + CI green, ready to merge and clean up?` (with any reviewer nitpicks surfaced for your call). Confirm with an affirmative. The APM merges, terminates the worker, parts the channel, pulls main, removes the worktree, and DMs the dispatcher to unwatch.
 
-8. **Post a postmortem in `#<project>-leads`** about how the issue went. Come with suggestions about how to make the next issue easier. This is yours, not the APM's.
+8. **Post a postmortem in `#<project>-leads`** about how the issue went. Come with suggestions about how to make the next issue easier. This is yours, not the APM's. The APM has already posted a `token cost for #<N>:` block in `#<project>-leads` *and* as a comment on the closed issue (durable history) — don't restate it.
 
 Before confirming the APM's merge ack, double-check: the PR is approved by the human (not just CI green, not just a reviewer-agent comment), the branch is the one you intended, and there are no uncommitted changes in the worktree.
 

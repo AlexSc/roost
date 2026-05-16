@@ -56,6 +56,11 @@ On confirmation, for each issue N:
      --perm-irc --perm-target <project>-lead-pm
    ```
 4. Join `#<project>-issue-<N>` yourself.
+5. Snapshot lead-pm + APM cumulative token usage so the cleanup post-mortem can diff per-issue:
+   ```
+   "$(roost root)/bin/roost-token-usage" snapshot "$(pwd)/.orchestrator" <N> <project>-lead-pm <project>-apm
+   ```
+   Workers and reviewers are ephemeral so they need no snapshot — their full lifetime is one issue.
 
 Then post in `#<project>-leads`: `#<project>-issue-<N> ready`. The lead joins from there.
 
@@ -103,6 +108,21 @@ Trigger: dispatcher posts a human-submitted APPROVED review on a PR you're track
 1. Ack in `#<project>-leads`: `PR #<N> approved + CI green, ready to merge and clean up?` If the approval included inline nitpicks/comments, surface them: `(reviewer left some nits — merge as-is or have worker address first?)`.
 2. On confirmation:
    - Merge: `gh pr merge <N> --repo <owner>/<repo> --merge`.
+   - **Before shutting down the worker**, gather the token-cost report — the worker session has to be readable on disk while we sum its usage. Capture the output once and reuse it for both the IRC post and the issue comment:
+     ```
+     cost_block=$("$(roost root)/bin/roost-token-usage" report "$(pwd)/.orchestrator" <I> \
+       <project>-worker-<I> <project>-reviewer-<I> <project>-lead-pm <project>-apm 2>&1)
+     ```
+     The tool emits one block per nick (a `$cost · api / wall` head line plus a `<model>: …` sub-line per model used). Post `$cost_block` verbatim to `#<project>-leads` under a header like:
+     ```
+     token cost for #<I> (estimate — pricing table per-release, see src/pricing.ts):
+     (worker/reviewer blocks are full per-issue totals; lead-pm/apm blocks are post-snapshot in-window only — when issues overlap the windows overlap too, so don't sum the four head-line dollars and call it a per-issue total)
+     ```
+     Then also post the same `$cost_block` as a comment on the closed issue for durable history beyond the ephemeral `#leads` channel:
+     ```
+     gh issue comment <I> --repo <owner>/<repo> --body "$(printf 'token cost (estimate):\n\n```\n%s\n```' "$cost_block")"
+     ```
+     If a reviewer was never spawned for this issue (e.g. lead-authored PR), drop the reviewer nick from the args. If the tool stderr-warns about an unknown model (`$?` somewhere in the output), relay the warning under both posts — that means `src/pricing.ts` needs a bump for the new model id before the dollar figure is trustworthy.
    - Terminate the worker: `roost shutdown <project>-worker-<I>`.
    - Part `#<project>-issue-<I>`.
    - Pull main in the primary worktree (HTTPS one-shot is safe: `git fetch https://github.com/<owner>/<repo>.git main && git merge --ff-only FETCH_HEAD`).
@@ -114,7 +134,7 @@ Trigger: dispatcher posts a human-submitted APPROVED review on a PR you're track
 
 Some changes are small enough that the lead skips spawning a worker. You still help with setup, dispatcher CRUD, marking ready, and cleanup — you just skip the worker spawn and the reviewer-agent spawn.
 
-- **Setup variant**: lead says "set up #<N> for me, I'm taking it" or similar. Ack `set up #<N> (no worker), branch <branch>; go?`. On confirmation: create the branch + worktree (same as setup dance step 1), DM `<project>-dispatcher`: `watch <N>`, but skip the worker spawn. Join `#<project>-issue-<N>` only if the lead asks; otherwise the conversation stays in `#<project>-leads`.
+- **Setup variant**: lead says "set up #<N> for me, I'm taking it" or similar. Ack `set up #<N> (no worker), branch <branch>; go?`. On confirmation: create the branch + worktree (same as setup dance step 1), DM `<project>-dispatcher`: `watch <N>`, but skip the worker spawn. Still snapshot lead-pm + apm tokens (`roost-token-usage snapshot ... <project>-lead-pm <project>-apm`) so the cleanup diff covers the lead's own self-authored cost. Join `#<project>-issue-<N>` only if the lead asks; otherwise the conversation stays in `#<project>-leads`.
 - **Watch self-authored PR variant**: after the lead opens the PR, they mention you with the link, e.g. `$0-apm PR #<N> up, watch it and add <human>`. Ack `watch PR #<N> + add <human> as reviewer; go?` — also flag missing `Closes #<I>` hygiene if absent. On confirmation: DM `<project>-dispatcher`: `watch pr <N> #<project>-leads` (lead-authored PRs typically have no `#<project>-issue-N`, so route events to leads), then `gh pr edit <N> --repo <owner>/<repo> --add-reviewer <human-gh-login>`. Skip the reviewer-agent spawn.
 - **Ready-for-review** (re-request after CHANGES_REQUESTED) and **merge + cleanup** dances apply unchanged. For cleanup, there's no worker to terminate and the cleanup just removes the worktree, pulls main, and unwatches the PR.
 
