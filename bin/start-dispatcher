@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
 # start-dispatcher <config-dir>
 #
-# Starts the roost dispatcher daemon for the given config directory and
-# verifies it is alive after a 2-second boot window.
+# Starts the roost dispatcher daemon for the given config directory, or
+# reports an existing running daemon as ok. Idempotent — safe to call from
+# multiple agents (APM, watcher) at the same time.
 #
-# Exits 0 on success. Exits 1 on failure with a diagnostic on stderr
-# prefixed "start-dispatcher: FAIL: <reason>".
+# Lifecycle:
+#   1. Take a mkdir lock at <config-dir>/.dispatcher.start.lock. Loser polls
+#      <config-dir>/dispatcher.pid (≤2s) for the winner's PID.
+#   2. With the lock held, read dispatcher.pid. If the PID is alive AND its
+#      cmdline mentions <config-dir>, exit 0 ("already running").
+#   3. Otherwise (no file, dead PID, or recycled-PID mismatch) spawn
+#      dispatcher --daemon, wait 2s for it to write dispatcher.pid, exit 0.
 #
-# Idempotency: no existing-PID guard. If a dispatcher is already running
-# for this config-dir a second copy will start. The watcher calls this
-# once on boot; avoiding double-starts is the caller's responsibility.
+# Exits 0 on success (started or already running). Exits 1 on failure with a
+# diagnostic on stderr prefixed "start-dispatcher: FAIL: <reason>".
+#
+# PID file format (frozen — bin/start-dispatcher and the #302 shutdown
+# helper both depend on it): JSON `{"pid": N, "started_at_ms": M, "cmdline": "..."}`.
 
 set -euo pipefail
 
@@ -20,17 +28,114 @@ fi
 
 CONFIG_DIR="$1"
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Override hook for tests — defaults to the sibling `dispatcher` script.
+DISPATCHER_BIN="${ROOST_DISPATCHER_BIN:-$DIR/dispatcher}"
+PID_FILE="$CONFIG_DIR/dispatcher.pid"
+LOCK_DIR="$CONFIG_DIR/.dispatcher.start.lock"
 
-nohup "$DIR/dispatcher" --daemon --config-dir "$CONFIG_DIR" >> "$CONFIG_DIR/dispatcher-boot.log" 2>&1 &
-DISP_PID=$!
+mkdir -p "$CONFIG_DIR"
 
-# 2s catches immediate failures (missing config, env, syntax);
-# steady-state crashes are visible in daemon.log
-sleep 2
+# Pull pid out of the JSON without depending on jq. Portable across BSD sed
+# (darwin) and GNU sed (linux).
+read_pid() {
+  [ -f "$PID_FILE" ] || return 1
+  sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$PID_FILE" | head -1
+}
 
-if kill -0 "$DISP_PID" 2>/dev/null; then
-  echo "dispatcher ok (pid $DISP_PID)"
-else
-  echo "start-dispatcher: FAIL: dispatcher (pid $DISP_PID) exited within 2s — see $CONFIG_DIR/dispatcher-boot.log" >&2
-  exit 1
+# Returns 0 if the PID file points at a live dispatcher for *this* config-dir.
+# Two-stage check: PID alive (`kill -0`) AND `ps` shows the config-dir arg,
+# so a recycled PID owned by an unrelated process doesn't fool us.
+pid_file_is_live() {
+  local pid
+  pid="$(read_pid)"
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  # `ps -p PID -o args=` works on darwin and linux. Grep for our config-dir.
+  ps -p "$pid" -o args= 2>/dev/null | grep -Fq -- "$CONFIG_DIR" || return 1
+  return 0
+}
+
+report_running() {
+  local pid
+  pid="$(read_pid)"
+  echo "dispatcher already running (pid $pid)"
+}
+
+spawn_daemon() {
+  # Stale or absent PID file — clean up if present, then start fresh. The
+  # daemon will exclusively re-create the PID file inside writeDispatcherPid;
+  # if that fails it logs and exits within the 2s window.
+  rm -f "$PID_FILE"
+  nohup "$DISPATCHER_BIN" --daemon --config-dir "$CONFIG_DIR" >> "$CONFIG_DIR/dispatcher-boot.log" 2>&1 &
+  local disp_pid=$!
+
+  # 2s catches immediate failures (missing config, env, syntax, PID-file
+  # collision); steady-state crashes are visible in daemon.log.
+  sleep 2
+
+  if kill -0 "$disp_pid" 2>/dev/null; then
+    echo "dispatcher ok (pid $disp_pid)"
+    return 0
+  fi
+
+  # Spawned PID is dead. Two possibilities:
+  #  - the daemon crashed before writing PID file → genuine boot failure
+  #  - we lost a race with another start-dispatcher whose daemon won the
+  #    exclusive PID claim, and our daemon exited with "already running"
+  if pid_file_is_live; then
+    report_running
+    return 0
+  fi
+  echo "start-dispatcher: FAIL: dispatcher (pid $disp_pid) exited within 2s — see $CONFIG_DIR/dispatcher-boot.log" >&2
+  return 1
+}
+
+acquire_lock_and_run() {
+  # `mkdir` is POSIX-atomic — winner gets the lock, losers see EEXIST.
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    # shellcheck disable=SC2064
+    trap "rmdir '$LOCK_DIR' 2>/dev/null || true" EXIT
+    if pid_file_is_live; then
+      report_running
+      return 0
+    fi
+    spawn_daemon
+    return $?
+  fi
+  return 2  # lock held by someone else
+}
+
+# Wait for an in-flight start-dispatcher to finish writing the PID file.
+# Polls for up to ~5s in 0.5s slices.
+wait_for_winner() {
+  local n=10
+  while [ "$n" -gt 0 ]; do
+    sleep 0.5
+    if pid_file_is_live; then
+      report_running
+      return 0
+    fi
+    n=$((n-1))
+  done
+  return 1
+}
+
+if acquire_lock_and_run; then
+  exit 0
 fi
+
+# We didn't get the lock — wait for the winner's PID file to land.
+if wait_for_winner; then
+  exit 0
+fi
+
+# Stale lock recovery: no PID file appeared and no live dispatcher. The lock
+# holder crashed before writing. Forcibly clear the lock and retry once.
+echo "start-dispatcher: stale lock at $LOCK_DIR, recovering" >&2
+rmdir "$LOCK_DIR" 2>/dev/null || rm -rf "$LOCK_DIR"
+if acquire_lock_and_run; then
+  exit 0
+fi
+
+echo "start-dispatcher: FAIL: could not acquire lock after stale-lock recovery" >&2
+exit 1

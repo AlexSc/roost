@@ -49,3 +49,6 @@ jobs:
 
       - name: Test with coverage
         run: bun test --coverage
+
+      - name: Shell tests — start-dispatcher
+        run: bash test/start-dispatcher_test.sh

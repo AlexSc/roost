@@ -242,7 +242,7 @@ _init_config_json() {
 }
 
 _init_gitignore() {
-  printf 'state.json\nlast-tick.txt\nlast-error.txt\n'
+  printf 'state.json\nlast-tick.txt\nlast-error.txt\ndispatcher.pid\njoined-channels.txt\ndispatcher-boot.log\ndaemon.log\n.dispatcher.start.lock\n'
 }
 
 cmd_init() {

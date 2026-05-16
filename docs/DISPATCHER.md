@@ -66,7 +66,9 @@ automatically.
 ## Lifecycle
 
 The daemon is dumb on purpose — it loops, ticks, sleeps. Bring it up under
-whatever process supervisor your project already uses (tmux, systemd, launchd).
+whatever process supervisor your project already uses (tmux, systemd, launchd),
+or via the bundled `bin/start-dispatcher <config-dir>` helper, which is
+idempotent — safe to call concurrently from multiple agents.
 
 Run from your project root — `.orchestrator/` is resolved relative to `process.cwd()`.
 
@@ -80,6 +82,26 @@ State files in `.orchestrator/`:
 | `last-tick.txt` | Heartbeat timestamp. Use for healthchecks. |
 | `last-error.txt` | Last fatal tick error. Cleared on success. |
 | `daemon.log` | Per-tick log line. Tail this when debugging. |
+| `dispatcher.pid` | PID file for the running daemon (JSON `{pid, started_at_ms, cmdline}`). Written on boot via exclusive create, removed on graceful exit. |
+| `joined-channels.txt` | Channels the dispatcher believes it's joined to, one per line. Refreshed each tick — freshness is "as of last successful poll", not "right now". |
+
+### Readiness check (three signals)
+
+To verify a dispatcher is running and healthy for *this* project, an operator
+or agent can check three things, in order from cheapest to most informative:
+
+1. **PID file** — `cat .orchestrator/dispatcher.pid` and `kill -0 <pid>`. The
+   file lives inside this project's `.orchestrator/`, so it can't be confused
+   with another team's daemon. The `cmdline` field also embeds the absolute
+   config-dir path, which `bin/start-dispatcher` uses to defend against PID
+   recycle.
+2. **Heartbeat** — `cat .orchestrator/last-tick.txt`. Should be within the
+   last `irc.interval_seconds * 2`.
+3. **Joined channels** — `cat .orchestrator/joined-channels.txt`. Should
+   contain the project channel (`#<project>-leads` by default) and every
+   `#<project>-issue-N` for currently-watched items. Snapshot is "last
+   successful tick" — during a brief IRC blip it may lag reality by one
+   interval.
 
 ## Events dispatched
 

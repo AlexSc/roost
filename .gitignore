@@ -19,6 +19,9 @@ coverage/
 .orchestrator/last-error.txt
 .orchestrator/.state.*.tmp
 .orchestrator/daemon.log
+.orchestrator/joined-channels.txt
+.orchestrator/dispatcher-boot.log
+.orchestrator/.dispatcher.start.lock/
 
 # Python bytecode cache
 __pycache__/

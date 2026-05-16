@@ -1,5 +1,9 @@
-import { mkdir, rename, unlink } from 'node:fs/promises'
+import { mkdir, rename, unlink, writeFile, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+
+const execFileP = promisify(execFile)
 
 // Bumped to 3 in #116 — split GitHub plugin into Prs/Issues, each owns its
 // own state slice. Schema bumps trigger a one-time re-seed via loadState().
@@ -131,6 +135,105 @@ export async function mutateConfig(
 export async function writeHeartbeat(stateDir: string): Promise<void> {
   await mkdir(stateDir, { recursive: true })
   await Bun.write(join(stateDir, 'last-tick.txt'), new Date().toISOString() + '\n')
+}
+
+// Dispatcher PID file. JSON `{pid, started_at_ms, cmdline}`. Only `pid` is
+// contractual today — `bin/start-dispatcher` reads it for the front-door
+// liveness check. `started_at_ms` and `cmdline` are written for operator
+// inspection and as the substrate for future readers (e.g. #302 shutdown
+// helper) — extend with care once a consumer lands.
+export const DISPATCHER_PID_FILE = 'dispatcher.pid'
+
+export interface DispatcherPidInfo {
+  pid: number
+  started_at_ms: number
+  cmdline: string
+}
+
+// Cross-platform: `ps -p <pid> -o args=` returns the full command line on
+// both darwin and linux. Empty string on dead PID. We grep for a substring
+// (the config-dir arg) to defend against PID recycle.
+async function readPsArgs(pid: number): Promise<string> {
+  try {
+    const { stdout } = await execFileP('ps', ['-p', String(pid), '-o', 'args='])
+    return stdout.trim()
+  } catch {
+    return ''
+  }
+}
+
+// signal-0 distinguishes "no such process" (ESRCH) from "process exists but
+// you can't signal it" (EPERM, e.g. daemon owned by a different uid). Both
+// kill -0 failures look identical in shell, but in TS we can keep the
+// safer answer: EPERM means alive, treat as not-ours-but-still-running.
+function isAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+// Returns the live dispatcher's PID info if the PID file exists, the PID is
+// alive, AND its cmdline includes our stateDir (cheap PID-recycle defense).
+// Returns null if no file, file unreadable, PID dead, or cmdline mismatch —
+// in any of those cases the caller should clean up and proceed to start.
+export async function readDispatcherPid(stateDir: string): Promise<DispatcherPidInfo | null> {
+  const path = join(stateDir, DISPATCHER_PID_FILE)
+  let raw: string
+  try { raw = await readFile(path, 'utf8') } catch { return null }
+  let info: DispatcherPidInfo
+  try {
+    info = JSON.parse(raw) as DispatcherPidInfo
+    if (typeof info.pid !== 'number') return null
+  } catch { return null }
+  if (!isAlive(info.pid)) return null
+  const args = await readPsArgs(info.pid)
+  // cmdline must reference our stateDir to rule out PID recycle. We compare
+  // against the absolute path the daemon recorded — if the operator moved
+  // the dir, the recorded cmdline still pins identity.
+  if (!args.includes(stateDir)) return null
+  return info
+}
+
+// Write the PID file exclusively (O_EXCL via `wx`). Caller (the daemon) has
+// already verified no live dispatcher owns the stateDir. If the file exists
+// but is stale (held by no live owner), clean it up and retry once.
+//
+// Uses node:fs/promises rather than Bun.write because the latter has no
+// exclusive-create flag — `wx` is the load-bearing primitive here.
+export async function writeDispatcherPid(stateDir: string): Promise<DispatcherPidInfo> {
+  await mkdir(stateDir, { recursive: true })
+  const path = join(stateDir, DISPATCHER_PID_FILE)
+  const info: DispatcherPidInfo = {
+    pid: process.pid,
+    started_at_ms: Date.now(),
+    cmdline: [process.execPath, ...process.argv.slice(1)].join(' '),
+  }
+  const payload = JSON.stringify(info) + '\n'
+  try {
+    await writeFile(path, payload, { flag: 'wx' })
+    return info
+  } catch {
+    const existing = await readDispatcherPid(stateDir)
+    if (existing) throw new Error(`dispatcher already running (pid ${existing.pid})`)
+    // Stale file with no live owner — remove and try once more.
+    try { await unlink(path) } catch { /* race with another cleaner */ }
+    await writeFile(path, payload, { flag: 'wx' })
+    return info
+  }
+}
+
+export async function removeDispatcherPid(stateDir: string): Promise<void> {
+  try { await unlink(join(stateDir, DISPATCHER_PID_FILE)) } catch { /* ignore */ }
+}
+
+// Snapshot of channels the dispatcher believes it's joined to, written each
+// tick alongside the heartbeat. Operators read this to verify the dispatcher
+// is in the channels they expect. Freshness == last successful tick (the
+// dispatcher's view at boundary), not "right now" — see DISPATCHER.md.
+export async function writeJoinedChannels(stateDir: string, channels: string[]): Promise<void> {
+  await mkdir(stateDir, { recursive: true })
+  const body = channels.length ? channels.join('\n') + '\n' : ''
+  await Bun.write(join(stateDir, 'joined-channels.txt'), body)
 }
 
 export async function writeLastError(stateDir: string, tb: string): Promise<void> {
