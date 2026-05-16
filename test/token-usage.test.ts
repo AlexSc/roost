@@ -298,6 +298,18 @@ describe('token-usage', () => {
       expect(rep.out).toContain('1m30s api / 30m00s wall')
     })
 
+    it('per-model line shows cache_w_5m and cache_w_1h as separate columns', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 1, output: 1, cache_w_5m: 1234, cache_w_1h: 5678 },
+      ])
+      const rep = await capture(() => main(['report', stateDir, '319', 'roost-x']))
+      // Two distinct columns, both labeled — locks the format alex asked for.
+      expect(rep.out).toMatch(/1\.2k cache_w_5m \/ 5\.7k cache_w_1h/)
+      expect(rep.out).not.toContain(' cache_w ')
+    })
+
     it('unknown model renders $? at totals AND warns once on stderr', async () => {
       const d = join(projects, '-p')
       await mkdir(d, { recursive: true })

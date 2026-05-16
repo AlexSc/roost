@@ -34,7 +34,7 @@
 //
 // Exits 1 if any requested nick matches zero session transcripts.
 
-import { readdir, readFile, mkdir, rename, unlink, stat } from 'node:fs/promises'
+import { readFile, mkdir, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { mcpConnectionLine } from './mcp-banner.js'
@@ -85,25 +85,9 @@ function trackTs(report: NickReport, ts: string): void {
 }
 
 async function listSessionFiles(projectsRoot: string): Promise<string[]> {
-  let dirs: string[]
-  try {
-    dirs = await readdir(projectsRoot)
-  } catch {
-    return []
-  }
   const files: string[] = []
-  for (const d of dirs) {
-    const full = join(projectsRoot, d)
-    try {
-      const s = await stat(full)
-      if (!s.isDirectory()) continue
-      const entries = await readdir(full)
-      for (const e of entries) {
-        if (e.endsWith('.jsonl')) files.push(join(full, e))
-      }
-    } catch {
-      // unreadable dir — skip
-    }
+  for await (const f of new Bun.Glob('*/*.jsonl').scan({ cwd: projectsRoot, absolute: true })) {
+    files.push(f)
   }
   return files
 }
@@ -292,10 +276,9 @@ function formatNick(nick: string, r: NickReport): string {
       if (c === null) totalCost = null
       else totalCost += c
     }
-    const cacheW = u.cache_creation_5m + u.cache_creation_1h
     perModel.push({
       model,
-      line: `  ${shortModel(model)}: ${fmtTokens(u.input)} in / ${fmtTokens(u.output)} out / ${fmtTokens(u.cache_read)} cache_r / ${fmtTokens(cacheW)} cache_w  (${fmtDollars(c)})`,
+      line: `  ${shortModel(model)}: ${fmtTokens(u.input)} in / ${fmtTokens(u.output)} out / ${fmtTokens(u.cache_read)} cache_r / ${fmtTokens(u.cache_creation_5m)} cache_w_5m / ${fmtTokens(u.cache_creation_1h)} cache_w_1h  (${fmtDollars(c)})`,
     })
   }
   let wallMs = 0
