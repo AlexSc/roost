@@ -146,6 +146,9 @@ export interface CreateMcpOptions {
   passive?: boolean
 }
 
+const localeTs = (dt: string | Date) =>
+  (dt instanceof Date ? dt : new Date(dt)).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'long' })
+
 // Wire the MCP server and subscribe to typed IRC events. Does NOT connect to
 // any transport or start the IRC connection — the caller does both after
 // createMcpServer returns. Call order: createMcpServer → server.connect(transport)
@@ -222,7 +225,6 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
   const escAttr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#39;')
   const escBody = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const wireMention = (msg: { mention?: boolean; isDirect: boolean }) => msg.mention || msg.isDirect
-  const localeTs = (iso: string) => new Date(iso).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'long' })
 
   // Single source of truth for the message wire shape — used by the live emit
   // path (notifications/claude/channel) and by channel_history's tool response
@@ -292,7 +294,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
   })
 
   client.on('membership', (kind, nick, channel, extras) => {
-    const ts = new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'long' })
+    const ts = localeTs(new Date())
     const meta: WireMembershipMeta = {
       sender: nick,
       channel,
@@ -311,7 +313,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
   })
 
   client.on('system', (kind, content) => {
-    const ts = new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'long' })
+    const ts = localeTs(new Date())
     const text = typeof content === 'string' ? content : JSON.stringify(content)
     pushNotification(text, { event: kind, channel: '', sender: '', isDirect: 'false', ts })
     process.stderr.write(`roost-irc[${NICK}]: [${kind}] ${text}\n`)
@@ -418,7 +420,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
       text = `[roost] unread activity:\n${lines.join('\n')}\n${UNREAD_HINT}`
     }
     process.stderr.write(`roost-irc[${NICK}]: unread summary emitted (${entries.length} channels with unread)\n`)
-    return pushNotification(text, { event: 'unread-summary', channel: '', sender: '', isDirect: 'false', ts: new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'long' }) })
+    return pushNotification(text, { event: 'unread-summary', channel: '', sender: '', isDirect: 'false', ts: localeTs(new Date()) })
   }
 
   return { server: mcp, clearDedupeCache: () => client.clearDedupeCache(), emitUnreadSummary }
