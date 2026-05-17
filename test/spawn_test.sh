@@ -180,6 +180,52 @@ else
 fi
 teardown
 
+# -- Test 13: no --cache-ttl → banner shows (claude default) -----------------
+# Wrapper has no default; if the operator doesn't pass --cache-ttl, neither
+# env var is injected and claude-code's native cache behavior applies.
+
+setup
+out="$("${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1 || true)"
+if echo "$out" | grep -qF "cache-ttl: (claude default)"; then
+  ok "no --cache-ttl → banner shows (claude default)"
+else
+  fail "no --cache-ttl → banner shows (claude default)" "out=$out"
+fi
+teardown
+
+# -- Test 14: explicit --cache-ttl 5m echoed verbatim ------------------------
+
+setup
+out="$("${ROOST_BIN}" spawn testnick --cache-ttl 5m --cwd "$TDIR" 2>&1 || true)"
+if echo "$out" | grep -q "cache-ttl: 5m"; then
+  ok "explicit --cache-ttl 5m echoed verbatim"
+else
+  fail "explicit --cache-ttl 5m echoed verbatim" "out=$out"
+fi
+teardown
+
+# -- Test 15: explicit --cache-ttl 1h echoed verbatim ------------------------
+
+setup
+out="$("${ROOST_BIN}" spawn testnick --cache-ttl 1h --cwd "$TDIR" 2>&1 || true)"
+if echo "$out" | grep -q "cache-ttl: 1h"; then
+  ok "explicit --cache-ttl 1h echoed verbatim"
+else
+  fail "explicit --cache-ttl 1h echoed verbatim" "out=$out"
+fi
+teardown
+
+# -- Test 16: invalid --cache-ttl is rejected --------------------------------
+
+setup
+err="$("${ROOST_BIN}" spawn testnick --cache-ttl 30m --cwd "$TDIR" 2>&1)"; exit_code=$?
+if [ "$exit_code" -ne 0 ] && echo "$err" | grep -q "must be 5m or 1h"; then
+  ok "invalid --cache-ttl rejected with clear message"
+else
+  fail "invalid --cache-ttl rejected with clear message" "exit=$exit_code err=$err"
+fi
+teardown
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

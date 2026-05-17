@@ -503,7 +503,65 @@ follow-on docs):
   bounded length; pinned-message convention; how an updating
   ProductOps signals workers to re-read.
 
-## 9. Operational rules / coordination protocol
+## 9. Cache TTL knob for spawned agents (#369)
+
+Wave-5 cost reports showed short-lived reviewers/workers writing
+`cache_w_1h` despite running 2–3min wall clock — the 1h tier costs 2x
+the 5m rate, so we were paying premium for cache lifetime we never
+used. Per-agent it's $0.10–$1.50; per milestone it adds up.
+
+**What claude code actually exposes:** no CLI flag, no settings.json
+entry — only environment variables, read at session startup:
+
+- `ENABLE_PROMPT_CACHING_1H=1` — opts into 1h TTL (API key, Bedrock,
+  Vertex, Foundry). v2.1.108+. Mutually exclusive with the 5m forcer.
+- `FORCE_PROMPT_CACHING_5M=1` — pins the session to 5m even when the
+  default would otherwise drift up.
+- `DISABLE_PROMPT_CACHING=1` (and per-model `*_HAIKU`/`_OPUS`/`_SONNET`
+  variants) — disables caching entirely. Out of scope here, but useful
+  for cache-debug sessions; would belong behind a separate knob.
+
+Refs: anthropics/claude-code issues #48082 (TTL env-var docs gap),
+#16442 (feature request for a unified `CLAUDE_CODE_CACHE_TTL`, still
+open), #48090 (DISABLE_* startup warning); Anthropic prompt-caching
+docs at `platform.claude.com/docs/en/build-with-claude/prompt-caching`.
+
+**What we shipped:** `--cache-ttl <5m|1h>` on `roost spawn`. The
+wrapper validates the value and translates to the matching env var via
+the existing `tmux -e` plumbing. No Claude code changes, no per-prompt
+`cache_control` markers, no system-prompt-size workarounds.
+
+**No wrapper default — caller picks per session.** The first cut
+defaulted by spawn path (`--agent` → 1h, `--model` → 5m), which kept
+APM templates clean but mis-classified the load-bearing case: workers
+are spawned via `--model` but routinely sit through reviewer + human
+review cycles that exceed 5 minutes. Pinning them at 5m means they
+pay a fresh cache-write on each wake — exactly the cost we wanted to
+avoid. The path heuristic also broke on the watcher (long-lived, but
+on the `--model` fork). Rather than carry edge cases per role, we
+dropped the default entirely. Heuristic that goes in the docs:
+
+- **One-shot agents → `--cache-ttl 5m`.** Reviewers (read PR → post
+  findings → shut down) and single-prompt workers fit here. The 5m
+  write is half the cost of 1h and the session won't outlive it
+  anyway.
+- **Multi-turn agents → `--cache-ttl 1h`.** Workers awaiting human
+  review, lead-pm, APM, the watcher, the dispatcher. These idle
+  through review-loop and message-relay timescales that blow past 5m.
+- **Unset is legal.** No env var is injected and claude-code's native
+  cache behavior applies. Useful for ad-hoc/sandbox spawns where the
+  cost shape isn't worth thinking about.
+
+Refs at the spawn call sites: `agents/lead-pm.md` (APM spawn pins 1h),
+`agents/associate-pm.md` (worker spawn template pins 1h, reviewer
+template pins 5m), `start.md` (watcher spawn pins 1h, worker
+instructions pin 1h, reviewer instructions pin 5m).
+
+Acceptance: the next wave's cost reports should show reviewers and
+one-shot writes in the 5m bucket; workers, lead-pm, APM, and the
+watcher in the 1h bucket.
+
+## 10. Operational rules / coordination protocol
 
 Behavioral rules that emerged during the design session — these go
 in `Project_Execution v2` (renamed from `Project_Execution.md` once
@@ -528,7 +586,7 @@ the migration runs) as agent-facing guidance, not in roost itself.
   arises):** ack-before-action, first-responder claim, heartbeat
   cadence. claude2 raised these as in-scope for a follow-on doc.
 
-## 10. Test plan and status
+## 11. Test plan and status
 
 Original ordered plan (1 → 2 → 3 → 4) with Test 5 rolled into Test 1's
 long-run side-effect.
@@ -544,7 +602,7 @@ long-run side-effect.
 | post-4 | Live use in #roost (productops + simplify-rewards + claude2 + alex) | ✓ done | Surfaced timestamp-collision, premature-buffer-flush, and trailing-whitespace bugs; all three fixed live in-session. Same payload that previously arrived as 4 envelopes (chunkCount 3+3+3+2) verified arriving as 1 envelope (chunkCount=11) post-fix. |
 | post-4 (CEO ask) | `channel_who` correctness + JOIN/LEAVE/KICK/NICK push | ✓ done | Smoke test: `who-test-A` MCP + `who-test-B` via nc — userlist for #who-test populated correctly post-JOIN, JOIN notification fired with `event="join"` seq=1, PART notification fired with `event="leave" reason="parted: bye"` seq=2. |
 
-## 11. Open questions (beyond the load-bearing assumptions)
+## 12. Open questions (beyond the load-bearing assumptions)
 
 - IRC server choice: ngircd default. solanum if we want SASL/services
   *and* IRCv3 message-tags (Finding E); bouncer integration question
@@ -583,7 +641,7 @@ long-run side-effect.
   IRC-MCP itself — but the boundary is worth pinning down before
   building either side.
 
-## 12. References
+## 13. References
 
 - Anthropic channel docs: `code.claude.com/docs/en/channels.md`,
   `code.claude.com/docs/en/channels-reference.md`
