@@ -352,6 +352,90 @@ prefer the shared predicate / assertion helpers in `test/helpers/`
 over hand-rolled inline filters, so a wire-shape change is a one-file
 edit.
 
+### Finding I — `tools_changed` per-session miss: investigated, no clean fix, eating the cost (#366)
+
+Production v0.5.12 sessions paid a `tools_changed` cache miss of 21–28k
+tokens (~$0.12–0.26/session) on every worker and most reviewers.
+Investigated 2026-05-17 across PR #371 and a follow-up doc-only PR.
+Net: no available CLI/env knob selectively preloads the built-in
+deferred tools we care about (`TaskCreate`, `WebFetch`) without
+side effects worse than the miss itself. **We eat the miss.**
+
+**Two triggers identified (binary spelunk of `claude` 2.1.143):**
+
+1. **Workers, consistent.** Global `CLAUDE.md` says "use TaskCreate
+   to plan and track work." The harness lists `TaskCreate` as
+   *deferred* (`shouldDefer:true`) in the system prompt. Workers call
+   `ToolSearch(select:TaskCreate)` in turn 2, which fetches the schema
+   and injects a `deferred_tools_delta` — the next API call has a new
+   tool fingerprint → miss. Persists ~2–4 turns until the cache
+   re-establishes.
+2. **Reviewers, variable.** User-level `mcp__claude_ai_*` tools
+   (Gmail, Calendar, Drive, Linear — 41 tools) connect asynchronously
+   after session start; whenever they land between turns they change
+   the fingerprint and bust the cache. Timing-dependent.
+
+**Mechanism (key binary symbols):** `isDeferredTool` at line ~333328
+of `strings(2.1.143)`. A tool is non-deferred iff `alwaysLoad===true`
+**or** its name matches a hardcoded carve-out (the `ToolSearch` tool
+itself, the `Task` tool when fork-subagent is enabled, and three other
+named built-ins). MCP tools default to deferred. Everything else
+defers iff `shouldDefer:true` is set on the tool definition.
+
+`getToolSearchMode` reads `ENABLE_TOOL_SEARCH`:
+`true`/missing/`auto` → tool-search ON (deferred tools stay deferred);
+`false`/`auto:100` → tool-search OFF (all deferred tools eager-load).
+**It is binary**, with no per-tool selector. `auto:N` is a context-
+percentage threshold, not a tool list. There is no `--preload-tools`
+or settings entry that promotes a specific built-in to `alwaysLoad`.
+
+**Why we don't ship `ENABLE_TOOL_SEARCH=false`:** the env var flips
+tool-search OFF globally, so *every* deferred tool (built-ins AND the
+41 user-level MCPs) is now in the initial fingerprint. Two regressions:
+
+- Roost-irc's late-connect rebuild grew from ~9k → ~44k tokens
+  (bigger initial cache → bigger delta when roost-irc lands).
+  `alwaysLoad:true` on `roost-irc` (Finding A mitigation) reduces but
+  doesn't eliminate this — the wider fingerprint still bills.
+- User-level MCPs that connect mid-session caused a one-shot
+  ~107k-token rebuild on the measurement run, vs. 0 under
+  tool-search ON where those tools stay deferred.
+
+Measured side-by-side on issue #369 (two workers, plan-only): control
+session ~9k cache miss; treatment session ~152k total. The fix made
+things worse on operator hardware that has user-level MCPs, and
+marginally worse even on a clean install (the larger initial cache
+means roost-irc's late connect costs more).
+
+**What we won't do, and why:**
+
+- **Prompt-level ban on `TaskCreate`/`ToolSearch` in worker/reviewer.**
+  Initially shipped on #371 commit `3fec0e3`; alex rejected on review:
+  "Do not attempt to ban agents from using tools. _Help_, don't hinder."
+  Workers reaching for `TaskCreate` is the tool doing its job; the
+  cache-miss tax is on the harness, not the agent. Reverted.
+- **`ENABLE_TOOL_SEARCH=false` in `bin/roost spawn`.** Net regression
+  per the measurements above. Reverted.
+- **`--strict-mcp-config`.** Would suppress user-level MCPs entirely,
+  closing Trigger 2 — but that's "block the operator's MCPs from
+  spawned roost agents," not "preload built-in deferred tools." Heavy-
+  handed and out of scope for the cost we're trying to save.
+
+**Cost we accept:** ~$0.12–0.26/worker session and similar for
+reviewers when Trigger 2 fires. At observed wave volume (5 issues ×
+worker+reviewer × ~16 waves/month) the per-session miss is ~$10–14/
+month. Tolerable until either Anthropic ships per-tool eager-load
+configuration or roost's wave volume grows enough to revisit.
+
+**What still helps:** Finding A's `alwaysLoad:true` on `roost-irc`
+(in `.mcp.json` / `mcp-config-irc.json`) eliminates the worst case of
+the roost-irc deferred-promotion miss. Keep that. Without it, every
+worker would pay the miss again on its first `channel_message`.
+
+PR #371 (abandoned approach, closed unmerged) is the load-bearing
+artifact for this decision. Re-read its diff and comment thread before
+re-opening this investigation.
+
 ## 8. Routing-layer architecture (post-Test-4 design session)
 
 Worked out 2026-04-28 in a #roost session with productops-customer
