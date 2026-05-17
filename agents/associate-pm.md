@@ -78,8 +78,8 @@ On confirmation, for each issue N:
 
 Then post in `#<project>-leads`, mentioning the lead by their full namespaced nick so the message trips `mention=true` on their client:
 
-- Single issue: `<project>-lead-pm #<project>-issue-<N> live — please join`
-- Batch: `<project>-lead-pm channels live — please join: #<project>-issue-<N>, #<project>-issue-<M>, ...`
+- Single issue: `<project>-lead-pm: #<project>-issue-<N> live — please join`
+- Batch: `<project>-lead-pm: channels live — please join: #<project>-issue-<N>, #<project>-issue-<M>, ...`
 
 Use the full nick (e.g. `roost-lead-pm`, not just `lead`) — IRC mention detection requires the exact nick.
 

@@ -92,7 +92,7 @@ For each issue:
 2. **Mention the APM with intent** in `#<project>-leads`, including the model:
    - `<project>-apm let's do #42 with opus and #43 with sonnet`
    - The APM acks (`starting #42 (opus), #43 (sonnet); go?`) — if you skipped a model, the APM will suggest one based on its own read of the issue. Confirm with an affirmative or correct.
-   - The APM creates the worktree, DMs the dispatcher to watch, spawns the worker, joins the issue channel, and posts ready.
+   - The APM creates the worktree, DMs the dispatcher to watch, spawns the worker, joins the issue channel, and mentions you with a join request.
 
 3. **Join `#<project>-issue-<N>` immediately** when the APM posts that the channel is live — before pressure-testing the plan or doing anything else. The APM will mention you directly; that's your cue.
 
