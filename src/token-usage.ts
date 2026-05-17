@@ -117,6 +117,13 @@ function addToMissMap(into: Map<string, Map<string, MissCounts>>, from: Map<stri
   }
 }
 
+function mergeCompactions(into: CompactionStats, from: CompactionStats): void {
+  into.count += from.count
+  into.preTokens += from.preTokens
+  into.postTokens += from.postTokens
+  into.durationMs += from.durationMs
+}
+
 function trackTs(report: NickReport, ts: string): void {
   if (!report.wallFirst || ts < report.wallFirst) report.wallFirst = ts
   if (!report.wallLast || ts > report.wallLast) report.wallLast = ts
@@ -226,23 +233,11 @@ interface ScanResult {
 // — older or future shapes that inline sidechain rows in the parent are
 // filtered here to avoid double-counting.
 //
-// Known gaps vs Claude Code's `/usage` panel (#334): /usage is fed by a
-// live in-process tracker, this scanner is fed by the post-hoc JSONL.
-// Categories the JSONL doesn't expose (and we therefore don't count):
-//   - Compaction API calls. compact_boundary carries preTokens/postTokens
-//     + durationMs but no input/output/cache_r/cache_w breakdown; we
-//     surface the aggregate so the gap is visible but cannot price it.
-//   - Mid-stream / retried API calls — if the server responds and the
-//     client retries (rate-limit, transient error), the abandoned call's
-//     usage is billed but never reaches the JSONL.
-//   - Per-iteration token deltas that aren't reflected in the outer usage
-//     block. The `usage.iterations[]` array sums to the outer block in
-//     current shapes, so this is a forward-compat hedge, not a today-gap.
-//   - Server-side aggregates (e.g. ephemeral cached-input that expired and
-//     was re-counted as input on resend) that /usage may pull from a
-//     billing endpoint, not the wire usage block.
-// Dollar impact in practice is ~3% on a $7 session (input + cache_r) —
-// definitional, not a correctness issue. See AvesAlight/roost#334.
+// Compaction handling: a `system/compact_boundary` row marks an auto-
+// compaction. It carries preTokens/postTokens + durationMs but no per-
+// field usage block — the summary API call itself isn't logged. We
+// aggregate the markers so the gap is visible, without pricing it.
+// See AvesAlight/roost#334 for the broader /usage-panel gap taxonomy.
 function scanFile(text: string, seenRequestIds: Set<string>, seenTurnUuids: Set<string>, seenCompactUuids: Set<string>, sinceTs?: string, countSidechain = false): ScanResult {
   const byModel = new Map<string, UsageCounts>()
   const missByModel = new Map<string, Map<string, MissCounts>>()
@@ -410,10 +405,7 @@ export async function collectForNick(
     if (result.wallFirst) trackTs(report, result.wallFirst)
     if (result.wallLast) trackTs(report, result.wallLast)
     for (const m of result.unknownModels) report.unknownModels.add(m)
-    report.compactions.count += result.compactions.count
-    report.compactions.preTokens += result.compactions.preTokens
-    report.compactions.postTokens += result.compactions.postTokens
-    report.compactions.durationMs += result.compactions.durationMs
+    mergeCompactions(report.compactions, result.compactions)
 
     // Subagent transcripts: same nick, billed by directory locality.
     const subagentFiles = await listSubagentFiles(f)
@@ -435,10 +427,7 @@ export async function collectForNick(
       if (subResult.wallFirst) trackTs(report, subResult.wallFirst)
       if (subResult.wallLast) trackTs(report, subResult.wallLast)
       for (const m of subResult.unknownModels) report.unknownModels.add(m)
-      report.compactions.count += subResult.compactions.count
-      report.compactions.preTokens += subResult.compactions.preTokens
-      report.compactions.postTokens += subResult.compactions.postTokens
-      report.compactions.durationMs += subResult.compactions.durationMs
+      mergeCompactions(report.compactions, subResult.compactions)
     }
   }
   return report
