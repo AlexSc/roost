@@ -32,6 +32,50 @@ interface Turn {
   sidechain?: boolean
 }
 
+// Render one Turn into the (up to two) JSONL rows Claude Code emits:
+// an `assistant` row carrying the usage block, and — when apiDurationMs
+// is set — a `system/turn_duration` companion. `forceSidechain` stamps
+// `isSidechain:true` on both rows regardless of `turn.sidechain` (used
+// by the subagent-file builder where every row is a sidechain row).
+function turnRows(t: Turn, forceSidechain = false): string[] {
+  const usage: Record<string, unknown> = {
+    input_tokens: t.input ?? 0,
+    output_tokens: t.output ?? 0,
+    cache_read_input_tokens: t.cache_r ?? 0,
+  }
+  if (typeof t.cache_w_5m === 'number' || typeof t.cache_w_1h === 'number') {
+    usage.cache_creation_input_tokens = (t.cache_w_5m ?? 0) + (t.cache_w_1h ?? 0)
+    usage.cache_creation = {
+      ephemeral_5m_input_tokens: t.cache_w_5m ?? 0,
+      ephemeral_1h_input_tokens: t.cache_w_1h ?? 0,
+    }
+  } else {
+    // Aggregate-only path: legacy / fallback shape.
+    usage.cache_creation_input_tokens = t.cache_w ?? 0
+  }
+  const sidechain = forceSidechain || t.sidechain === true
+  const assist: Record<string, unknown> = {
+    type: 'assistant',
+    timestamp: t.ts,
+    message: { role: 'assistant', model: t.model, usage },
+  }
+  if (t.requestId) assist.requestId = t.requestId
+  if (sidechain) assist.isSidechain = true
+  const out = [JSON.stringify(assist)]
+  if (typeof t.apiDurationMs === 'number') {
+    const dur: Record<string, unknown> = {
+      type: 'system',
+      subtype: 'turn_duration',
+      durationMs: t.apiDurationMs,
+      timestamp: t.ts,
+    }
+    if (t.turnUuid) dur.uuid = t.turnUuid
+    if (sidechain) dur.isSidechain = true
+    out.push(JSON.stringify(dur))
+  }
+  return out
+}
+
 // Build a session JSONL containing the MCP banner for `nick` followed by the
 // given assistant turns (and an optional per-turn `system/turn_duration`
 // row using the same ts). Returns the written file path.
@@ -50,42 +94,7 @@ async function writeSessionFile(
       content: [{ type: 'text', text: `roost IRC MCP. ${mcpConnectionLine(nick)}. (test stub)` }],
     },
   }))
-  for (const t of turns) {
-    const usage: Record<string, unknown> = {
-      input_tokens: t.input ?? 0,
-      output_tokens: t.output ?? 0,
-      cache_read_input_tokens: t.cache_r ?? 0,
-    }
-    if (typeof t.cache_w_5m === 'number' || typeof t.cache_w_1h === 'number') {
-      usage.cache_creation_input_tokens = (t.cache_w_5m ?? 0) + (t.cache_w_1h ?? 0)
-      usage.cache_creation = {
-        ephemeral_5m_input_tokens: t.cache_w_5m ?? 0,
-        ephemeral_1h_input_tokens: t.cache_w_1h ?? 0,
-      }
-    } else {
-      // Aggregate-only path: legacy / fallback shape.
-      usage.cache_creation_input_tokens = t.cache_w ?? 0
-    }
-    const assist: Record<string, unknown> = {
-      type: 'assistant',
-      timestamp: t.ts,
-      message: { role: 'assistant', model: t.model, usage },
-    }
-    if (t.requestId) assist.requestId = t.requestId
-    if (t.sidechain) assist.isSidechain = true
-    lines.push(JSON.stringify(assist))
-    if (typeof t.apiDurationMs === 'number') {
-      const dur: Record<string, unknown> = {
-        type: 'system',
-        subtype: 'turn_duration',
-        durationMs: t.apiDurationMs,
-        timestamp: t.ts,
-      }
-      if (t.turnUuid) dur.uuid = t.turnUuid
-      if (t.sidechain) dur.isSidechain = true
-      lines.push(JSON.stringify(dur))
-    }
-  }
+  for (const t of turns) lines.push(...turnRows(t))
   const path = join(dir, filename)
   await writeFile(path, lines.join('\n') + '\n')
   return path
@@ -103,41 +112,7 @@ async function writeSubagentFile(
   const dir = join(parentFile.slice(0, -'.jsonl'.length), 'subagents')
   await mkdir(dir, { recursive: true })
   const lines: string[] = []
-  for (const t of turns) {
-    const usage: Record<string, unknown> = {
-      input_tokens: t.input ?? 0,
-      output_tokens: t.output ?? 0,
-      cache_read_input_tokens: t.cache_r ?? 0,
-    }
-    if (typeof t.cache_w_5m === 'number' || typeof t.cache_w_1h === 'number') {
-      usage.cache_creation_input_tokens = (t.cache_w_5m ?? 0) + (t.cache_w_1h ?? 0)
-      usage.cache_creation = {
-        ephemeral_5m_input_tokens: t.cache_w_5m ?? 0,
-        ephemeral_1h_input_tokens: t.cache_w_1h ?? 0,
-      }
-    } else {
-      usage.cache_creation_input_tokens = t.cache_w ?? 0
-    }
-    const assist: Record<string, unknown> = {
-      type: 'assistant',
-      timestamp: t.ts,
-      isSidechain: true,
-      message: { role: 'assistant', model: t.model, usage },
-    }
-    if (t.requestId) assist.requestId = t.requestId
-    lines.push(JSON.stringify(assist))
-    if (typeof t.apiDurationMs === 'number') {
-      const dur: Record<string, unknown> = {
-        type: 'system',
-        subtype: 'turn_duration',
-        durationMs: t.apiDurationMs,
-        timestamp: t.ts,
-        isSidechain: true,
-      }
-      if (t.turnUuid) dur.uuid = t.turnUuid
-      lines.push(JSON.stringify(dur))
-    }
-  }
+  for (const t of turns) lines.push(...turnRows(t, true))
   const path = join(dir, `agent-${agentId}.jsonl`)
   await writeFile(path, lines.join('\n') + '\n')
   return path

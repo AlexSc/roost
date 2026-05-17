@@ -273,6 +273,9 @@ export async function collectForNick(
       }
       report.files.push(sub)
       const subContributed = scanFile(subText, report, seenRequestIds, seenTurnUuids, sinceTs, true)
+      // Each contributing subagent file counts as a separate session — a
+      // worker that fires off three Task subagents shows `sessions: 4`
+      // (parent + 3), which matches the "files scanned" mental model.
       if (subContributed) report.sessions += 1
     }
   }
