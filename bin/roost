@@ -725,6 +725,10 @@ cmd_spawn() {
   # the inner command stays a clean single-quoted string.
   local tmux_env=(-e "ROOST_IRC_NICK=${nick}" -e "ROOST_IRC_CHANNELS=${channels}" -e "ROOST_DATA_DIR=${ROOST_DATA_DIR}" -e "ROOST_DIR=${ROOST_DIR}")
   tmux_env+=(-e "ROOST_IRC_SERVER=${IRC_HOST}")
+  # Disable tool-search mode so all deferred built-in tool schemas (TaskCreate,
+  # WebFetch, etc.) are included eagerly from turn 1 — no ToolSearch call needed,
+  # no tools_changed cache miss.
+  tmux_env+=(-e "ENABLE_TOOL_SEARCH=false")
   if [ -n "${perm_sock}" ]; then
     tmux_env+=(-e "ROOST_PERM_SOCK=${perm_sock}" -e "ROOST_PERM_HOST=${IRC_HOST}" -e "ROOST_PERM_PORT=${IRC_PORT}")
     [ -n "${perm_target}" ] && tmux_env+=(-e "ROOST_PERM_TARGET=${perm_target}")

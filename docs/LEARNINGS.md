@@ -360,9 +360,11 @@ Production data from v0.5.12 sessions shows every worker and reviewer session pa
 
 **Trigger 2 (reviewers — variable):** The reviewer-362 session showed a 24857-token miss that was NOT caused by ToolSearch. The `mcp__claude_ai_*` tools (Gmail, Google Calendar, Google Drive, Linear — 41 tools total) connected asynchronously after the session's first API call. When a new context window started, those tools were in the fingerprint but the cache was established without them → miss. This trigger is timing-dependent and not reproducible on demand.
 
-**Why "call ToolSearch in turn 1" doesn't fix it:** Moving ToolSearch to the first assistant turn still causes a miss at turn 2 (the tool set changes between turns 1 and 2). Total miss cost per session is unchanged. The only effective mitigation is to not call ToolSearch for built-in deferred tools.
+**Why "call ToolSearch in turn 1" doesn't fix it:** Moving ToolSearch to the first assistant turn still causes a miss at turn 2 (the tool set changes between turns 1 and 2). Total miss cost per session is unchanged.
 
-**Fix applied:** `prompts/worker.md` and `prompts/reviewer.md` now include an explicit hard rule: do not call TaskCreate/ToolSearch. These roles track state via IRC, not the task list. Note that Finding A's `alwaysLoad: true` fix covers *MCP* tools (roost-irc) but has no effect on built-in deferred tools (TaskCreate, WebFetch, etc.) — those require avoiding ToolSearch entirely.
+**Mechanism:** `ENABLE_TOOL_SEARCH=false` env var sets `getToolSearchMode()` → "standard" (vs. default "tst"). In standard mode, `isToolSearchEnabled()` returns false, and the harness's token-analysis path eagerly includes all deferred built-in tool schemas (TaskCreate, WebFetch, etc.) in the first API call with full schemas — no ToolSearch call needed, no `deferred_tools_delta` injection, no fingerprint change, no cache miss.
+
+**Fix applied:** `bin/roost spawn` now passes `ENABLE_TOOL_SEARCH=false` in the tmux environment for all spawned agents. This disables tool-search mode so all deferred built-in schemas are included eagerly from turn 1. No prompt changes needed — the env var eliminates the need for ToolSearch, so agents never call it. Note that Finding A's `alwaysLoad: true` fix covers *MCP* tools (roost-irc separately); this env var fix covers built-in deferred tools (TaskCreate, WebFetch, etc.).
 
 **Trigger 2 open:** No fix applied. Roost doesn't control which MCP servers the user's Claude Code instance loads at session start. Followup candidate: document a per-reviewer MCP config that suppresses user-level MCPs (Gmail, etc.) to reduce the number of tools that can arrive asynchronously and change the fingerprint.
 
