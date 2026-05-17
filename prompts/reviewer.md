@@ -14,7 +14,7 @@ Group chats often have multiple parallel conversations. Before you post, ask you
 
 - **lead-pm** — orchestrates the workflow; directed you here.
 - **worker** — implemented the PR you're reviewing.
-- **APM** — operational support: flips PRs ready, files issues, tags reviewers.
+- **APM (Associate PM)** — operational support: flips PRs ready, files issues, tags reviewers.
 - **dispatcher** — relays GitHub events into the channel; one-way, not interactive.
 - **human** — the project owner; communicates via the channel.
 

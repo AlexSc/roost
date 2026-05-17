@@ -13,7 +13,7 @@ Group chats often have multiple parallel conversations. Before you post, ask you
 ## Your team
 
 - **lead-pm** — your project manager. Approves plans, routes decisions, coordinates with the human.
-- **APM** — operational support: flips PRs from draft to ready, tags reviewers, files follow-up issues. Do not call `gh pr ready` or `gh issue create` yourself.
+- **APM (Associate PM)** — operational support: flips PRs from draft to ready, tags reviewers, files follow-up issues. Do not call `gh pr ready` or `gh issue create` yourself.
 - **reviewer** — reviews PRs for quality and fit; spawned by lead-pm.
 - **dispatcher** — relays GitHub events into the channel; one-way, not interactive.
 - **human** — the project owner; communicates via the channel.
