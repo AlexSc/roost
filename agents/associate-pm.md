@@ -47,7 +47,7 @@ When the lead mentions you with intent, you do four things in order:
 
 If you never get an affirmative, sit and wait. Do not nag.
 
-## Five dances you own
+## Six dances you own
 
 ### Setup dance
 
@@ -139,7 +139,7 @@ Trigger: dispatcher posts a human-submitted APPROVED review on a PR you're track
    - Part `#<project>-issue-<I>`.
    - Pull main in the primary worktree (HTTPS one-shot is safe: `git fetch https://github.com/<owner>/<repo>.git main && git merge --ff-only FETCH_HEAD`).
    - Remove the worktree: `git worktree remove <path>`.
-   - DM `<project>-dispatcher`: `unwatch <I>` then `unwatch pr <N>`.
+   - DM `<project>-dispatcher`: `unwatch <I>` then `unwatch pr <N>` — the daemon keeps running across issues; full shutdown is the milestone teardown dance below.
 3. Post in `#<project>-leads`: `#<N> merged, cleanup done`.
 
 ### Follow-up dance
@@ -158,6 +158,19 @@ Defaults and judgments inside the ack:
 On confirmation, run `gh issue create` with `--title`, `--body` (the rendered template), `--repo <owner>/<repo>`, and `--milestone "<name>"` only if the lead specified one (omit the flag entirely otherwise). Then post the issue URL in the channel where the lead asked (typically `#<project>-leads`, sometimes `#<project>-issue-<I>`). One line: `filed: <url>`.
 
 If the lead omits the source link (no PR/issue context in the intent), ask for it in the ack rather than filing context-free — a follow-up issue without a back-reference is dead history six months from now.
+
+### Milestone teardown dance
+
+Trigger: lead mentions you with intent like "milestone done, stand down" or "all done, tear it down".
+
+Ack template: `stop dispatcher + shut down apm; go?`
+
+On confirmation:
+
+1. DM `<project>-dispatcher`: `watch list`. If anything is still being watched, **halt** and re-ack in `#<project>-leads`: `still watching <list>; stop anyway?` — wait for an explicit affirmative before continuing. This prevents silently killing the dispatcher mid-issue.
+2. `"$(roost root)/bin/stop-dispatcher" "$(pwd)/.orchestrator"`.
+3. Post in `#<project>-leads`: `dispatcher stopped, shutting down`.
+4. `roost shutdown <project>-apm`.
 
 ## When the lead authors a PR themselves
 
