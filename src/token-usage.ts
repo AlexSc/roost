@@ -41,14 +41,17 @@ import { mcpConnectionLine } from './mcp-banner.js'
 import { costFor, missCostFor, type UsageCounts } from './pricing.js'
 
 type ModelUsage = UsageCounts
+// Per-reason miss token counts split by cache-creation TTL tier. The tier
+// is read from the creation block on the same JSONL row that reported the miss.
+type MissCounts = { tokens5m: number; tokens1h: number }
 
 interface NickReport {
   byModel: Map<string, ModelUsage>
   // Direct cache miss data from message.diagnostics.cache_miss_reason.
   // Outer key: model ID. Inner key: reason type (tools_changed, system_changed,
   // messages_changed, previous_message_not_found, unavailable).
-  // Value: total cache_missed_input_tokens across all calls with that reason.
-  missByModel: Map<string, Map<string, number>>
+  // Value: miss token counts split by creation tier (from the same row's cache_creation block).
+  missByModel: Map<string, Map<string, MissCounts>>
   apiDurationMs: number
   wallFirst?: string
   wallLast?: string
@@ -89,15 +92,18 @@ function addToUsageMap(into: Map<string, UsageCounts>, model: string, u: UsageCo
   into.set(model, cur)
 }
 
-function addToMissMap(into: Map<string, Map<string, number>>, from: Map<string, Map<string, number>>): void {
+function addToMissMap(into: Map<string, Map<string, MissCounts>>, from: Map<string, Map<string, MissCounts>>): void {
   for (const [model, reasons] of from) {
     let intoReasons = into.get(model)
     if (!intoReasons) {
-      intoReasons = new Map<string, number>()
+      intoReasons = new Map<string, MissCounts>()
       into.set(model, intoReasons)
     }
-    for (const [reason, tokens] of reasons) {
-      intoReasons.set(reason, (intoReasons.get(reason) ?? 0) + tokens)
+    for (const [reason, counts] of reasons) {
+      const cur = intoReasons.get(reason) ?? { tokens5m: 0, tokens1h: 0 }
+      cur.tokens5m += counts.tokens5m
+      cur.tokens1h += counts.tokens1h
+      intoReasons.set(reason, cur)
     }
   }
 }
@@ -180,7 +186,7 @@ interface AnyRow {
 // nick-level accumulators.
 interface ScanResult {
   byModel: Map<string, UsageCounts>
-  missByModel: Map<string, Map<string, number>>
+  missByModel: Map<string, Map<string, MissCounts>>
   apiDurationMs: number
   wallFirst?: string
   wallLast?: string
@@ -202,7 +208,7 @@ interface ScanResult {
 // filtered here to avoid double-counting.
 function scanFile(text: string, seenRequestIds: Set<string>, seenTurnUuids: Set<string>, sinceTs?: string, countSidechain = false): ScanResult {
   const byModel = new Map<string, UsageCounts>()
-  const missByModel = new Map<string, Map<string, number>>()
+  const missByModel = new Map<string, Map<string, MissCounts>>()
   let apiDurationMs = 0
   let wallFirst: string | undefined
   let wallLast: string | undefined
@@ -269,16 +275,30 @@ function scanFile(text: string, seenRequestIds: Set<string>, seenTurnUuids: Set<
       }
 
       // Cache miss reason: direct signal from Claude Code for why the cache
-      // was not hit. Parsed outside the "has tokens" guard — capture even on
-      // otherwise-empty usage rows.
+      // was not hit. Split the miss tokens by the creation tier mix on this
+      // same row so the premium is computed at the correct rate (1h vs 5m).
       const missReason = row.message.diagnostics?.cache_miss_reason
       if (missReason?.type && typeof missReason.cache_missed_input_tokens === 'number' && missReason.cache_missed_input_tokens > 0) {
+        const missTokens = missReason.cache_missed_input_tokens
+        const creationTotal = cache5m + cache1h
+        let miss5m: number, miss1h: number
+        if (creationTotal > 0) {
+          miss5m = missTokens * cache5m / creationTotal
+          miss1h = missTokens * cache1h / creationTotal
+        } else {
+          // No creation block on this row — fall back to 5m (conservative lower bound).
+          miss5m = missTokens
+          miss1h = 0
+        }
         let modelMiss = missByModel.get(row.message.model)
         if (!modelMiss) {
-          modelMiss = new Map<string, number>()
+          modelMiss = new Map<string, MissCounts>()
           missByModel.set(row.message.model, modelMiss)
         }
-        modelMiss.set(missReason.type, (modelMiss.get(missReason.type) ?? 0) + missReason.cache_missed_input_tokens)
+        const cur = modelMiss.get(missReason.type) ?? { tokens5m: 0, tokens1h: 0 }
+        cur.tokens5m += miss5m
+        cur.tokens1h += miss1h
+        modelMiss.set(missReason.type, cur)
       }
       continue
     }
@@ -427,16 +447,24 @@ function formatNick(nick: string, r: NickReport): string {
     let missStr = ''
     const modelMiss = r.missByModel.get(model)
     if (modelMiss && modelMiss.size > 0) {
-      const missTotal = [...modelMiss.values()].reduce((a, b) => a + b, 0)
-      const mc = missCostFor(model, missTotal)
+      let missTotal5m = 0, missTotal1h = 0
+      for (const { tokens5m, tokens1h } of modelMiss.values()) {
+        missTotal5m += tokens5m
+        missTotal1h += tokens1h
+      }
+      const mc = missCostFor(model, missTotal5m, missTotal1h)
       if (totalMissCost !== null) {
         if (mc === null) totalMissCost = null
         else totalMissCost += mc
       }
-      // Sort by token count descending so the costliest reason appears first.
-      const reasons = [...modelMiss.entries()].sort((a, b) => b[1] - a[1])
-      const reasonParts = reasons.map(([reason, tokens]) => `${reason} ${fmtTokens(tokens)} (${fmtDollars(missCostFor(model, tokens))})`)
-      missStr = `, miss: ${fmtTokens(missTotal)} (${fmtDollars(mc)}) [${reasonParts.join(' · ')}]`
+      // Sort by total token count descending so the costliest reason appears first.
+      const reasons = [...modelMiss.entries()].sort(
+        (a, b) => (b[1].tokens5m + b[1].tokens1h) - (a[1].tokens5m + a[1].tokens1h)
+      )
+      const reasonParts = reasons.map(([reason, { tokens5m, tokens1h }]) =>
+        `${reason} ${fmtTokens(tokens5m + tokens1h)} (${fmtDollars(missCostFor(model, tokens5m, tokens1h))})`
+      )
+      missStr = `, miss: ${fmtTokens(missTotal5m + missTotal1h)} (${fmtDollars(mc)}) [${reasonParts.join(' · ')}]`
     }
 
     perModel.push({
