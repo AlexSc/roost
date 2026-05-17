@@ -64,11 +64,13 @@ On confirmation, for each issue N:
    ```
    roost spawn <project>-worker-<N> \
      --model <model> \
+     --cache-ttl 1h \
      --channels '#<project>-issue-<N>' \
      --cwd <worktree-path> \
      --prompt '/worker <project> <N> <owner>/<repo> <branch> <human-nick>' \
      --perm-irc --perm-target <project>-lead-pm
    ```
+   Workers wait through reviewer + human review cycles which routinely exceed 5 minutes, so they need 1h cache to avoid paying a fresh cache-write on each wake.
 4. Join `#<project>-issue-<N>` yourself.
 5. Snapshot lead-pm + APM cumulative token usage so the cleanup post-mortem can diff per-issue:
    ```
@@ -97,12 +99,14 @@ Trigger: a worker posts a draft PR link in an issue channel you're in.
      ```
      roost spawn <project>-reviewer-<N> \
        --model opus \
+       --cache-ttl 5m \
        --channels '#<project>-issue-<I>' \
        --cwd <worker-worktree-path> \
        --prompt '/reviewer <project> <N> <I> <branch> <pr-url> <human-nick>' \
        --perm-irc --perm-target <project>-lead-pm
      ```
    - Default to opus for review regardless of worker model. Drop to sonnet only when the lead specifies.
+   - Reviewers are one-shot (read PR → post findings → shut down), so 5m cache suffices and is half the cost of 1h.
 
 The reviewer shuts itself down after posting. You don't follow up.
 

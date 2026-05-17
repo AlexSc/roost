@@ -527,34 +527,39 @@ open), #48090 (DISABLE_* startup warning); Anthropic prompt-caching
 docs at `platform.claude.com/docs/en/build-with-claude/prompt-caching`.
 
 **What we shipped:** `--cache-ttl <5m|1h>` on `roost spawn`. The
-wrapper translates to the matching env var via the existing
-`tmux -e` plumbing — no Claude code changes, no per-prompt
+wrapper validates the value and translates to the matching env var via
+the existing `tmux -e` plumbing. No Claude code changes, no per-prompt
 `cache_control` markers, no system-prompt-size workarounds.
 
-Defaults split by spawn path (mirrors the permission-mode pattern):
+**No wrapper default — caller picks per session.** The first cut
+defaulted by spawn path (`--agent` → 1h, `--model` → 5m), which kept
+APM templates clean but mis-classified the load-bearing case: workers
+are spawned via `--model` but routinely sit through reviewer + human
+review cycles that exceed 5 minutes. Pinning them at 5m means they
+pay a fresh cache-write on each wake — exactly the cost we wanted to
+avoid. The path heuristic also broke on the watcher (long-lived, but
+on the `--model` fork). Rather than carry edge cases per role, we
+dropped the default entirely. Heuristic that goes in the docs:
 
-- `--agent` (lead-pm, APM, future long-lived agents) → `1h`. These
-  sessions span an entire milestone; the 1h write pays off in cache
-  reads at $0.x/Mtok across hours.
-- `--model` (workers, reviewers, ad-hoc spawns) → `5m`. These are
-  ephemeral; a 5m write that expires before the next turn was wasted
-  spend at 1h rates.
-- Explicit `--cache-ttl` always wins. Override for a worker on a
-  multi-day branch, a reviewer chained through a heavy back-and-forth,
-  or — the load-bearing edge case — a long-lived supervisor spawned
-  via `--model` rather than `--agent` (the watcher in `start.md` is
-  the shipped example; it pins `--cache-ttl 1h` explicitly).
+- **One-shot agents → `--cache-ttl 5m`.** Reviewers (read PR → post
+  findings → shut down) and single-prompt workers fit here. The 5m
+  write is half the cost of 1h and the session won't outlive it
+  anyway.
+- **Multi-turn agents → `--cache-ttl 1h`.** Workers awaiting human
+  review, lead-pm, APM, the watcher, the dispatcher. These idle
+  through review-loop and message-relay timescales that blow past 5m.
+- **Unset is legal.** No env var is injected and claude-code's native
+  cache behavior applies. Useful for ad-hoc/sandbox spawns where the
+  cost shape isn't worth thinking about.
 
-**Caveat: the `--model` path is a heuristic, not a lifetime test.**
-A long-lived role that lives on the `--model` fork (currently: the
-watcher) needs an explicit `--cache-ttl 1h` at the spawn site — the
-wrapper can't tell from the model name alone that the session will
-outlive 5 minutes. New long-lived `--model` spawns should pin 1h at
-the call site and ideally drop a comment naming the role's lifetime.
+Refs at the spawn call sites: `agents/lead-pm.md` (APM spawn pins 1h),
+`agents/associate-pm.md` (worker spawn template pins 1h, reviewer
+template pins 5m), `start.md` (watcher spawn pins 1h, worker
+instructions pin 1h, reviewer instructions pin 5m).
 
-Acceptance: the next wave's cost reports should show reviewer/worker
-writes landing in the 5m bucket. Lead-pm, APM, and the watcher stay
-on 1h.
+Acceptance: the next wave's cost reports should show reviewers and
+one-shot writes in the 5m bucket; workers, lead-pm, APM, and the
+watcher in the 1h bucket.
 
 ## 10. Operational rules / coordination protocol
 

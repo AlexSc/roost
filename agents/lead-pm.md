@@ -50,7 +50,7 @@ When you spawn an agent, always pass the namespaced nick + the matching `--chann
 Spawn the associate-pm (APM). It owns the rote setup/teardown — starting the dispatcher daemon, creating worktrees, DMing the dispatcher to watch issues, spawning workers and reviewers, marking PRs ready, merging, and cleaning up. You drive judgment.
 
 ```bash
-roost spawn <project>-apm --agent associate-pm --channels '#<project>-leads' \
+roost spawn <project>-apm --agent associate-pm --cache-ttl 1h --channels '#<project>-leads' \
   --prompt 'human=<human> gh-login=<gh-login>' \
   --perm-irc --perm-target <project>-lead-pm
 ```
@@ -59,7 +59,7 @@ Pass the same `<human>` / `<gh-login>` values you parsed from your own initial p
 
 (`roost spawn` errors out if you pass `--model` alongside `--agent`; see `roost spawn --help`.) On boot the APM will start the dispatcher daemon if it isn't already running, then post a hello in `#<project>-leads`. If the hello doesn't arrive within a minute, check the APM session.
 
-Cache-TTL defaults are split by spawn path: `--agent` (you and the APM) gets `1h` and `--model` (workers, reviewers) gets `5m`. The wrapper picks; you don't need to pass `--cache-ttl` unless overriding (e.g. a long-running worker on a multi-day branch — pass `--cache-ttl 1h` explicitly in the spawn).
+Cache-TTL is explicit at the call site — no wrapper default. Heuristic: **one-shot agents (reviewers, single-prompt workers) → `--cache-ttl 5m`; anything with multi-turn work (the APM, workers awaiting human review, the watcher, you) → `--cache-ttl 1h`.** Workers in particular wait through review cycles that routinely exceed 5 minutes, so they need 1h to avoid paying a fresh cache-write per wake. 1h writes cost 2x the 5m rate, so don't reach for it on truly ephemeral spawns.
 
 ## Working In Channels
 

@@ -180,57 +180,42 @@ else
 fi
 teardown
 
-# -- Test 13: --model default → cache-ttl 5m ---------------------------------
-# Workers/reviewers (--model path) are short-lived; default to 5m.
+# -- Test 13: no --cache-ttl → banner shows (claude default) -----------------
+# Wrapper has no default; if the operator doesn't pass --cache-ttl, neither
+# env var is injected and claude-code's native cache behavior applies.
 
 setup
 out="$("${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1 || true)"
-if echo "$out" | grep -q "cache-ttl: 5m"; then
-  ok "--model default → cache-ttl: 5m"
+if echo "$out" | grep -qF "cache-ttl: (claude default)"; then
+  ok "no --cache-ttl → banner shows (claude default)"
 else
-  fail "--model default → cache-ttl: 5m" "out=$out"
+  fail "no --cache-ttl → banner shows (claude default)" "out=$out"
 fi
 teardown
 
-# -- Test 14: --agent default → cache-ttl 1h ---------------------------------
-# Shipped agents (lead-pm, APM) are long-lived; default to 1h.
+# -- Test 14: explicit --cache-ttl 5m echoed verbatim ------------------------
 
 setup
-mkdir -p "$TDIR/.claude/agents"
-printf -- '---\nname: longlived\ndescription: x\nmodel: opus\npermissionMode: auto\n---\nbody\n' > "$TDIR/.claude/agents/longlived.md"
-out="$("${ROOST_BIN}" spawn testnick --agent longlived --cwd "$TDIR" 2>&1 || true)"
-if echo "$out" | grep -q "cache-ttl: 1h"; then
-  ok "--agent default → cache-ttl: 1h"
-else
-  fail "--agent default → cache-ttl: 1h" "out=$out"
-fi
-teardown
-
-# -- Test 15: explicit --cache-ttl 5m wins on --agent path -------------------
-
-setup
-mkdir -p "$TDIR/.claude/agents"
-printf -- '---\nname: longlived\ndescription: x\nmodel: opus\npermissionMode: auto\n---\nbody\n' > "$TDIR/.claude/agents/longlived.md"
-out="$("${ROOST_BIN}" spawn testnick --agent longlived --cache-ttl 5m --cwd "$TDIR" 2>&1 || true)"
+out="$("${ROOST_BIN}" spawn testnick --cache-ttl 5m --cwd "$TDIR" 2>&1 || true)"
 if echo "$out" | grep -q "cache-ttl: 5m"; then
-  ok "explicit --cache-ttl 5m wins on --agent path"
+  ok "explicit --cache-ttl 5m echoed verbatim"
 else
-  fail "explicit --cache-ttl 5m wins on --agent path" "out=$out"
+  fail "explicit --cache-ttl 5m echoed verbatim" "out=$out"
 fi
 teardown
 
-# -- Test 16: explicit --cache-ttl 1h wins on --model path -------------------
+# -- Test 15: explicit --cache-ttl 1h echoed verbatim ------------------------
 
 setup
 out="$("${ROOST_BIN}" spawn testnick --cache-ttl 1h --cwd "$TDIR" 2>&1 || true)"
 if echo "$out" | grep -q "cache-ttl: 1h"; then
-  ok "explicit --cache-ttl 1h wins on --model path"
+  ok "explicit --cache-ttl 1h echoed verbatim"
 else
-  fail "explicit --cache-ttl 1h wins on --model path" "out=$out"
+  fail "explicit --cache-ttl 1h echoed verbatim" "out=$out"
 fi
 teardown
 
-# -- Test 17: invalid --cache-ttl is rejected --------------------------------
+# -- Test 16: invalid --cache-ttl is rejected --------------------------------
 
 setup
 err="$("${ROOST_BIN}" spawn testnick --cache-ttl 30m --cwd "$TDIR" 2>&1)"; exit_code=$?
