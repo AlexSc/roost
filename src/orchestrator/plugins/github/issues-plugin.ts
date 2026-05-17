@@ -70,6 +70,7 @@ export class GitHubIssuesPlugin extends GhBase {
       }
     }
 
+    taggedEvents.push(...await this.observeRateLimit(projectChannel))
     return { state: curState, taggedEvents, channels: this.desiredChannels(config) }
   }
 }

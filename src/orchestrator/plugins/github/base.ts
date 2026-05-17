@@ -2,22 +2,64 @@ import type { Command } from '../../dm-handler.js'
 import type { OrchestratorConfig, WatchedEntry } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
 import { defaultProject, issueChannel } from '../../naming.js'
-import { BasePlugin, defaultPluginLogger, type PluginLogger } from '../../plugin.js'
-import { GhClient } from './github-api.js'
+import { BasePlugin, defaultPluginLogger, type PluginLogger, type TaggedEvent } from '../../plugin.js'
+import { GhClient, fetchRateLimit, computeRateLimitWarning } from './github-api.js'
 
 // Thin shared base for any plugin that needs GhClient but not watch-list
 // scaffolding. GhBase extends this; non-watching plugins (e.g.
 // GitHubNewIssuesPlugin) extend it directly.
 export abstract class GhPluginBase extends BasePlugin {
   protected readonly client: GhClient
+  protected readonly log: PluginLogger
+
+  // Per-instance: tracks the previous tick's rate limit snapshot for Δ/trajectory.
+  private _prevRateLimit: { remaining: number; ts: number } | null = null
+
+  // Shared across instances — one warning per 10 min regardless of which plugin fires.
+  // 10 min: enough signals in a 60-min reset window without spamming.
+  private static _warnedAt: number | null = null
+  private static readonly WARN_COOLDOWN_MS = 10 * 60_000
 
   constructor(defaultChannel: string, log: PluginLogger = defaultPluginLogger) {
     super(defaultChannel)
+    this.log = log
     this.client = new GhClient(log)
   }
 
   protected agentLogins(config: OrchestratorConfig): Set<string> {
     return new Set(config.agent_logins ?? [])
+  }
+
+  // Call at the end of runTick (after all gh scraping) to log the current rate
+  // limit budget and, if trajectory predicts exhaustion before reset, emit an
+  // IRC warning to the project channel. Returns the warning as a TaggedEvent[]
+  // (empty when no warning or rate limit fetch failed).
+  //
+  // Runs even when the tick's own scraping failed — we want to observe the budget
+  // through failures since a failing tick is often a symptom of exhaustion.
+  protected async observeRateLimit(projectChannel: string): Promise<TaggedEvent[]> {
+    const info = await fetchRateLimit(this.log)
+    if (!info) return []
+
+    const now = Date.now()
+    const prev = this._prevRateLimit
+    const delta = prev != null ? prev.remaining - info.remaining : null
+    const deltaStr = delta != null ? ` (Δ=${delta} since last tick)` : ''
+    const resetMin = Math.round((info.resetAt * 1000 - now) / 60_000)
+    this.log(`[ratelimit] remaining=${info.remaining}/${info.limit}${deltaStr} reset_in=${resetMin}m\n`)
+
+    this._prevRateLimit = { remaining: info.remaining, ts: now }
+
+    if (prev == null) return []
+
+    const warning = computeRateLimitWarning(info, prev, now)
+    if (!warning) return []
+
+    const cooldownElapsed = GhPluginBase._warnedAt == null || now - GhPluginBase._warnedAt > GhPluginBase.WARN_COOLDOWN_MS
+    if (!cooldownElapsed) return []
+
+    GhPluginBase._warnedAt = now
+    return [{ channels: [projectChannel], payload: { kind: 'oneline', text: warning } }]
   }
 }
 

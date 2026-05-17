@@ -1,6 +1,7 @@
 import { describe, it, expect, spyOn } from 'bun:test'
 import { GitHubPrsPlugin } from '../prs-plugin.js'
 import { GitHubIssuesPlugin } from '../issues-plugin.js'
+import { GhPluginBase } from '../base.js'
 import type { OrchestratorConfig } from '../../../config.js'
 import type { PrSnap, IssueSnap } from '../types.js'
 import * as scraper from '../scraper.js'
@@ -369,5 +370,25 @@ describe('GhBase.handleCommand — prs plugin (target=pr)', () => {
     expect(out).toContain('github-prs commands')
     expect(out).toMatch(/watch pr <N>/)
     expect(out).toMatch(/unwatch pr <N>/)
+  })
+})
+
+describe('GhPluginBase.observeRateLimit integration', () => {
+  it('merges observeRateLimit warning events into runTick taggedEvents', async () => {
+    const warningEvent = { channels: ['#proj-leads'], payload: { kind: 'oneline' as const, text: 'rate limit warning' } }
+    const scrapeSpy = spyOn(scraper, 'scrapePr').mockResolvedValue({ snap: fakePrSnap(), events: [] })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const observeSpy = spyOn(GhPluginBase.prototype as any, 'observeRateLimit').mockResolvedValue([warningEvent])
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: { 'github-prs': { watched: [{ number: 25 }] } },
+      }
+      const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
+      expect(result.taggedEvents).toContainEqual(warningEvent)
+    } finally {
+      scrapeSpy.mockRestore()
+      observeSpy.mockRestore()
+    }
   })
 })
