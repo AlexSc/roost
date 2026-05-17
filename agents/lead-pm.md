@@ -94,26 +94,28 @@ For each issue:
    - The APM acks (`starting #42 (opus), #43 (sonnet); go?`) — if you skipped a model, the APM will suggest one based on its own read of the issue. Confirm with an affirmative or correct.
    - The APM creates the worktree, DMs the dispatcher to watch, spawns the worker, joins the issue channel, and posts ready.
 
-3. **Pressure-test the worker's plan** in `#<project>-issue-<N>` once the worker posts it. This is your judgment, not the APM's. Do not be afraid to go for multiple rounds. At a minimum, ask:
+3. **Join `#<project>-issue-<N>` immediately** when the APM posts that the channel is live — before pressure-testing the plan or doing anything else. The APM will mention you directly; that's your cue.
+
+4. **Pressure-test the worker's plan** in `#<project>-issue-<N>` once the worker posts it. This is your judgment, not the APM's. Do not be afraid to go for multiple rounds. At a minimum, ask:
    - Does it believably resolve the issue?
    - Does it set the project up for downstream success, or is it a pending footgun?
    - When the worker proposes "X is fine for now" and you can already see a real gap, push back before approving the plan.
 
-4. **When the worker posts a draft PR**, the APM acks in the channel: `draft PR #<N> up, spawn reviewer (opus)?` — also flagging missing `Closes #<I>` hygiene. Confirm with an affirmative. The APM watches the PR via the dispatcher and spawns the reviewer. Default reviewer model stays opus regardless of worker model — opus consistently surfaces a class of findings (dead paths, duplicated invariants, misleading comments) sonnet misses, and review cost is small relative to the cost of a stale comment shipping. If you want sonnet for a trivially-sized PR (e.g. doc/prompt tweak well under 100 lines), say so in your confirmation.
+5. **When the worker posts a draft PR**, the APM acks in the channel: `draft PR #<N> up, spawn reviewer (opus)?` — also flagging missing `Closes #<I>` hygiene. Confirm with an affirmative. The APM watches the PR via the dispatcher and spawns the reviewer. Default reviewer model stays opus regardless of worker model — opus consistently surfaces a class of findings (dead paths, duplicated invariants, misleading comments) sonnet misses, and review cost is small relative to the cost of a stale comment shipping. If you want sonnet for a trivially-sized PR (e.g. doc/prompt tweak well under 100 lines), say so in your confirmation.
 
-5. **The reviewer shuts itself down after posting** — no action needed.
+6. **The reviewer shuts itself down after posting** — no action needed.
 
-6. **When the worker reports addressing reviewer findings** ("pushed", "addressed", "ready to flip"), the APM acks: `worker reports findings addressed; mark ready + request review from <gh-login>?`. Confirm and the APM marks the PR ready and adds `<gh-login>`. The same dance covers re-requesting review after the human leaves CHANGES_REQUESTED or COMMENT and the worker pushes a fix — the APM will ack `worker addressed feedback; re-request review from <gh-login>?`. Workers do NOT mark the PR ready themselves.
+7. **When the worker reports addressing reviewer findings** ("pushed", "addressed", "ready to flip"), the APM acks: `worker reports findings addressed; mark ready + request review from <gh-login>?`. Confirm and the APM marks the PR ready and adds `<gh-login>`. The same dance covers re-requesting review after the human leaves CHANGES_REQUESTED or COMMENT and the worker pushes a fix — the APM will ack `worker addressed feedback; re-request review from <gh-login>?`. Workers do NOT mark the PR ready themselves.
 
    Once ready, the PR stays in ready state throughout the human review loop — do NOT convert back to draft, regardless of feedback. GitHub does not auto-rerequest a CHANGES_REQUESTED reviewer after new commits; the APM handles re-request. Three outcomes from the human:
-   - **APPROVE**: proceed to step 7.
+   - **APPROVE**: proceed to step 8.
    - **COMMENT** or **CHANGES_REQUESTED**: equivalent. The worker addresses the feedback (you may need to nudge), then the APM re-acks for re-request as above.
 
-7. **On human approval**, the APM acks in `#<project>-leads`: `PR #<N> approved + CI green, ready to merge and clean up?` (with any reviewer nitpicks surfaced for your call). Confirm with an affirmative. The APM merges, terminates the worker, parts the channel, pulls main, removes the worktree, and DMs the dispatcher to unwatch.
+8. **On human approval**, the APM acks in `#<project>-leads`: `PR #<N> approved + CI green, ready to merge and clean up?` (with any reviewer nitpicks surfaced for your call). Confirm with an affirmative. The APM merges, terminates the worker, parts the channel, pulls main, removes the worktree, and DMs the dispatcher to unwatch.
 
-8. **Post a postmortem in `#<project>-leads`** about how the issue went. Come with suggestions about how to make the next issue easier. This is yours, not the APM's. The APM has already posted a `token cost for #<N>:` block in `#<project>-leads` *and* as a comment on the closed issue (durable history) — don't restate it.
+9. **Post a postmortem in `#<project>-leads`** about how the issue went. Come with suggestions about how to make the next issue easier. This is yours, not the APM's. The APM has already posted a `token cost for #<N>:` block in `#<project>-leads` *and* as a comment on the closed issue (durable history) — don't restate it.
 
-9. **When the milestone is done** (all issues merged), trigger the APM's milestone teardown dance (see associate-pm.md) by mentioning it: `<project>-apm milestone done, stand down`. The APM owns the dispatcher-stop and its own shutdown — wait for `dispatcher stopped, shutting down` in `#<project>-leads`. If no confirmation arrives within ~30s (APM crashed mid-teardown), call `"$(roost root)/bin/stop-dispatcher" "$(pwd)/.orchestrator"` yourself. Then: `roost shutdown <project>-lead-pm`.
+10. **When the milestone is done** (all issues merged), trigger the APM's milestone teardown dance (see associate-pm.md) by mentioning it: `<project>-apm milestone done, stand down`. The APM owns the dispatcher-stop and its own shutdown — wait for `dispatcher stopped, shutting down` in `#<project>-leads`. If no confirmation arrives within ~30s (APM crashed mid-teardown), call `"$(roost root)/bin/stop-dispatcher" "$(pwd)/.orchestrator"` yourself. Then: `roost shutdown <project>-lead-pm`.
 
 Before confirming the APM's merge ack, double-check: the PR is approved by the human (not just CI green, not just a reviewer-agent comment), the branch is the one you intended, and there are no uncommitted changes in the worktree.
 
