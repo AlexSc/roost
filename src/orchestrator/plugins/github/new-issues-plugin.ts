@@ -77,6 +77,7 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
     for (const n of currentNumbers) seen.add(n)
 
     const state: NewIssuesPluginState = { seen_issue_numbers: [...seen].sort((a, b) => a - b) }
+    taggedEvents.push(...await this.observeRateLimit(resolveProjectChannel(config)))
     return { state, taggedEvents, channels: [] }
   }
 }

@@ -20,7 +20,6 @@ import {
 
 import { dispatchTaggedEvents, connectAndWait } from './orchestrator/dispatch.js'
 import { defaultPluginLogger, type Plugin, type TaggedEvent } from './orchestrator/plugin.js'
-import { fetchRateLimit, computeRateLimitWarning, type RateLimitInfo } from './orchestrator/plugins/github/github-api.js'
 import './orchestrator/registry.js'
 import { buildPlugins } from './orchestrator/build-plugins.js'
 import { resolveProjectChannel } from './orchestrator/naming.js'
@@ -168,12 +167,6 @@ async function runDaemon(stateDir: string): Promise<void> {
 
   const tickOpts = { seed: false, dryRun: false }
 
-  // Rate limit observability state — intentionally not persisted; resets on daemon restart.
-  let prevRateLimit: { remaining: number; ts: number } | null = null
-  let rateLimitWarnedAt: number | null = null
-  // 10 min: enough warnings in a 60-min reset window to act on, without spamming
-  const WARN_COOLDOWN_MS = 10 * 60_000
-
   while (!stop) {
     const tickStart = Date.now()
     try {
@@ -192,31 +185,6 @@ async function runDaemon(stateDir: string): Promise<void> {
       // Fall back to the config-only channel view so a transient GH/scrape
       // blip doesn't part every #issue-N until the next success.
       result = { taggedEvents: [], channels: bootChannels(plugins, config, projectChannel) }
-    }
-
-    // Rate limit observability — runs after every tick (including failed ones) so
-    // we can observe the budget even when gh scraping is already failing.
-    // fetchRateLimit uses the free /rate_limit endpoint (exempt from rate limits).
-    {
-      const rlInfo: RateLimitInfo | null = await fetchRateLimit(log)
-      if (rlInfo) {
-        const now = Date.now()
-        const delta = prevRateLimit != null ? prevRateLimit.remaining - rlInfo.remaining : null
-        const deltaStr = delta != null ? ` (Δ=${delta} since last tick)` : ''
-        const resetMin = Math.round((rlInfo.resetAt * 1000 - now) / 60_000)
-        log(`orchestrator[daemon]: [ratelimit] remaining=${rlInfo.remaining}/${rlInfo.limit}${deltaStr} reset_in=${resetMin}m\n`)
-
-        if (prevRateLimit != null) {
-          const warning = computeRateLimitWarning(rlInfo, prevRateLimit, now)
-          const cooldownElapsed = rateLimitWarnedAt == null || now - rateLimitWarnedAt > WARN_COOLDOWN_MS
-          if (warning && cooldownElapsed) {
-            try { client.say(projectChannel, warning) } catch { /* best-effort */ }
-            rateLimitWarnedAt = now
-          }
-        }
-
-        prevRateLimit = { remaining: rlInfo.remaining, ts: now }
-      }
     }
 
     // Sync IRC membership against the plugin's reported desired set + project channel.

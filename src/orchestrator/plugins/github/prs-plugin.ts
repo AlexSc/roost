@@ -88,6 +88,7 @@ export class GitHubPrsPlugin extends GhBase {
       for (const n of snap.linked_issues ?? []) channels.add(issueChannel(project, n))
     }
 
+    taggedEvents.push(...await this.observeRateLimit(projectChannel))
     return { state: curState, taggedEvents, channels: [...channels] }
   }
 }
