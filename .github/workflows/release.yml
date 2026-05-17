@@ -29,7 +29,8 @@ jobs:
           generate_release_notes: true
 
       - name: Bump Homebrew formula
-        uses: mislav/bump-homebrew-formula-action@v4.1
+        # AvesAlight fork of mislav/bump-homebrew-formula-action with redirect-status fix; see #343
+        uses: AvesAlight/bump-homebrew-formula-action@efacc598ed9b4b1bc526125f82d2dfba17509842
         with:
           formula-name: roost
           formula-path: Formula/roost.rb
