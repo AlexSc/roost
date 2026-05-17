@@ -12,6 +12,7 @@ import type { OrchestratorConfig, WatchedEntry } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
 import { defaultProject, issueChannel } from '../../naming.js'
 import { BasePlugin, defaultPluginLogger, type PluginLogger } from '../../plugin.js'
+import { GhClient } from './github-api.js'
 
 interface GhPluginConfig {
   watched?: WatchedEntry[]
@@ -26,8 +27,13 @@ export abstract class GhBase extends BasePlugin {
   // plugin name slice.
   protected abstract readonly label: string
 
-  constructor(defaultChannel: string, protected readonly log: PluginLogger = defaultPluginLogger) {
+  // Shared gh handle — owns the PluginLogger so individual fetch/snapshot/
+  // scrape callsites stay log-free.
+  protected readonly client: GhClient
+
+  constructor(defaultChannel: string, log: PluginLogger = defaultPluginLogger) {
     super(defaultChannel)
+    this.client = new GhClient(log)
   }
 
   protected agentLogins(config: OrchestratorConfig): Set<string> {
