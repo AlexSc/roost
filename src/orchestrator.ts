@@ -19,8 +19,9 @@ import {
 } from './orchestrator/config.js'
 
 import { dispatchTaggedEvents, connectAndWait } from './orchestrator/dispatch.js'
-import { defaultPluginLogger, getPluginFactory, registeredPluginNames, type Plugin, type PluginLogger, type TaggedEvent } from './orchestrator/plugin.js'
+import { defaultPluginLogger, type Plugin, type TaggedEvent } from './orchestrator/plugin.js'
 import './orchestrator/registry.js'
+import { buildPlugins } from './orchestrator/build-plugins.js'
 import { resolveProjectChannel } from './orchestrator/naming.js'
 import { handleDm } from './orchestrator/dm-handler.js'
 import { RoostIrcClientImpl } from './irc-client-impl.js'
@@ -74,21 +75,6 @@ async function runOneTick(
   }
 
   return { taggedEvents: allTagged, channels: [...allChannels] }
-}
-
-// Instantiate plugins from `config.plugins` via the registry. Order follows
-// `Object.keys` insertion order in the config JSON, so emission order is
-// predictable from the operator's POV.
-function buildPlugins(config: OrchestratorConfig, defaultChannel: string, log: PluginLogger): Plugin[] {
-  const names = Object.keys(config.plugins ?? {})
-  return names.map(name => {
-    const factory = getPluginFactory(name)
-    if (!factory) {
-      const available = registeredPluginNames().sort().join(', ') || '(none)'
-      throw new Error(`unknown plugin in config: ${name}. available: ${available}`)
-    }
-    return factory(defaultChannel, log)
-  })
 }
 
 function bootChannels(plugins: Plugin[], config: OrchestratorConfig, projectChannel: string): string[] {

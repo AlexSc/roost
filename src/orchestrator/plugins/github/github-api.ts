@@ -302,3 +302,20 @@ export class GhClient {
     return (await this.api(`repos/${repo}/issues/${number}/comments?per_page=100`, true) ?? []) as GhComment[]
   }
 }
+
+// GitHub's issues endpoint returns PRs too — `pull_request` is the marker
+// for filtering them out at the call site.
+export interface GhRepoIssue {
+  number?: number
+  title?: string
+  html_url?: string
+  state?: string
+  labels?: GhLabel[]
+  pull_request?: Record<string, unknown>
+}
+
+// Lists open issues across the repo (excluding PRs at the caller). Paginated.
+export async function fetchRepoOpenIssues(log: PluginLogger, repo: string): Promise<GhRepoIssue[]> {
+  const raw = (await ghApi(log, `repos/${repo}/issues?state=open&per_page=100`, true) ?? []) as GhRepoIssue[]
+  return raw.filter(i => !i.pull_request)
+}
