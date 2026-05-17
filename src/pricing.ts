@@ -67,3 +67,17 @@ export function costFor(model: string, u: UsageCounts): number | null {
     + p.cache_read * u.cache_read
   ) / 1_000_000
 }
+
+// Returns the USD cost premium for cache miss tokens — the extra spend vs what
+// a cache read would have cost. `tokens5m` and `tokens1h` are the miss token
+// counts split by the creation tier of the row that reported the miss (so the
+// premium is computed at the correct rate per tier). Returns `null` for unknown models.
+export function missCostFor(model: string, tokens5m: number, tokens1h: number): number | null {
+  if (SKIPPED_MODELS.has(model)) return 0
+  const p = PRICING[model]
+  if (!p) return null
+  return (
+    (p.cache_creation_5m - p.cache_read) * tokens5m
+    + (p.cache_creation_1h - p.cache_read) * tokens1h
+  ) / 1_000_000
+}

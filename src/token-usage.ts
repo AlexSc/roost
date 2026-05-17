@@ -2,8 +2,8 @@
 // token-usage — read Claude Code session transcripts and summarize per-nick
 // API spend in a format inspired by Claude Code's own `/usage` panel:
 //
-//   <nick>: $14.38 · 18m57s api / 44m42s wall
-//     opus-4-7:    7.4k in / 63.4k out / 17.5M cache_r / 644.6k cache_w  ($14.38)
+//   <nick>: $14.38 ($1.42 miss) · 18m57s api / 44m42s wall
+//     opus-4-7:    7.4k in / 63.4k out / 17.5M cache_r / 644.6k cache_w  ($14.38, miss: 128.3k ($1.42) [tools_changed 16.2k ($0.18) · system_changed 112.1k ($1.24)])
 //     sonnet-4-6:  1.2k in /  2.4k out /  300k cache_r /   8.5k cache_w  ($0.42)
 //
 // Sessions are matched by the MCP banner produced by src/mcp-banner.ts —
@@ -38,16 +38,26 @@ import { readFile, mkdir, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { mcpConnectionLine } from './mcp-banner.js'
-import { costFor, type UsageCounts } from './pricing.js'
+import { costFor, missCostFor, type UsageCounts } from './pricing.js'
 
 type ModelUsage = UsageCounts
+// Per-reason miss token counts split by cache-creation TTL tier. The tier
+// is read from the creation block on the same JSONL row that reported the miss.
+type MissCounts = { tokens5m: number; tokens1h: number }
 
 interface NickReport {
   byModel: Map<string, ModelUsage>
+  // Direct cache miss data from message.diagnostics.cache_miss_reason.
+  // Outer key: model ID. Inner key: reason type (tools_changed, system_changed,
+  // messages_changed, previous_message_not_found, unavailable).
+  // Value: miss token counts split by creation tier (from the same row's cache_creation block).
+  missByModel: Map<string, Map<string, MissCounts>>
   apiDurationMs: number
   wallFirst?: string
   wallLast?: string
-  sessions: number
+  // Number of contributing JSONL transcript files (parent + each subagent file
+  // counted separately).
+  transcripts: number
   unknownModels: Set<string>
   files: string[]
 }
@@ -62,21 +72,40 @@ interface SnapshotFile {
 function emptyReport(): NickReport {
   return {
     byModel: new Map(),
+    missByModel: new Map(),
     apiDurationMs: 0,
-    sessions: 0,
+    transcripts: 0,
     unknownModels: new Set(),
     files: [],
   }
 }
 
-function addToModel(report: NickReport, model: string, u: UsageCounts): void {
-  const cur = report.byModel.get(model) ?? { input: 0, output: 0, cache_creation_5m: 0, cache_creation_1h: 0, cache_read: 0 }
+// Single accumulator for all three UsageCounts merge sites (addToModel,
+// mergeUsageMap, and the inline loop in scanFile were all identical).
+function addToUsageMap(into: Map<string, UsageCounts>, model: string, u: UsageCounts): void {
+  const cur = into.get(model) ?? { input: 0, output: 0, cache_creation_5m: 0, cache_creation_1h: 0, cache_read: 0 }
   cur.input += u.input
   cur.output += u.output
   cur.cache_creation_5m += u.cache_creation_5m
   cur.cache_creation_1h += u.cache_creation_1h
   cur.cache_read += u.cache_read
-  report.byModel.set(model, cur)
+  into.set(model, cur)
+}
+
+function addToMissMap(into: Map<string, Map<string, MissCounts>>, from: Map<string, Map<string, MissCounts>>): void {
+  for (const [model, reasons] of from) {
+    let intoReasons = into.get(model)
+    if (!intoReasons) {
+      intoReasons = new Map<string, MissCounts>()
+      into.set(model, intoReasons)
+    }
+    for (const [reason, counts] of reasons) {
+      const cur = intoReasons.get(reason) ?? { tokens5m: 0, tokens1h: 0 }
+      cur.tokens5m += counts.tokens5m
+      cur.tokens1h += counts.tokens1h
+      intoReasons.set(reason, cur)
+    }
+  }
 }
 
 function trackTs(report: NickReport, ts: string): void {
@@ -144,10 +173,28 @@ interface AnyRow {
         ephemeral_1h_input_tokens?: number
       }
     }
+    diagnostics?: {
+      cache_miss_reason?: {
+        type?: string
+        cache_missed_input_tokens?: number
+      }
+    }
   }
 }
 
-// Walk one JSONL file, accumulate into `report`. Only rows with
+// Per-file scan result returned by scanFile. The caller merges these into the
+// nick-level accumulators.
+interface ScanResult {
+  byModel: Map<string, UsageCounts>
+  missByModel: Map<string, Map<string, MissCounts>>
+  apiDurationMs: number
+  wallFirst?: string
+  wallLast?: string
+  unknownModels: Set<string>
+  contributed: boolean
+}
+
+// Walk one JSONL file and return its token usage. Only rows with
 // `timestamp > sinceTs` (when sinceTs is set) contribute. `seenRequestIds`
 // is shared across files so the same API call (one requestId) is only
 // counted once — Claude Code writes one assistant row per content block
@@ -158,10 +205,21 @@ interface AnyRow {
 // their full transcripts live in `PROJECT/SESSION/subagents/agent-*.jsonl`
 // (scanned separately with `countSidechain: true`), so this is defensive
 // — older or future shapes that inline sidechain rows in the parent are
-// filtered here to avoid double-counting. Returns whether the file
-// contributed at all (used as the session-counter signal).
-function scanFile(text: string, report: NickReport, seenRequestIds: Set<string>, seenTurnUuids: Set<string>, sinceTs?: string, countSidechain = false): boolean {
+// filtered here to avoid double-counting.
+function scanFile(text: string, seenRequestIds: Set<string>, seenTurnUuids: Set<string>, sinceTs?: string, countSidechain = false): ScanResult {
+  const byModel = new Map<string, UsageCounts>()
+  const missByModel = new Map<string, Map<string, MissCounts>>()
+  let apiDurationMs = 0
+  let wallFirst: string | undefined
+  let wallLast: string | undefined
+  const unknownModels = new Set<string>()
   let contributed = false
+
+  const trackLocal = (ts: string) => {
+    if (!wallFirst || ts < wallFirst) wallFirst = ts
+    if (!wallLast || ts > wallLast) wallLast = ts
+  }
+
   for (const line of text.split('\n')) {
     if (!line) continue
     let row: AnyRow
@@ -208,12 +266,39 @@ function scanFile(text: string, report: NickReport, seenRequestIds: Set<string>,
       // A purely-empty usage row contributes nothing — skip so an idle
       // session doesn't get tagged as "contributed".
       if (tokens.input || tokens.output || tokens.cache_creation_5m || tokens.cache_creation_1h || tokens.cache_read) {
-        addToModel(report, row.message.model, tokens)
+        addToUsageMap(byModel, row.message.model, tokens)
         if (costFor(row.message.model, tokens) === null) {
-          report.unknownModels.add(row.message.model)
+          unknownModels.add(row.message.model)
         }
-        if (ts) trackTs(report, ts)
+        if (ts) trackLocal(ts)
         contributed = true
+      }
+
+      // Cache miss reason: direct signal from Claude Code for why the cache
+      // was not hit. Split the miss tokens by the creation tier mix on this
+      // same row so the premium is computed at the correct rate (1h vs 5m).
+      const missReason = row.message.diagnostics?.cache_miss_reason
+      if (missReason?.type && typeof missReason.cache_missed_input_tokens === 'number' && missReason.cache_missed_input_tokens > 0) {
+        const missTokens = missReason.cache_missed_input_tokens
+        const creationTotal = cache5m + cache1h
+        let miss5m: number, miss1h: number
+        if (creationTotal > 0) {
+          miss5m = missTokens * cache5m / creationTotal
+          miss1h = missTokens * cache1h / creationTotal
+        } else {
+          // No creation block on this row — fall back to 5m (conservative lower bound).
+          miss5m = missTokens
+          miss1h = 0
+        }
+        let modelMiss = missByModel.get(row.message.model)
+        if (!modelMiss) {
+          modelMiss = new Map<string, MissCounts>()
+          missByModel.set(row.message.model, modelMiss)
+        }
+        const cur = modelMiss.get(missReason.type) ?? { tokens5m: 0, tokens1h: 0 }
+        cur.tokens5m += miss5m
+        cur.tokens1h += miss1h
+        modelMiss.set(missReason.type, cur)
       }
       continue
     }
@@ -227,13 +312,13 @@ function scanFile(text: string, report: NickReport, seenRequestIds: Set<string>,
         if (seenTurnUuids.has(row.uuid)) continue
         seenTurnUuids.add(row.uuid)
       }
-      report.apiDurationMs += row.durationMs
-      if (ts) trackTs(report, ts)
+      apiDurationMs += row.durationMs
+      if (ts) trackLocal(ts)
       contributed = true
       continue
     }
   }
-  return contributed
+  return { byModel, missByModel, apiDurationMs, wallFirst, wallLast, unknownModels, contributed }
 }
 
 export async function collectForNick(
@@ -259,8 +344,15 @@ export async function collectForNick(
     // skip the parse entirely.
     if (!text.includes(marker)) continue
     report.files.push(f)
-    const contributed = scanFile(text, report, seenRequestIds, seenTurnUuids, sinceTs)
-    if (contributed) report.sessions += 1
+
+    const result = scanFile(text, seenRequestIds, seenTurnUuids, sinceTs)
+    if (result.contributed) report.transcripts += 1
+    for (const [m, u] of result.byModel) addToUsageMap(report.byModel, m, u)
+    addToMissMap(report.missByModel, result.missByModel)
+    report.apiDurationMs += result.apiDurationMs
+    if (result.wallFirst) trackTs(report, result.wallFirst)
+    if (result.wallLast) trackTs(report, result.wallLast)
+    for (const m of result.unknownModels) report.unknownModels.add(m)
 
     // Subagent transcripts: same nick, billed by directory locality.
     const subagentFiles = await listSubagentFiles(f)
@@ -272,11 +364,16 @@ export async function collectForNick(
         continue
       }
       report.files.push(sub)
-      const subContributed = scanFile(subText, report, seenRequestIds, seenTurnUuids, sinceTs, true)
-      // Each contributing subagent file counts as a separate session — a
-      // worker that fires off three Task subagents shows `sessions: 4`
-      // (parent + 3), which matches the "files scanned" mental model.
-      if (subContributed) report.sessions += 1
+      const subResult = scanFile(subText, seenRequestIds, seenTurnUuids, sinceTs, true)
+      // Each contributing subagent file increments transcripts independently —
+      // a worker that fires 3 Task subagents shows `transcripts: 4` (parent + 3).
+      if (subResult.contributed) report.transcripts += 1
+      for (const [m, u] of subResult.byModel) addToUsageMap(report.byModel, m, u)
+      addToMissMap(report.missByModel, subResult.missByModel)
+      report.apiDurationMs += subResult.apiDurationMs
+      if (subResult.wallFirst) trackTs(report, subResult.wallFirst)
+      if (subResult.wallLast) trackTs(report, subResult.wallLast)
+      for (const m of subResult.unknownModels) report.unknownModels.add(m)
     }
   }
   return report
@@ -335,6 +432,7 @@ function shortModel(model: string): string {
 
 function formatNick(nick: string, r: NickReport): string {
   let totalCost: number | null = 0
+  let totalMissCost: number | null = 0
   const perModel: Array<{ model: string; line: string }> = []
   // Stable order so output is reproducible across runs.
   const models = [...r.byModel.keys()].sort()
@@ -345,9 +443,33 @@ function formatNick(nick: string, r: NickReport): string {
       if (c === null) totalCost = null
       else totalCost += c
     }
+
+    let missStr = ''
+    const modelMiss = r.missByModel.get(model)
+    if (modelMiss && modelMiss.size > 0) {
+      let missTotal5m = 0, missTotal1h = 0
+      for (const { tokens5m, tokens1h } of modelMiss.values()) {
+        missTotal5m += tokens5m
+        missTotal1h += tokens1h
+      }
+      const mc = missCostFor(model, missTotal5m, missTotal1h)
+      if (totalMissCost !== null) {
+        if (mc === null) totalMissCost = null
+        else totalMissCost += mc
+      }
+      // Sort by total token count descending so the costliest reason appears first.
+      const reasons = [...modelMiss.entries()].sort(
+        (a, b) => (b[1].tokens5m + b[1].tokens1h) - (a[1].tokens5m + a[1].tokens1h)
+      )
+      const reasonParts = reasons.map(([reason, { tokens5m, tokens1h }]) =>
+        `${reason} ${fmtTokens(tokens5m + tokens1h)} (${fmtDollars(missCostFor(model, tokens5m, tokens1h))})`
+      )
+      missStr = `, miss: ${fmtTokens(missTotal5m + missTotal1h)} (${fmtDollars(mc)}) [${reasonParts.join(' · ')}]`
+    }
+
     perModel.push({
       model,
-      line: `  ${shortModel(model)}: ${fmtTokens(u.input)} in / ${fmtTokens(u.output)} out / ${fmtTokens(u.cache_read)} cache_r / ${fmtTokens(u.cache_creation_5m)} cache_w_5m / ${fmtTokens(u.cache_creation_1h)} cache_w_1h  (${fmtDollars(c)})`,
+      line: `  ${shortModel(model)}: ${fmtTokens(u.input)} in / ${fmtTokens(u.output)} out / ${fmtTokens(u.cache_read)} cache_r / ${fmtTokens(u.cache_creation_5m)} cache_w_5m / ${fmtTokens(u.cache_creation_1h)} cache_w_1h  (${fmtDollars(c)}${missStr})`,
     })
   }
   let wallMs = 0
@@ -355,7 +477,10 @@ function formatNick(nick: string, r: NickReport): string {
     wallMs = Date.parse(r.wallLast) - Date.parse(r.wallFirst)
     if (wallMs < 0) wallMs = 0
   }
-  const head = `${nick}: ${fmtDollars(totalCost)} · ${fmtDuration(r.apiDurationMs)} api / ${fmtDuration(wallMs)} wall`
+  const missPart = totalMissCost === null || totalMissCost > 0
+    ? ` (${fmtDollars(totalMissCost)} miss)`
+    : ''
+  const head = `${nick}: ${fmtDollars(totalCost)}${missPart} · ${fmtDuration(r.apiDurationMs)} api / ${fmtDuration(wallMs)} wall`
   if (perModel.length === 0) {
     return `${head}\n  (no in-window activity)`
   }
@@ -370,10 +495,12 @@ Subcommands:
              <stateDir>/token-snapshots.json. Subsequent reports for the
              same <issue> only count turns after this time.
   report     For each nick, print a multi-line cost report:
-                <nick>: $X.XX · 18m57s api / 44m42s wall
-                  <model>: in/out/cache_r/cache_w  ($X.XX)
+                <nick>: $X.XX ($Y.YY miss) · 18m57s api / 44m42s wall
+                  <model>: in/out/cache_r/cache_w  ($X.XX, miss: N ($Y.YY) [reason ...])
              If a snapshot exists for <issue>+<nick>, only in-window turns
              count; otherwise the full transcript cumulative is reported.
+             "miss" cost = (creation_rate - read_rate) x missed tokens; source:
+             message.diagnostics.cache_miss_reason in session transcripts.
 
 Cost is an estimate. Unknown model IDs render '$?' and emit a stderr
 warning; update src/pricing.ts to add them.
