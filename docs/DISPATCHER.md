@@ -48,10 +48,10 @@ fallback. The supported set is the first-party plugins shipped in this repo
 (`github-prs`, `github-issues`, `github-new-issues`); external plugin discovery
 is tracked in #255.
 
-`github-new-issues` is default-on whenever `repo` is set at the top level —
-the dispatcher injects an empty slice at boot if the operator hasn't written
-one. Issue #342 added it so newly-filed repo issues land in the project
-channel for triage without anyone having to DM `watch <N>` first.
+`github-new-issues` (added in #342) needs an explicit `plugins.github-new-issues`
+entry to run. `bin/roost init` writes one for new projects; for existing
+projects, add `"github-new-issues": {}` to enable the repo-wide new-issue
+feed on the project channel.
 
 ## Running
 

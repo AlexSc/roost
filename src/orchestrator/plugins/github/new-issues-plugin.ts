@@ -4,6 +4,11 @@
 // for hand-watched issues; this one surfaces brand-new issues so the team
 // doesn't have to notice them manually. Issue #342.
 //
+// Enabled by an explicit `plugins.github-new-issues` slice in config —
+// empty object is fine. `bin/roost init` writes one for new projects;
+// existing projects need an operator edit (or the example.json refresh) to
+// pick this up.
+//
 // State slice: `{ seen_issue_numbers: number[] }`. Seeding (`prev===null`)
 // captures the current open set without emitting — only ticks after seed
 // announce. Closed issues that re-open will re-announce only if they were

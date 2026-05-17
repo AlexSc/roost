@@ -1,60 +1,48 @@
 import { describe, it, expect } from 'bun:test'
-import { buildPlugins, DEFAULT_ON_PLUGINS } from '../build-plugins.js'
+import { buildPlugins } from '../build-plugins.js'
 import type { OrchestratorConfig } from '../config.js'
 import '../registry.js'
 
 const NOOP_LOG = () => {}
 
-describe('buildPlugins — default-on', () => {
-  it('honors explicit plugin keys from config.plugins', () => {
+describe('buildPlugins', () => {
+  it('instantiates plugins listed under config.plugins', () => {
     const cfg: OrchestratorConfig = {
       project: 'proj',
       repo: 'org/repo',
       plugins: { 'github-issues': { watched: [] }, 'github-prs': { watched: [] } },
     }
     const names = buildPlugins(cfg, '#proj-leads', NOOP_LOG).map(p => p.name)
-    // Explicit plugins come first, then default-on plugins are appended.
-    expect(names.slice(0, 2)).toEqual(['github-issues', 'github-prs'])
-    for (const def of DEFAULT_ON_PLUGINS) expect(names).toContain(def)
+    expect(names).toEqual(['github-issues', 'github-prs'])
   })
 
-  it('appends `github-new-issues` when repo is set and slice is missing', () => {
+  it('does not instantiate plugins absent from config.plugins (no default-on)', () => {
     const cfg: OrchestratorConfig = {
       project: 'proj',
       repo: 'org/repo',
       plugins: { 'github-issues': { watched: [] } },
     }
     const names = buildPlugins(cfg, '#proj-leads', NOOP_LOG).map(p => p.name)
-    expect(names).toContain('github-new-issues')
+    expect(names).toEqual(['github-issues'])
   })
 
-  it('does not duplicate `github-new-issues` when slice is explicit', () => {
+  it('returns an empty list when config.plugins is missing', () => {
+    const cfg: OrchestratorConfig = { project: 'proj', repo: 'org/repo' }
+    expect(buildPlugins(cfg, '#proj-leads', NOOP_LOG)).toEqual([])
+  })
+
+  it('preserves Object.keys insertion order so emission order is predictable', () => {
     const cfg: OrchestratorConfig = {
       project: 'proj',
       repo: 'org/repo',
-      plugins: { 'github-new-issues': {} },
+      plugins: {
+        'github-new-issues': {},
+        'github-prs': { watched: [] },
+        'github-issues': { watched: [] },
+      },
     }
     const names = buildPlugins(cfg, '#proj-leads', NOOP_LOG).map(p => p.name)
-    expect(names.filter(n => n === 'github-new-issues')).toHaveLength(1)
-  })
-
-  it('skips default-on plugins when repo is unset', () => {
-    const cfg: OrchestratorConfig = {
-      project: 'proj',
-      plugins: { 'github-issues': { watched: [] } },
-    }
-    const names = buildPlugins(cfg, '#proj-leads', NOOP_LOG).map(p => p.name)
-    expect(names).not.toContain('github-new-issues')
-  })
-
-  it('preserves explicit order, appends defaults at the end', () => {
-    const cfg: OrchestratorConfig = {
-      project: 'proj',
-      repo: 'org/repo',
-      plugins: { 'github-prs': { watched: [] }, 'github-issues': { watched: [] } },
-    }
-    const names = buildPlugins(cfg, '#proj-leads', NOOP_LOG).map(p => p.name)
-    expect(names).toEqual(['github-prs', 'github-issues', 'github-new-issues'])
+    expect(names).toEqual(['github-new-issues', 'github-prs', 'github-issues'])
   })
 
   it('throws on unknown plugin key', () => {
@@ -64,5 +52,14 @@ describe('buildPlugins — default-on', () => {
       plugins: { 'nonexistent': {} },
     }
     expect(() => buildPlugins(cfg, '#proj-leads', NOOP_LOG)).toThrow(/unknown plugin/)
+  })
+
+  it('error message lists the available registered plugins', () => {
+    const cfg: OrchestratorConfig = {
+      project: 'proj',
+      repo: 'org/repo',
+      plugins: { 'typo-plugin': {} },
+    }
+    expect(() => buildPlugins(cfg, '#proj-leads', NOOP_LOG)).toThrow(/available:.*github-issues/)
   })
 })
