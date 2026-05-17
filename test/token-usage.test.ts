@@ -456,6 +456,84 @@ describe('token-usage', () => {
       expect(haiku.output).toBe(22)
       expect(r.apiDurationMs).toBe(333)
     })
+
+    it('computes excess creation when cache writes exceed reads within a session', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      // creation_5m=1M, read=400k → excess=600k (all 5m tier)
+      await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 1_000_000, cache_r: 400_000 },
+      ])
+      const r = await collectForNick('roost-x', projects)
+      const exc = r.excessByModel.get('claude-opus-4-7')!
+      expect(exc.excess5m).toBeCloseTo(600_000)
+      expect(exc.excess1h).toBeCloseTo(0)
+    })
+
+    it('records no excess when reads meet or exceed creation', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      // creation=1M, read=1.5M → no excess
+      await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 1_000_000, cache_r: 1_500_000 },
+      ])
+      const r = await collectForNick('roost-x', projects)
+      expect(r.excessByModel.get('claude-opus-4-7')).toBeUndefined()
+    })
+
+    it('isolates excess per session: reads in session B do not offset writes in session A', async () => {
+      // This is the key regression guard for the per-session approach vs aggregate.
+      // Session A: write 1M, read 100k → excess 900k
+      // Session B: write 200k, read 500k → excess 0 (efficient)
+      // Per-session total: 900k excess
+      // Aggregate would be: creation=1.2M, read=0.6M → 600k (undercounts A's waste)
+      const a = join(projects, '-pa')
+      const b = join(projects, '-pb')
+      await mkdir(a, { recursive: true })
+      await mkdir(b, { recursive: true })
+      await writeSessionFile(a, 's1.jsonl', 'roost-lead-pm', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 1_000_000, cache_r: 100_000 },
+      ])
+      await writeSessionFile(b, 's2.jsonl', 'roost-lead-pm', [
+        { ts: '2026-05-16T11:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 200_000, cache_r: 500_000 },
+      ])
+      const r = await collectForNick('roost-lead-pm', projects)
+      const exc = r.excessByModel.get('claude-opus-4-7')!
+      // Should be 900k (from session A), not 600k (aggregate) or 0 (fully masked)
+      expect(exc.excess5m).toBeCloseTo(900_000)
+      expect(exc.excess1h).toBeCloseTo(0)
+    })
+
+    it('splits excess between 5m and 1h tiers proportionally to creation mix', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      // creation_5m=600k, creation_1h=400k, read=500k → excess=500k
+      // 5m share=60%, 1h share=40% → excess5m=300k, excess1h=200k
+      await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 600_000, cache_w_1h: 400_000, cache_r: 500_000 },
+      ])
+      const r = await collectForNick('roost-x', projects)
+      const exc = r.excessByModel.get('claude-opus-4-7')!
+      expect(exc.excess5m).toBeCloseTo(300_000)
+      expect(exc.excess1h).toBeCloseTo(200_000)
+    })
+
+    it('subagents and parent are combined for session-level excess', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      // Parent: write 500k, read 0 → contributes 500k to session creation
+      // Subagent: write 300k, read 900k → contributes 300k creation, 900k read
+      // Session total: creation=800k, read=900k → no excess (reads exceed writes combined)
+      const parent = await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 500_000, cache_r: 0 },
+      ])
+      await writeSubagentFile(parent, 'aaa6666666666666a', [
+        { ts: '2026-05-16T10:01:00Z', model: 'claude-opus-4-7', cache_w_5m: 300_000, cache_r: 900_000 },
+      ])
+      const r = await collectForNick('roost-x', projects)
+      // Combined: creation=800k, read=900k → no excess
+      expect(r.excessByModel.get('claude-opus-4-7')).toBeUndefined()
+    })
   })
 
   describe('main: snapshot + report', () => {
@@ -611,6 +689,52 @@ describe('token-usage', () => {
       expect(rep.out).toContain('roost-lead-pm: $0.00')
       expect(rep.out).toContain('roost-apm: $0.00')
       expect(rep.out).toContain('(no in-window activity)')
+    })
+
+    it('shows excess creation cost in per-model line and header when nonzero', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      // Session: creation_5m=1M (Opus 4.7), read=0 → excess=1M
+      // Excess cost = 1M × $6.25/M = $6.25
+      await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 1_000_000, cache_r: 0 },
+      ])
+      const rep = await capture(() => main(['report', stateDir, '339', 'roost-x']))
+      expect(rep.result).toBe(0)
+      // Header: shows excess
+      expect(rep.out).toContain('$6.25 excess')
+      // Per-model line: shows excess after the cost
+      expect(rep.out).toMatch(/opus-4-7:.*\$6\.25.*\$6\.25 excess/)
+    })
+
+    it('omits excess from header and per-model line when all creation is read back', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      // creation=500k, read=1M → read exceeds creation, no excess
+      await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 500_000, cache_r: 1_000_000 },
+      ])
+      const rep = await capture(() => main(['report', stateDir, '339', 'roost-x']))
+      expect(rep.result).toBe(0)
+      expect(rep.out).not.toContain('excess')
+    })
+
+    it('excess is summed across sessions per nick', async () => {
+      const a = join(projects, '-pa')
+      const b = join(projects, '-pb')
+      await mkdir(a, { recursive: true })
+      await mkdir(b, { recursive: true })
+      // Session A: creation=1M, read=0 → excess=1M → $6.25
+      await writeSessionFile(a, 's1.jsonl', 'roost-lead-pm', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 1_000_000, cache_r: 0 },
+      ])
+      // Session B: creation=500k, read=200k → excess=300k → $1.875 ≈ $1.88
+      await writeSessionFile(b, 's2.jsonl', 'roost-lead-pm', [
+        { ts: '2026-05-16T11:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 500_000, cache_r: 200_000 },
+      ])
+      const rep = await capture(() => main(['report', stateDir, '339', 'roost-lead-pm']))
+      // Total excess: (1M + 300k) × $6.25/M = $8.125 → $8.13
+      expect(rep.out).toContain('$8.13 excess')
     })
   })
 })

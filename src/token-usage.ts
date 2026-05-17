@@ -38,12 +38,17 @@ import { readFile, mkdir, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { mcpConnectionLine } from './mcp-banner.js'
-import { costFor, type UsageCounts } from './pricing.js'
+import { costFor, excessCreationCost, type UsageCounts } from './pricing.js'
 
 type ModelUsage = UsageCounts
 
 interface NickReport {
   byModel: Map<string, ModelUsage>
+  // Excess cache creation per model, summed across sessions. "Excess" = the
+  // portion of cache_creation that exceeded cache_read within a single session
+  // — tokens written but never read back. Computed per-session (not in aggregate)
+  // so a wasted write in one session isn't masked by reads in another.
+  excessByModel: Map<string, { excess5m: number; excess1h: number }>
   apiDurationMs: number
   wallFirst?: string
   wallLast?: string
@@ -62,6 +67,7 @@ interface SnapshotFile {
 function emptyReport(): NickReport {
   return {
     byModel: new Map(),
+    excessByModel: new Map(),
     apiDurationMs: 0,
     sessions: 0,
     unknownModels: new Set(),
@@ -77,6 +83,36 @@ function addToModel(report: NickReport, model: string, u: UsageCounts): void {
   cur.cache_creation_1h += u.cache_creation_1h
   cur.cache_read += u.cache_read
   report.byModel.set(model, cur)
+}
+
+// Merge one model usage map into another (used to accumulate per-session totals
+// before computing excess).
+function mergeUsageMap(into: Map<string, UsageCounts>, from: Map<string, UsageCounts>): void {
+  for (const [model, u] of from) {
+    const cur = into.get(model) ?? { input: 0, output: 0, cache_creation_5m: 0, cache_creation_1h: 0, cache_read: 0 }
+    cur.input += u.input
+    cur.output += u.output
+    cur.cache_creation_5m += u.cache_creation_5m
+    cur.cache_creation_1h += u.cache_creation_1h
+    cur.cache_read += u.cache_read
+    into.set(model, cur)
+  }
+}
+
+// For each model in the session map, compute the excess creation tokens
+// (max(0, creation_total - cache_read)) and accumulate into report.excessByModel.
+// The excess is split between tiers proportionally to their share of creation.
+function accumulateExcess(report: NickReport, sessionByModel: Map<string, UsageCounts>): void {
+  for (const [model, u] of sessionByModel) {
+    const creationTotal = u.cache_creation_5m + u.cache_creation_1h
+    const excess = Math.max(0, creationTotal - u.cache_read)
+    if (excess === 0 || creationTotal === 0) continue
+    const ratio5m = u.cache_creation_5m / creationTotal
+    const cur = report.excessByModel.get(model) ?? { excess5m: 0, excess1h: 0 }
+    cur.excess5m += excess * ratio5m
+    cur.excess1h += excess * (1 - ratio5m)
+    report.excessByModel.set(model, cur)
+  }
 }
 
 function trackTs(report: NickReport, ts: string): void {
@@ -147,7 +183,18 @@ interface AnyRow {
   }
 }
 
-// Walk one JSONL file, accumulate into `report`. Only rows with
+// Per-file scan result returned by scanFile. The caller merges these into the
+// session-level and nick-level accumulators.
+interface ScanResult {
+  byModel: Map<string, UsageCounts>
+  apiDurationMs: number
+  wallFirst?: string
+  wallLast?: string
+  unknownModels: Set<string>
+  contributed: boolean
+}
+
+// Walk one JSONL file and return its token usage. Only rows with
 // `timestamp > sinceTs` (when sinceTs is set) contribute. `seenRequestIds`
 // is shared across files so the same API call (one requestId) is only
 // counted once — Claude Code writes one assistant row per content block
@@ -158,10 +205,20 @@ interface AnyRow {
 // their full transcripts live in `PROJECT/SESSION/subagents/agent-*.jsonl`
 // (scanned separately with `countSidechain: true`), so this is defensive
 // — older or future shapes that inline sidechain rows in the parent are
-// filtered here to avoid double-counting. Returns whether the file
-// contributed at all (used as the session-counter signal).
-function scanFile(text: string, report: NickReport, seenRequestIds: Set<string>, seenTurnUuids: Set<string>, sinceTs?: string, countSidechain = false): boolean {
+// filtered here to avoid double-counting.
+function scanFile(text: string, seenRequestIds: Set<string>, seenTurnUuids: Set<string>, sinceTs?: string, countSidechain = false): ScanResult {
+  const byModel = new Map<string, UsageCounts>()
+  let apiDurationMs = 0
+  let wallFirst: string | undefined
+  let wallLast: string | undefined
+  const unknownModels = new Set<string>()
   let contributed = false
+
+  const trackLocal = (ts: string) => {
+    if (!wallFirst || ts < wallFirst) wallFirst = ts
+    if (!wallLast || ts > wallLast) wallLast = ts
+  }
+
   for (const line of text.split('\n')) {
     if (!line) continue
     let row: AnyRow
@@ -208,11 +265,17 @@ function scanFile(text: string, report: NickReport, seenRequestIds: Set<string>,
       // A purely-empty usage row contributes nothing — skip so an idle
       // session doesn't get tagged as "contributed".
       if (tokens.input || tokens.output || tokens.cache_creation_5m || tokens.cache_creation_1h || tokens.cache_read) {
-        addToModel(report, row.message.model, tokens)
+        const cur = byModel.get(row.message.model) ?? { input: 0, output: 0, cache_creation_5m: 0, cache_creation_1h: 0, cache_read: 0 }
+        cur.input += tokens.input
+        cur.output += tokens.output
+        cur.cache_creation_5m += tokens.cache_creation_5m
+        cur.cache_creation_1h += tokens.cache_creation_1h
+        cur.cache_read += tokens.cache_read
+        byModel.set(row.message.model, cur)
         if (costFor(row.message.model, tokens) === null) {
-          report.unknownModels.add(row.message.model)
+          unknownModels.add(row.message.model)
         }
-        if (ts) trackTs(report, ts)
+        if (ts) trackLocal(ts)
         contributed = true
       }
       continue
@@ -227,13 +290,13 @@ function scanFile(text: string, report: NickReport, seenRequestIds: Set<string>,
         if (seenTurnUuids.has(row.uuid)) continue
         seenTurnUuids.add(row.uuid)
       }
-      report.apiDurationMs += row.durationMs
-      if (ts) trackTs(report, ts)
+      apiDurationMs += row.durationMs
+      if (ts) trackLocal(ts)
       contributed = true
       continue
     }
   }
-  return contributed
+  return { byModel, apiDurationMs, wallFirst, wallLast, unknownModels, contributed }
 }
 
 export async function collectForNick(
@@ -259,8 +322,20 @@ export async function collectForNick(
     // skip the parse entirely.
     if (!text.includes(marker)) continue
     report.files.push(f)
-    const contributed = scanFile(text, report, seenRequestIds, seenTurnUuids, sinceTs)
-    if (contributed) report.sessions += 1
+
+    // Accumulate parent + all subagents into a session-level map before
+    // merging into the nick-level report. This lets us compute per-session
+    // excess creation (writes that weren't read back within the session)
+    // without cross-session reads masking the waste.
+    const sessionByModel = new Map<string, UsageCounts>()
+
+    const result = scanFile(text, seenRequestIds, seenTurnUuids, sinceTs)
+    if (result.contributed) report.sessions += 1
+    mergeUsageMap(sessionByModel, result.byModel)
+    report.apiDurationMs += result.apiDurationMs
+    if (result.wallFirst) trackTs(report, result.wallFirst)
+    if (result.wallLast) trackTs(report, result.wallLast)
+    for (const m of result.unknownModels) report.unknownModels.add(m)
 
     // Subagent transcripts: same nick, billed by directory locality.
     const subagentFiles = await listSubagentFiles(f)
@@ -272,12 +347,21 @@ export async function collectForNick(
         continue
       }
       report.files.push(sub)
-      const subContributed = scanFile(subText, report, seenRequestIds, seenTurnUuids, sinceTs, true)
+      const subResult = scanFile(subText, seenRequestIds, seenTurnUuids, sinceTs, true)
       // Each contributing subagent file counts as a separate session — a
       // worker that fires off three Task subagents shows `sessions: 4`
       // (parent + 3), which matches the "files scanned" mental model.
-      if (subContributed) report.sessions += 1
+      if (subResult.contributed) report.sessions += 1
+      mergeUsageMap(sessionByModel, subResult.byModel)
+      report.apiDurationMs += subResult.apiDurationMs
+      if (subResult.wallFirst) trackTs(report, subResult.wallFirst)
+      if (subResult.wallLast) trackTs(report, subResult.wallLast)
+      for (const m of subResult.unknownModels) report.unknownModels.add(m)
     }
+
+    // Merge session totals into the nick-level report and compute excess.
+    for (const [model, u] of sessionByModel) addToModel(report, model, u)
+    accumulateExcess(report, sessionByModel)
   }
   return report
 }
@@ -335,6 +419,7 @@ function shortModel(model: string): string {
 
 function formatNick(nick: string, r: NickReport): string {
   let totalCost: number | null = 0
+  let totalExcess: number | null = 0
   const perModel: Array<{ model: string; line: string }> = []
   // Stable order so output is reproducible across runs.
   const models = [...r.byModel.keys()].sort()
@@ -345,9 +430,18 @@ function formatNick(nick: string, r: NickReport): string {
       if (c === null) totalCost = null
       else totalCost += c
     }
+
+    const exc = r.excessByModel.get(model)
+    const ec = exc ? excessCreationCost(model, exc.excess5m, exc.excess1h) : 0
+    if (totalExcess !== null) {
+      if (ec === null) totalExcess = null
+      else totalExcess += ec
+    }
+    const excStr = (ec !== null && ec !== 0) || ec === null ? `, ${fmtDollars(ec)} excess` : ''
+
     perModel.push({
       model,
-      line: `  ${shortModel(model)}: ${fmtTokens(u.input)} in / ${fmtTokens(u.output)} out / ${fmtTokens(u.cache_read)} cache_r / ${fmtTokens(u.cache_creation_5m)} cache_w_5m / ${fmtTokens(u.cache_creation_1h)} cache_w_1h  (${fmtDollars(c)})`,
+      line: `  ${shortModel(model)}: ${fmtTokens(u.input)} in / ${fmtTokens(u.output)} out / ${fmtTokens(u.cache_read)} cache_r / ${fmtTokens(u.cache_creation_5m)} cache_w_5m / ${fmtTokens(u.cache_creation_1h)} cache_w_1h  (${fmtDollars(c)}${excStr})`,
     })
   }
   let wallMs = 0
@@ -355,7 +449,10 @@ function formatNick(nick: string, r: NickReport): string {
     wallMs = Date.parse(r.wallLast) - Date.parse(r.wallFirst)
     if (wallMs < 0) wallMs = 0
   }
-  const head = `${nick}: ${fmtDollars(totalCost)} · ${fmtDuration(r.apiDurationMs)} api / ${fmtDuration(wallMs)} wall`
+  const excessPart = (totalExcess !== null && totalExcess > 0) || totalExcess === null
+    ? ` · ${fmtDollars(totalExcess)} excess`
+    : ''
+  const head = `${nick}: ${fmtDollars(totalCost)}${excessPart} · ${fmtDuration(r.apiDurationMs)} api / ${fmtDuration(wallMs)} wall`
   if (perModel.length === 0) {
     return `${head}\n  (no in-window activity)`
   }
@@ -370,10 +467,13 @@ Subcommands:
              <stateDir>/token-snapshots.json. Subsequent reports for the
              same <issue> only count turns after this time.
   report     For each nick, print a multi-line cost report:
-                <nick>: $X.XX · 18m57s api / 44m42s wall
-                  <model>: in/out/cache_r/cache_w  ($X.XX)
+                <nick>: $X.XX · $Y.YY excess · 18m57s api / 44m42s wall
+                  <model>: in/out/cache_r/cache_w  ($X.XX, $Y.YY excess)
              If a snapshot exists for <issue>+<nick>, only in-window turns
              count; otherwise the full transcript cumulative is reported.
+             "excess" = cost of cache writes that exceeded cache reads within
+             each session (a lower bound — only intra-session waste is
+             detected; reads in one session don't offset writes in another).
 
 Cost is an estimate. Unknown model IDs render '$?' and emit a stderr
 warning; update src/pricing.ts to add them.
