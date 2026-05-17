@@ -1,17 +1,6 @@
 import type { PrSnap, IssueSnap } from './types.js'
-import type { PluginLogger } from '../../plugin.js'
-import {
-  fetchPr,
-  fetchPrReviewComments,
-  fetchPrConversationComments,
-  fetchPrReviews,
-  fetchPrLinkedIssues,
-  fetchIssue,
-  fetchIssueComments,
-  labelNames,
-  type GhComment,
-  type GhReview,
-} from './github-api.js'
+import type { GhClient, GhComment, GhReview } from './github-api.js'
+import { labelNames } from './github-api.js'
 
 export interface PrSnapInternal extends PrSnap {
   _review_comments_by_id: Record<number, GhComment>
@@ -46,23 +35,23 @@ function indexById<T extends { id?: number }>(items: T[]): Record<number, T> {
 }
 
 export async function snapshotPr(
-  log: PluginLogger,
+  client: GhClient,
   repo: string,
   number: number,
   prevSnap?: PrSnap | null
 ): Promise<PrSnapInternal> {
-  const view = await fetchPr(log, repo, number)
+  const view = await client.fetchPr(repo, number)
   const [reviewComments, convComments, reviews] = await Promise.all([
-    fetchPrReviewComments(log, repo, number),
-    fetchPrConversationComments(log, repo, number),
-    fetchPrReviews(log, repo, number),
+    client.fetchPrReviewComments(repo, number),
+    client.fetchPrConversationComments(repo, number),
+    client.fetchPrReviews(repo, number),
   ])
 
   const curHead = view.head_oid
   const linkedIssues =
     prevSnap && prevSnap.head_oid === curHead
       ? prevSnap.linked_issues ?? []
-      : await fetchPrLinkedIssues(log, repo, number)
+      : await client.fetchPrLinkedIssues(repo, number)
 
   return {
     repo,
@@ -86,10 +75,10 @@ export async function snapshotPr(
   }
 }
 
-export async function snapshotIssue(log: PluginLogger, repo: string, number: number): Promise<IssueSnapInternal> {
+export async function snapshotIssue(client: GhClient, repo: string, number: number): Promise<IssueSnapInternal> {
   const [issue, comments] = await Promise.all([
-    fetchIssue(log, repo, number),
-    fetchIssueComments(log, repo, number),
+    client.fetchIssue(repo, number),
+    client.fetchIssueComments(repo, number),
   ])
   return {
     repo,
