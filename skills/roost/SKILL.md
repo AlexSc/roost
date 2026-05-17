@@ -31,7 +31,7 @@ a tool surface.
 ```bash
 roost spawn <nick> [-c CHANS] [-m MODEL] [-s SESSION] [--mcp-config PATH] \
                    [--cwd PATH] [--prompt PROMPT] \
-                   [--permission-mode MODE] \
+                   [--permission-mode MODE] [--cache-ttl 5m|1h] \
                    [--perm-irc --perm-target NICK]
 roost shutdown <nick>
 roost list
@@ -49,6 +49,12 @@ Defaults:
   `--model` (or the default opus), the wrapper defaults to `auto` for opus
   and `acceptEdits` for everything else. Explicit `--permission-mode` wins
   in both paths.
+- cache-ttl: with `--agent`, defaults to `1h` (shipped agents are
+  long-lived: lead-pm, APM). With `--model`, defaults to `5m`
+  (workers/reviewers are short-lived). Explicit `--cache-ttl` wins.
+  Translated to claude-code's env knobs in the spawned session:
+  `FORCE_PROMPT_CACHING_5M=1` or `ENABLE_PROMPT_CACHING_1H=1`. 1h cache
+  writes cost 2x the 5m rate — keep ephemeral sessions on 5m.
 - cwd: current directory at spawn time
 - session name: `roost-<nick>`
 - mcp server: auto-loaded via plugin (override with `--mcp-config`)

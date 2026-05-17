@@ -129,6 +129,16 @@ Options:
                              frontmatter); with --model the wrapper defaults
                              to auto for opus and acceptEdits for everything
                              else. Explicit --permission-mode always wins.
+  --cache-ttl TTL            Prompt-cache TTL: \`5m\` or \`1h\`. Translated
+                             to claude-code's env-var knobs in the spawned
+                             session (\`FORCE_PROMPT_CACHING_5M=1\` for 5m,
+                             \`ENABLE_PROMPT_CACHING_1H=1\` for 1h).
+                             Defaulting splits by path: with --agent → 1h
+                             (shipped agents are long-lived); with --model
+                             → 5m (workers/reviewers are short-lived).
+                             Explicit --cache-ttl always wins. 1h cache
+                             writes cost 2x the 5m rate — don't pay 1h for
+                             a session that won't outlive 5 minutes.
   --cwd PATH                 Working directory for the spawned session.
                              Default: current directory. Pass a worktree
                              path so RVM/bundler/nvm resolve correctly
@@ -521,6 +531,7 @@ cmd_spawn() {
   local ask_irc=""
   local ask_target=""
   local permission_mode=""
+  local cache_ttl=""
   local extra_args=()
 
   if [ "$#" -lt 1 ]; then
@@ -546,6 +557,7 @@ cmd_spawn() {
       --ask-irc)        ask_irc="$2"; shift 2 ;;
       --ask-target)     ask_target="$2"; shift 2 ;;
       --permission-mode) permission_mode="$2"; shift 2 ;;
+      --cache-ttl)      cache_ttl="$2"; shift 2 ;;
 
       --)               shift; extra_args=("$@"); break ;;
       *)
@@ -631,6 +643,23 @@ cmd_spawn() {
       *)      permission_mode="acceptEdits" ;;
     esac
   fi
+  # --cache-ttl: validate, then split-by-path default. Shipped agents
+  # (lead-pm, APM) are long-lived → 1h; --model spawns (workers, reviewers)
+  # are short-lived → 5m. Explicit --cache-ttl wins. Translated to
+  # claude-code's env-var knobs at session boot (FORCE_PROMPT_CACHING_5M
+  # vs ENABLE_PROMPT_CACHING_1H).
+  if [ -n "${cache_ttl}" ]; then
+    case "${cache_ttl}" in
+      5m|1h) ;;
+      *) echo "error: --cache-ttl: must be 5m or 1h (got '${cache_ttl}')" >&2; exit 1 ;;
+    esac
+  else
+    if [ -n "${agent}" ]; then
+      cache_ttl="1h"
+    else
+      cache_ttl="5m"
+    fi
+  fi
   # Properly shell-quote each extra arg so spaces and metachars survive
   # the bash → tmux → inner-shell boundary. printf '%q' produces output
   # that re-parses to the original token. Guarded against empty array
@@ -647,7 +676,7 @@ cmd_spawn() {
   # not set so the operator can tell the wrapper deliberately didn't pass
   # one through (the agent's frontmatter `permissionMode:` or claude's own
   # default applies).
-  echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: ${permission_mode:-(claude default)}, cwd: ${cwd})"
+  echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: ${permission_mode:-(claude default)}, cache-ttl: ${cache_ttl}, cwd: ${cwd})"
   [ -n "${extra_str}" ] && echo "  extra claude args:${extra_str}"
 
   # Create a per-session data directory. mktemp guarantees uniqueness across
@@ -725,6 +754,12 @@ cmd_spawn() {
   # the inner command stays a clean single-quoted string.
   local tmux_env=(-e "ROOST_IRC_NICK=${nick}" -e "ROOST_IRC_CHANNELS=${channels}" -e "ROOST_DATA_DIR=${ROOST_DATA_DIR}" -e "ROOST_DIR=${ROOST_DIR}")
   tmux_env+=(-e "ROOST_IRC_SERVER=${IRC_HOST}")
+  # Cache-TTL env var: claude-code reads these at startup. 5m and 1h are
+  # mutually exclusive — only one is ever set.
+  case "${cache_ttl}" in
+    5m) tmux_env+=(-e "FORCE_PROMPT_CACHING_5M=1") ;;
+    1h) tmux_env+=(-e "ENABLE_PROMPT_CACHING_1H=1") ;;
+  esac
   if [ -n "${perm_sock}" ]; then
     tmux_env+=(-e "ROOST_PERM_SOCK=${perm_sock}" -e "ROOST_PERM_HOST=${IRC_HOST}" -e "ROOST_PERM_PORT=${IRC_PORT}")
     [ -n "${perm_target}" ] && tmux_env+=(-e "ROOST_PERM_TARGET=${perm_target}")

@@ -180,6 +180,67 @@ else
 fi
 teardown
 
+# -- Test 13: --model default → cache-ttl 5m ---------------------------------
+# Workers/reviewers (--model path) are short-lived; default to 5m.
+
+setup
+out="$("${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1 || true)"
+if echo "$out" | grep -q "cache-ttl: 5m"; then
+  ok "--model default → cache-ttl: 5m"
+else
+  fail "--model default → cache-ttl: 5m" "out=$out"
+fi
+teardown
+
+# -- Test 14: --agent default → cache-ttl 1h ---------------------------------
+# Shipped agents (lead-pm, APM) are long-lived; default to 1h.
+
+setup
+mkdir -p "$TDIR/.claude/agents"
+printf -- '---\nname: longlived\ndescription: x\nmodel: opus\npermissionMode: auto\n---\nbody\n' > "$TDIR/.claude/agents/longlived.md"
+out="$("${ROOST_BIN}" spawn testnick --agent longlived --cwd "$TDIR" 2>&1 || true)"
+if echo "$out" | grep -q "cache-ttl: 1h"; then
+  ok "--agent default → cache-ttl: 1h"
+else
+  fail "--agent default → cache-ttl: 1h" "out=$out"
+fi
+teardown
+
+# -- Test 15: explicit --cache-ttl 5m wins on --agent path -------------------
+
+setup
+mkdir -p "$TDIR/.claude/agents"
+printf -- '---\nname: longlived\ndescription: x\nmodel: opus\npermissionMode: auto\n---\nbody\n' > "$TDIR/.claude/agents/longlived.md"
+out="$("${ROOST_BIN}" spawn testnick --agent longlived --cache-ttl 5m --cwd "$TDIR" 2>&1 || true)"
+if echo "$out" | grep -q "cache-ttl: 5m"; then
+  ok "explicit --cache-ttl 5m wins on --agent path"
+else
+  fail "explicit --cache-ttl 5m wins on --agent path" "out=$out"
+fi
+teardown
+
+# -- Test 16: explicit --cache-ttl 1h wins on --model path -------------------
+
+setup
+out="$("${ROOST_BIN}" spawn testnick --cache-ttl 1h --cwd "$TDIR" 2>&1 || true)"
+if echo "$out" | grep -q "cache-ttl: 1h"; then
+  ok "explicit --cache-ttl 1h wins on --model path"
+else
+  fail "explicit --cache-ttl 1h wins on --model path" "out=$out"
+fi
+teardown
+
+# -- Test 17: invalid --cache-ttl is rejected --------------------------------
+
+setup
+err="$("${ROOST_BIN}" spawn testnick --cache-ttl 30m --cwd "$TDIR" 2>&1)"; exit_code=$?
+if [ "$exit_code" -ne 0 ] && echo "$err" | grep -q "must be 5m or 1h"; then
+  ok "invalid --cache-ttl rejected with clear message"
+else
+  fail "invalid --cache-ttl rejected with clear message" "exit=$exit_code err=$err"
+fi
+teardown
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

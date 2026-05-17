@@ -59,6 +59,8 @@ Pass the same `<human>` / `<gh-login>` values you parsed from your own initial p
 
 (`roost spawn` errors out if you pass `--model` alongside `--agent`; see `roost spawn --help`.) On boot the APM will start the dispatcher daemon if it isn't already running, then post a hello in `#<project>-leads`. If the hello doesn't arrive within a minute, check the APM session.
 
+Cache-TTL defaults are split by spawn path: `--agent` (you and the APM) gets `1h` and `--model` (workers, reviewers) gets `5m`. The wrapper picks; you don't need to pass `--cache-ttl` unless overriding (e.g. a long-running worker on a multi-day branch — pass `--cache-ttl 1h` explicitly in the spawn).
+
 ## Working In Channels
 
 **IRC replies only**: your text output isn't surfaced in the channel — use channel_message / direct_message. (Full reminder in MCP instructions.)
