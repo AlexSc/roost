@@ -77,10 +77,6 @@ export interface SpawnDeps {
 
 const defaultSleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
-// The single gh entrypoint — every gh call goes through here, so retry is
-// the contract for every caller. ghApi/ghGraphql below are thin shape
-// helpers; both delegate to spawnGh so retry can't be bypassed by a future
-// caller.
 export async function spawnGh(args: string[], deps: SpawnDeps): Promise<unknown> {
   const sleep = deps.sleep ?? defaultSleep
   const log = deps.log
