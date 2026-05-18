@@ -717,6 +717,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   // if no auto-replay arrives (empty channel, no history), the timer fires and the
   // awaiting query proceeds. Tight bound — replays land within ~100ms in practice;
   // anything wider just delays empty-channel queries for no benefit.
+  // Assumes loopback ergo; revisit if/when we attach to a remote IRC daemon.
   private static readonly PENDING_JOIN_REPLAY_MS = 500
 
   private markPendingJoinReplay(channel: string): void {
