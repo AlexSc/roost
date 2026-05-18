@@ -827,10 +827,12 @@ cmd_spawn() {
   # isn't absorbed by --dangerously-load-development-channels (variadic flag —
   # eats all subsequent non-flag args).
   #
-  # The read syntax is shell-flavored: bash/zsh use `$(< "$ROOST_PROMPT_FILE")`;
-  # fish has no `$(< file)` shorthand and treats unquoted `(...)` as command
-  # substitution but treats bare `(...)` inside double quotes as a literal, so
-  # we use unquoted `(string collect <$ROOST_PROMPT_FILE)` (fish 3.1+) — string
+  # The read syntax is shell-flavored: bash/zsh use `$(< "$ROOST_PROMPT_FILE")`
+  # (a bash/zsh shorthand); sh/dash use `$(cat "$ROOST_PROMPT_FILE")` (POSIX
+  # portable — `$(<file)` is an empty redirection in sh/dash); fish has no
+  # `$(< file)` shorthand and treats unquoted `(...)` as command substitution
+  # but treats bare `(...)` inside double quotes as a literal, so we use
+  # unquoted `(string collect <$ROOST_PROMPT_FILE)` (fish 3.1+) — string
   # collect emits a single argument with newlines preserved, which fish hands
   # to claude as one arg even unquoted.
   #
