@@ -186,8 +186,8 @@ Agent class guidance:
   would be lost across a directive-less auto-compact:
     --steer-compact --cache-ttl 1h
   Workers — multi-turn through reviewer + human review cycles that
-  routinely exceed 5 minutes; short-lived enough that auto-compact
-  rarely fires:
+  routinely exceed 5 minutes, so \`--cache-ttl 1h\`. But short-lived
+  enough that auto-compact rarely fires, so no \`--steer-compact\`:
     --cache-ttl 1h
   One-shot agents (reviewers, single-prompt workers) — read input,
   post output, shut down inside 5 minutes:

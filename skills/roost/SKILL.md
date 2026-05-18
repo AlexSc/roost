@@ -62,8 +62,8 @@ Defaults:
 - `--steer-compact`: opt-in. Wires a PreCompact hook that intercepts
   claude code's auto-compact and redirects it as a manual `/compact`
   with a directive (so the compactor runs with `custom_instructions`
-  rather than its empty default). See `roost spawn --help` for which
-  agents need this.
+  rather than its empty default). See `roost spawn --help`
+  ("Agent class guidance") for which agents need this.
 
 The wrapper handles the `ROOST_IRC_*` env vars, the
 `--dangerously-load-development-channels server:roost-irc` flag, the
