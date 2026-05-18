@@ -260,26 +260,32 @@ describe('computeRateLimitWarning', () => {
     expect(computeRateLimitWarning(makeInfo(2000, 30), [prev], T0)).toBeNull()
   })
 
+  it('returns null when history spans less than half the rolling window', () => {
+    // 100s < RATE_LIMIT_WINDOW_MS/2 (150s) — not enough history to trust rate.
+    const prev = { remaining: 5000, ts: T0 - 100 * SEC }
+    expect(computeRateLimitWarning(makeInfo(100, 30), [prev], T0)).toBeNull()
+  })
+
   it('returns warning string when exhaustion is predicted before reset', () => {
-    // 400 consumed in 15s → 1600/min. 200 remaining → ~0.125 min exhaustion. reset in 30min.
-    const prev = { remaining: 600, ts: T0 - 15 * SEC }
+    // 400 consumed in 160s → 150/min. 200 remaining → ~1.3 min exhaustion. reset in 30min.
+    const prev = { remaining: 600, ts: T0 - 160 * SEC }
     const warning = computeRateLimitWarning(makeInfo(200, 30), [prev], T0)
     expect(warning).toMatch(/rate limit warning/)
     expect(warning).toMatch(/200 calls remaining/)
     expect(warning).toMatch(/reset in 30m/)
-    expect(warning).toMatch(/~1600\/min/)
+    expect(warning).toMatch(/~150\/min/)
   })
 
   it('warning includes projected exhaustion time', () => {
-    // 60 consumed in 60s → 60/min. 60 remaining → 1 min to exhaustion. reset in 30min.
-    const prev = { remaining: 120, ts: T0 - 60 * SEC }
+    // 160 consumed in 160s → 60/min. 60 remaining → 1 min to exhaustion. reset in 30min.
+    const prev = { remaining: 220, ts: T0 - 160 * SEC }
     const warning = computeRateLimitWarning(makeInfo(60, 30), [prev], T0)
     expect(warning).toMatch(/projected exhaustion in 1m/)
   })
 
   it('shows seconds for sub-minute projected exhaustion', () => {
-    // 600 consumed in 60s → 600/min. 100 remaining → ~10s to exhaustion. reset in 30min.
-    const prev = { remaining: 700, ts: T0 - 60 * SEC }
+    // 1600 consumed in 160s → 600/min. 100 remaining → ~10s to exhaustion. reset in 30min.
+    const prev = { remaining: 1700, ts: T0 - 160 * SEC }
     const warning = computeRateLimitWarning(makeInfo(100, 30), [prev], T0)
     expect(warning).toMatch(/projected exhaustion in 10s/)
   })

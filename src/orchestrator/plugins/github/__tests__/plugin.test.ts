@@ -429,12 +429,12 @@ describe('GhPluginBase.observeRateLimit — pruning and anchor selection', () =>
 
   it('warns when rolling window rate predicts exhaustion before reset', async () => {
     const plugin = new GitHubPrsPlugin('#proj')
-    // Inject history entry 60 seconds ago with 5000 remaining.
+    // Inject history entry 160 seconds ago (> half-window threshold) with 5000 remaining.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ;(plugin as any)._rateLimitHistory = [
-      { remaining: 5000, ts: Date.now() - 60_000 },
+      { remaining: 5000, ts: Date.now() - 160_000 },
     ]
-    // Now 100 remaining, reset in 60 min. 4900 consumed in 60s → very high rate → warns.
+    // Now 100 remaining, reset in 60 min. 4900 consumed in 160s → very high rate → warns.
     const result = await observe(plugin, 100, 60 * 60_000)
     expect(result).toHaveLength(1)
     expect(result[0].payload.text).toMatch(/rate limit warning/)

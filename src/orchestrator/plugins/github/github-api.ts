@@ -164,6 +164,8 @@ export function computeRateLimitWarning(
   if (consumed <= 0) return null
   const intervalMs = now - anchor.ts
   if (intervalMs <= 0) return null
+  // Require at least half the window of history before trusting the rate estimate.
+  if (intervalMs < RATE_LIMIT_WINDOW_MS / 2) return null
   const ratePerMin = consumed / (intervalMs / 60_000)
   const minToReset = (current.resetAt * 1000 - now) / 60_000
   if (minToReset <= 0) return null
