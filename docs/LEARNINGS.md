@@ -496,11 +496,15 @@ Single-hook design, no polling, no thresholds, no per-agent
 plumbing:
 
 1. `bin/roost-compact-hook` is wired as a PreCompact hook by
-   `bin/roost spawn`. The hook carries a single-line, semicolon-
-   separated directive constant near the top of the script (one
-   place to edit if we ever tune it; covers the roost agent set
-   generically — role, IRC nick, channels joined, in-flight
-   issue/PR state, recent decisions, pending work).
+   `bin/roost spawn` *only when* `--steer-compact` is passed.
+   Long-running PM-class agents (lead-pm, associate-pm) opt in;
+   workers and reviewers don't (auto-compact is unlikely to fire
+   in their lifetime — default behavior is fine). The hook carries
+   a single-line, semicolon-separated directive constant near the
+   top of the script (one place to edit if we ever tune it; covers
+   the roost agent set generically — role, IRC nick, channels
+   joined, in-flight issue/PR state, recent decisions, pending
+   work).
 2. On `trigger="auto"`, the hook returns `{"decision":"block"}` on
    stdout — claude code halts the directive-less auto-compact.
 3. The hook also backgrounds a subshell that sleeps 150ms (lets
@@ -518,9 +522,10 @@ plumbing:
    post-compact backfill re-delivers messages dropped from the
    agent's context).
 
-`${ROOST_DATA_DIR}/session-name.txt` is written by `bin/roost
-spawn` so the hook honors `-s/--session NAME` override; falls back
-to the default `roost-${nick}` convention if absent. No CLI flags,
+When `--steer-compact` is passed, `bin/roost spawn` also writes
+`${ROOST_DATA_DIR}/session-name.txt` so the hook honors the
+`-s/--session NAME` override; falls back to the default
+`roost-${nick}` convention if absent. No per-agent directive flags,
 no agent.md section extraction — earlier drafts had both; alex's
 review on PR #376 ("fragile and heavyweight") pushed us to bake the
 directive into the hook itself.

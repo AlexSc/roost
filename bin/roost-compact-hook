@@ -11,17 +11,16 @@
 #    replay-dedupe cache clears (next chathistory backfill delivers messages
 #    compacted out of the agent's context).
 #
-# Wired by bin/roost at spawn time via roost-settings.json. Never exits
-# non-zero on its happy path — a hook failure must not block compaction
-# (the {"decision":"block"} we DO emit in case 1 is the explicit signal).
-#
-# Issue #368 — see docs/LEARNINGS.md Finding J.
+# Wired by bin/roost at spawn time via roost-settings.json when the agent
+# opts in with --steer-compact. Never exits non-zero on its happy path — a
+# hook failure must not block compaction (the {"decision":"block"} we DO
+# emit in case 1 is the explicit signal).
 set -u
 
-# Generic compaction directive for the roost agent set. One place to edit if
-# we ever tune it. Single-line, semicolon-separated — passed as the `/compact`
-# argument; the compactor treats it as a "behavior hint" for the summary
-# (not verbatim retention — see LEARNINGS Finding J).
+# Generic compaction directive for the roost agent set. One place to edit
+# if we ever tune it. Single-line, semicolon-separated — passed as the
+# `/compact` argument; the compactor treats it as a behavior hint for the
+# summary it produces (not verbatim retention).
 DIRECTIVE='retain: agent role and IRC nick; channels currently joined; in-flight GitHub issue and PR numbers and the state of each (worker spawned, draft, reviewed, merged); recent decisions, design pivots, and blockers from the project leads channel; pending work the agent committed to or is waiting on'
 
 log() { echo "roost-compact-hook: $*" >&2; }
@@ -75,15 +74,16 @@ if [ "$trigger" = "auto" ] && [ -n "$nick" ]; then
     session_name="roost-${nick}"
   fi
   if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$session_name" 2>/dev/null; then
-    # Background subshell: claude code reads our {"decision":"block"} on stdout
-    # and unwinds its own auto-compact state machine; we want our send-keys to
-    # land after that settles, not race it. 150ms is empirically clean from
-    # the auto-trigger smoke (issue #368). Buffer name uses $$ (this hook
-    # process's pid — distinct per invocation; a subshell inherits its
-    # parent's $$ in POSIX sh) to avoid collisions across concurrent compacts.
-    # The load-buffer / paste-buffer -p / send-keys Enter / delete-buffer
-    # sequence mirrors `cmd_send` in bin/roost — keep them in sync if either
-    # grows e.g. better multi-line handling.
+    # Background subshell: claude code reads our {"decision":"block"} on
+    # stdout and unwinds its own auto-compact state machine; we want our
+    # send-keys to land after that settles, not race it. 150ms is the
+    # smallest sleep that consistently avoids partial /compact buffers
+    # under load. Buffer name uses $$ (this hook process's pid — distinct
+    # per invocation; a subshell inherits its parent's $$ in POSIX sh) to
+    # avoid collisions across concurrent compacts. The load-buffer /
+    # paste-buffer -p / send-keys Enter / delete-buffer sequence mirrors
+    # `cmd_send` in bin/roost — keep them in sync if either grows e.g.
+    # better multi-line handling.
     (
       sleep 0.15
       buf="roost-compact-${nick}-$$"
@@ -93,7 +93,7 @@ if [ "$trigger" = "auto" ] && [ -n "$nick" ]; then
       tmux delete-buffer -b "$buf" 2>/dev/null || true
     ) &
     log "auto-trigger intercepted; queued /compact <directive> for $session_name"
-    printf '%s\n' '{"decision":"block","reason":"roost: redirecting auto-compact to manual /compact with custom_instructions (issue #368)"}'
+    printf '%s\n' '{"decision":"block","reason":"roost: redirecting auto-compact to manual /compact with custom_instructions"}'
     exit 0
   fi
   log "auto-trigger but tmux session $session_name not found; falling through"

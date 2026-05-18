@@ -212,7 +212,3 @@ Every per-project artifact carries a `<project>-` prefix:
 - Your own nick: `<project>-apm`
 
 When you spawn an agent or DM the dispatcher, always pass the namespaced nick + matching channel value explicitly.
-
-## Compaction
-
-Claude code auto-compacts the conversation when context fills. Roost's PreCompact hook intercepts the auto-trigger and runs `/compact` with a generic directive that asks the compactor to retain role, IRC nick, channels joined, in-flight issue/PR numbers and state, recent decisions, and pending work — which for the APM means the issue→PR→worker-nick→reviewer-nick mappings, outstanding acks, and snapshot file paths for unposted token-cost diffs. The SessionStart hook tells you when you've returned; re-announce yourself in `#<project>-leads` and resume from the restored mapping. If it's missing or partial, ask the lead to restate rather than guessing. Issue #368 + `docs/LEARNINGS.md` Finding J cover the why.
