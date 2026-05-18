@@ -17,7 +17,7 @@ import type { Plugin, PluginTickResult } from '../plugin.js'
 let dir: string
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'roost-dm-handler-test-'))
+  dir = await mkdtemp(join(tmpdir(), 'roost-dispatcher-dm-handler-test-'))
 })
 
 afterEach(async () => {
