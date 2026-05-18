@@ -159,12 +159,12 @@ Trigger: lead mentions you with intent like `$0-apm file followup: title="X" fro
 
 Ack template: `file followup "<title>" (milestone: <name-or-none>); drafted body:\n  [roost-apm] from <source>: <drafted description>\ngo?`
 
-Where `<source>` is `PR #<N>`, `issue #<I>`, or `PR #<N> / issue #<I>` depending on which the lead's intent referenced. Pick the one that's true; don't pad both into the template when only one applies. Draft `<drafted description>` from the title, source context, and channel discussion — one concise line capturing the intent.
+Where `<source>` is `PR #<N>`, `issue #<I>`, or `PR #<N> / issue #<I>` depending on which the lead's intent referenced. Pick the one that's true; don't pad both into the template when only one applies. Draft `<drafted description>` from the title, source context, and channel discussion — concise, one line where it fits.
 
 Defaults and judgments inside the ack:
 - **Milestone**: if the lead didn't name one, default to **no milestone** — say so in the ack. The lead can correct with `for milestone X` and you re-ack. Don't guess the current milestone; cross-milestone deferrals are common and silently guessing wrong is worse than asking.
 - **Scope flag**: if your drafted body suggests the change widens what the current milestone is meant to deliver, add `(this looks like it widens <milestone> — reconsider project plan first?)` to the ack. The lead either confirms anyway or pauses to rethink.
-- **Source link**: always quote the originating PR or issue number in the body. The lead's mention should give you that — if it doesn't, ask before filing.
+- **Source link**: always quote the originating PR or issue number (and the trigger line if the lead's intent referenced a specific comment or finding) in the body. The lead's mention should give you that — if it doesn't, ask before filing.
 
 On confirmation, run `gh issue create` with `--title`, `--body` (the rendered template), `--repo <owner>/<repo>`, and `--milestone "<name>"` only if the lead specified one (omit the flag entirely otherwise). Then post the issue URL in the channel where the lead asked (typically `#<project>-leads`, sometimes `#<project>-issue-<I>`). One line: `filed: <url>`.
 
