@@ -292,18 +292,50 @@ fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
 
-# -- Test 18c: bash keeps the $(< file) prompt-read syntax --------------------
+# -- Test 18c: bash uses $(cat ...) prompt-read syntax ------------------------
 
 setup
 out="$(SHELL=/bin/bash ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" --prompt hello 2>&1 || true)"
 data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
 inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
 if [ -n "$inner_cmd" ] \
-    && echo "$inner_cmd" | grep -qF '$(< "$ROOST_PROMPT_FILE")' \
+    && echo "$inner_cmd" | grep -qF '$(cat "$ROOST_PROMPT_FILE")' \
     && ! echo "$inner_cmd" | grep -qF '(string collect <$ROOST_PROMPT_FILE)'; then
-  ok "SHELL=bash + --prompt: inner_cmd uses \$(<file), not string-collect"
+  ok "SHELL=bash + --prompt: inner_cmd uses \$(cat ...), not string-collect"
 else
-  fail "SHELL=bash + --prompt: inner_cmd uses \$(<file), not string-collect" "inner_cmd=$inner_cmd"
+  fail "SHELL=bash + --prompt: inner_cmd uses \$(cat ...), not string-collect" "inner_cmd=$inner_cmd"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 18d: sh uses $(cat ...) prompt-read syntax, not $(< file) -----------
+
+setup
+out="$(SHELL=/bin/sh ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" --prompt hello 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
+if [ -n "$inner_cmd" ] \
+    && echo "$inner_cmd" | grep -qF '$(cat "$ROOST_PROMPT_FILE")' \
+    && ! echo "$inner_cmd" | grep -qF '$(< "$ROOST_PROMPT_FILE")'; then
+  ok "SHELL=sh + --prompt: inner_cmd uses \$(cat ...), not \$(<file)"
+else
+  fail "SHELL=sh + --prompt: inner_cmd uses \$(cat ...), not \$(<file)" "inner_cmd=$inner_cmd"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 18e: dash uses $(cat ...) prompt-read syntax, not $(< file) ---------
+
+setup
+out="$(SHELL=/bin/dash ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" --prompt hello 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
+if [ -n "$inner_cmd" ] \
+    && echo "$inner_cmd" | grep -qF '$(cat "$ROOST_PROMPT_FILE")' \
+    && ! echo "$inner_cmd" | grep -qF '$(< "$ROOST_PROMPT_FILE")'; then
+  ok "SHELL=dash + --prompt: inner_cmd uses \$(cat ...), not \$(<file)"
+else
+  fail "SHELL=dash + --prompt: inner_cmd uses \$(cat ...), not \$(<file)" "inner_cmd=$inner_cmd"
 fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown

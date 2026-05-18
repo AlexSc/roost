@@ -827,12 +827,13 @@ cmd_spawn() {
   # isn't absorbed by --dangerously-load-development-channels (variadic flag —
   # eats all subsequent non-flag args).
   #
-  # The read syntax is shell-flavored: bash/zsh use `$(< "$ROOST_PROMPT_FILE")`;
-  # fish has no `$(< file)` shorthand and treats unquoted `(...)` as command
-  # substitution but treats bare `(...)` inside double quotes as a literal, so
-  # we use unquoted `(string collect <$ROOST_PROMPT_FILE)` (fish 3.1+) — string
-  # collect emits a single argument with newlines preserved, which fish hands
-  # to claude as one arg even unquoted.
+  # The read syntax is shell-flavored: everywhere outside fish we use
+  # `$(cat "$ROOST_PROMPT_FILE")` (POSIX portable); fish has no `$(...)` syntax
+  # and treats unquoted `(...)` as command substitution but treats bare `(...)`
+  # inside double quotes as a literal, so we use unquoted
+  # `(string collect <$ROOST_PROMPT_FILE)` (fish 3.1+) — string collect emits
+  # a single argument with newlines preserved, which fish hands to claude as
+  # one arg even unquoted.
   #
   # Done before require_tmux/require_ircd so the ROOST_SPAWN_KEEP_DATA_DIR=1
   # test seam can surface the assembled command without an IRC daemon running.
@@ -864,7 +865,7 @@ cmd_spawn() {
     # shellcheck disable=SC2016
     case "${shell_basename}" in
       fish) inner_cmd="${inner_cmd} --"' (string collect <$ROOST_PROMPT_FILE)' ;;
-      *)    inner_cmd="${inner_cmd} --"' "$(< "$ROOST_PROMPT_FILE")"' ;;
+      *)    inner_cmd="${inner_cmd} --"' "$(cat "$ROOST_PROMPT_FILE")"' ;;
     esac
     tmux_env+=(-e "ROOST_PROMPT_FILE=${prompt_file}")
   fi
