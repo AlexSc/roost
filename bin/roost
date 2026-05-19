@@ -363,7 +363,7 @@ cmd_init() {
         exit 1
       fi
     else
-      echo "error: not inside a git repo and --repo not provided — pass --repo <owner>/<repo> to set the watched repo explicitly" >&2
+      echo "error: not inside a git repo and \`--repo\` not provided — pass \`--repo Owner/repo\` to set the watched repo explicitly" >&2
       exit 1
     fi
   fi
