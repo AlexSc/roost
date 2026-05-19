@@ -16,12 +16,14 @@ import {
   type PluginConfig,
   type PluginTickResult,
   type TaggedEvent,
-  type WatchedEntry,
-  resolveRepoEntry,
+  type TaggedEventPayload,
+  type PluginFactory,
+  type PluginLogger,
+  type Command,
 } from 'roost/plugin'
 ```
 
-`PluginConfig` is intentionally narrow — `{ plugins?: Record<string, unknown> }`. Your plugin only sees its own slice via `BasePlugin.pluginConfig<T>(config)`; the wider orchestrator config shape (project/repo/irc/etc.) is not part of the public seam. Anything you need at config time goes in your slice.
+`PluginConfig` is intentionally narrow — `{ plugins?: Record<string, unknown> }`. The dispatcher passes the full orchestrator config at runtime (project/repo/irc/etc. are all present on the value), but declaring your method parameters as `PluginConfig` keeps your code honest about reading only your own slice via `BasePlugin.pluginConfig<T>(config)`. It's a convention, not a fence — but it's the convention the seam is shaped around. Anything you need at config time goes in your slice.
 
 ## Contract
 
@@ -106,7 +108,7 @@ Roost ships via Homebrew tap, not npm, so the import path `'roost/plugin'` doesn
 - **Git dependency** — pin roost in your `package.json`:
 
   ```json
-  { "dependencies": { "roost": "github:AvesAlight/roost#v0.6.3" } }
+  { "dependencies": { "roost": "github:AvesAlight/roost#<tag>" } }
   ```
 
 Either way, the resolved package exposes only `roost/plugin`. Deep imports into `src/orchestrator/...` are not part of the supported surface and may change.
