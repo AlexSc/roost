@@ -1,12 +1,12 @@
 # Writing a roost plugin
 
-A plugin is the unit of extension for the dispatcher (`src/orchestrator.ts`). Each plugin owns symmetric slices of `config.plugins[name]` and `state.plugins[name]`, declares which IRC channels it wants joined, and on each tick returns pre-routed, pre-formatted events for the dispatcher to write.
+A plugin polls a source on each dispatcher tick and returns IRC events. It owns a config slice at `config.plugins[name]` and a state slice at `state.plugins[name]`. The same name keys both.
 
-The built-ins (`github-prs`, `github-issues`, `github-new-issues`, `github-commits`) all use the same seam. External plugins are loaded the same way — they just live outside this repo.
+The built-ins (`github-prs`, `github-issues`, `github-new-issues`, `github-commits`) all use this contract. External plugins load via `plugin_paths` in your dispatcher config and use the same contract.
 
 ## The seam
 
-External plugins import from `roost/plugin` — never deep `src/orchestrator/...` paths. The set re-exported there is the stable surface; everything else is internal.
+Import from `roost/plugin`. Deep imports into `src/orchestrator/...` are not supported and may change.
 
 ```ts
 import {
@@ -23,26 +23,24 @@ import {
 } from 'roost/plugin'
 ```
 
-`PluginConfig` is intentionally narrow — `{ plugins?: Record<string, unknown> }`. The dispatcher passes the full orchestrator config at runtime (project/repo/irc/etc. are all present on the value), but declaring your method parameters as `PluginConfig` keeps your code honest about reading only your own slice via `BasePlugin.pluginConfig<T>(config)`. It's a convention, not a fence — but it's the convention the seam is shaped around. Anything you need at config time goes in your slice.
+`PluginConfig` is `{ plugins?: Record<string, unknown> }`. The dispatcher passes the full config at runtime. Type your method parameters as `PluginConfig` and read your slice via `BasePlugin.pluginConfig<T>(config)`. Put everything else you need in your slice.
 
 ## Contract
 
-Four methods (one optional):
-
 | Method | Purpose |
 |---|---|
-| `name` | Slot key for both `config.plugins[name]` and `state.plugins[name]`. Must match the string passed to `registerPlugin`. |
-| `desiredChannels(config)` | Synchronous, config-only view of channels to join at boot, before the first tick. Excludes the project/default channel (orchestrator adds it). |
-| `runTick(config, prevState)` | Returns `{ state, taggedEvents, channels }`. `prevState === null` signals a seed tick. `channels` is the comprehensive post-scrape set. |
-| `handleCommand?(config, cmd)` | Optional DM handler. Return a reply line when this plugin owns the command, `null` otherwise. MUST NOT throw — return `"error: ..."` for deterministic failures. |
+| `name` | Slot key for both slices. Must match the string passed to `registerPlugin`. |
+| `desiredChannels(config)` | Channels to join at boot. The orchestrator adds the project channel. |
+| `runTick(config, prevState)` | Returns `{ state, taggedEvents, channels }`. `prevState === null` on a seed tick. `channels` is the post-scrape set. |
+| `handleCommand?(config, cmd)` | Optional. Returns a reply when this plugin owns the command, `null` otherwise. Return `"error: ..."` on failure. Don't throw. |
 
-The dispatcher writes each `TaggedEvent` to every channel in `event.channels`. Event kinds are plugin-internal — pick whatever vocabulary fits your source.
+The dispatcher writes each `TaggedEvent` to every channel in `event.channels`. Event kind strings are yours.
 
-## The register-on-load handshake
+## Register on load
 
-The loader treats each `plugin_paths` entry as a side-effect import. The module **must** call `registerPlugin(name, factory)` at top level; the orchestrator then sees the new name when it walks `config.plugins`. If the registration is buried inside a function or a default export, the dispatcher will fail with `unknown plugin in config: <name>`.
+Each `plugin_paths` entry is imported for its side effects. The module must call `registerPlugin(name, factory)` at the top level. If you bury the call in a function or a default export, the dispatcher fails with `unknown plugin in config: <name>`.
 
-Names collide loudly: `registerPlugin` throws on a duplicate. Built-ins are non-negotiable; external plugins pick a unique name (a short scoped slug works — e.g. `acme-deploys`, `linear-issues`).
+`registerPlugin` throws on duplicate names. Built-in names are reserved. Pick a unique slug like `acme-deploys` or `linear-issues`.
 
 ## Minimal example
 
@@ -90,21 +88,19 @@ Operator config:
 }
 ```
 
-Relative `plugin_paths` resolve against `.orchestrator/` (the directory containing `config.json`), so configs stay portable across operator checkouts. Absolute paths work too — the loader runs `path.resolve` either way.
+Relative `plugin_paths` resolve against `.orchestrator/`. Absolute paths work too.
 
 ## Failure modes (all fatal at boot)
 
-- A `plugin_paths` entry that doesn't import (missing file, syntax error, throw at top level).
-- A duplicate `registerPlugin` name — internal or external collisions both throw.
-- A `config.plugins[name]` key with no matching registration (`unknown plugin in config: <name>. available: ...`).
-
-These crash the dispatcher loudly rather than silently dropping events. Fix the path / publish the module / correct the config, then retry.
+- `plugin_paths` entry won't import: missing file, syntax error, top-level throw.
+- Duplicate `registerPlugin` name.
+- `config.plugins[name]` with no matching registration: `unknown plugin in config: <name>. available: ...`.
 
 ## Development workflow
 
-A day-1 loop for a fresh external plugin repo:
+From a fresh repo:
 
-1. **Bootstrap the repo.** `bun init` (or pnpm/npm equivalent). Add roost via one of the [install patterns](#installing-roostplugin-in-an-external-project) below — `bun link` from a roost checkout for tight dev loops, git-dep for stable consumption.
+1. **Bootstrap.** `bun init` (or pnpm/npm). Add roost via one of the [install patterns](#installing-roostplugin) below: `bun link` for dev, git-dep for stable consumption.
 
 2. **Write the module.** A single file, top-level `registerPlugin(name, factory)`, no default export. See [Minimal example](#minimal-example).
 
@@ -118,21 +114,19 @@ A day-1 loop for a fresh external plugin repo:
    }
    ```
 
-4. **Dry-run the dispatcher.** Prints the `TaggedEvent` JSON to stdout — no IRC connection, no state written:
+4. **Dry-run the dispatcher.** Prints `TaggedEvent` JSON to stdout. No IRC, no state written.
 
    ```sh
    "$(roost root)/bin/dispatcher" --dry-run --config-dir .orchestrator
    ```
 
-   (From a roost checkout: `bin/dispatcher --dry-run --config-dir .orchestrator`.)
+   From a roost checkout: `bin/dispatcher --dry-run --config-dir .orchestrator`.
 
-5. **Iterate.** Edit the plugin file, re-run step 4. The loader re-imports each boot; for a continuously running daemon, restart it (`bin/stop-dispatcher` + `bin/start-dispatcher`).
+5. **Iterate.** Edit and re-run step 4. For a running daemon, restart it: `bin/stop-dispatcher` then `bin/start-dispatcher`.
 
 ## Testing
 
-**Unit tests.** Construct the plugin directly and drive its methods. Use `bun:test`'s `spyOn(...).mockImplementation(...)` to stub network calls. Canonical reference: `src/orchestrator/plugins/github/__tests__/commits-plugin.test.ts`.
-
-The shape:
+**Unit tests.** Construct the plugin and call its methods. Stub network calls with `bun:test`'s `spyOn(...).mockImplementation(...)`. Reference: `src/orchestrator/plugins/github/__tests__/commits-plugin.test.ts`.
 
 ```ts
 import { describe, it, expect } from 'bun:test'
@@ -155,23 +149,23 @@ describe('MyPlugin.runTick', () => {
 })
 ```
 
-Two ticks (seed + normal) cover the common case. Mock external IO at the boundary the plugin owns; assert on `state` and `taggedEvents`.
+Mock IO at the boundary your plugin owns. Assert on `state` and `taggedEvents`.
 
-**Integration tests** are optional — a running dispatcher against a test IRC server with only your plugin loaded. Worth it only if your plugin's correctness depends on the dispatch layer (channel sync, DM handling). Most plugins don't.
+**Integration tests** are optional. Spin up a test IRC server and run the dispatcher with only your plugin loaded. Worth doing only if your plugin depends on the dispatch layer (channel sync, DM handling).
 
-## Installing `roost/plugin` in an external project
+## Installing `roost/plugin`
 
-Roost ships via Homebrew tap, not npm, so the import path `'roost/plugin'` doesn't resolve out of the box. Two patterns work today:
+Roost ships via Homebrew tap, not npm. The import path `'roost/plugin'` doesn't resolve out of the box. Two ways to fix it:
 
-- **`bun link` from a roost checkout** — clone roost, `bun link` in the roost root, `bun link roost` in your project. Picks up the `exports` map.
-- **Git dependency** — pin roost in your `package.json`:
+- **`bun link`.** Clone roost, `bun link` in its root, `bun link roost` in your project.
+- **Git dependency.** Pin roost in your `package.json`:
 
   ```json
   { "dependencies": { "roost": "github:AvesAlight/roost#<tag>" } }
   ```
 
-Either way, the resolved package exposes only `roost/plugin`. Deep imports into `src/orchestrator/...` are not part of the supported surface and may change.
+Both expose only `roost/plugin`. Deep imports may change.
 
 ## Versioning
 
-There is no compile-time API version check yet. The seam is stable in spirit — `Plugin`, `BasePlugin`, `TaggedEvent`, `PluginTickResult` haven't changed shape since they landed — but changes will be signalled via the roost release notes and the tag your git dep is pinned to. A `requires` field on the factory may land once a second project actually ships an external plugin and we have something concrete to coordinate against.
+No compile-time API check yet. The seam types (`Plugin`, `BasePlugin`, `TaggedEvent`, `PluginTickResult`) haven't changed shape since they landed. Pin a tag if you need stability. A `requires` field may land once a second external plugin exists.
