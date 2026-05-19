@@ -29,13 +29,15 @@ export interface ModelPricing {
 export const PRICING: Readonly<Record<string, ModelPricing>> = {
   // Opus 4.x current generation — $5 base input. (Opus 4.1 and earlier
   // remain on the older $15 tier.)
-  'claude-opus-4-7':           { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
-  'claude-opus-4-6':           { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
-  'claude-opus-4-5':           { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
+  'claude-opus-4-7':            { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
+  'claude-opus-4-6':            { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
+  'claude-opus-4-5':            { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
+  'claude-opus-4-5-20251101':   { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
   'claude-opus-4-1':           { input: 15, output: 75, cache_creation_5m: 18.75, cache_creation_1h: 30,  cache_read: 1.50 },
   // Sonnet 4.x current generation.
-  'claude-sonnet-4-6':         { input: 3,  output: 15, cache_creation_5m: 3.75,  cache_creation_1h: 6,   cache_read: 0.30 },
-  'claude-sonnet-4-5':         { input: 3,  output: 15, cache_creation_5m: 3.75,  cache_creation_1h: 6,   cache_read: 0.30 },
+  'claude-sonnet-4-6':              { input: 3,  output: 15, cache_creation_5m: 3.75,  cache_creation_1h: 6,   cache_read: 0.30 },
+  'claude-sonnet-4-5':              { input: 3,  output: 15, cache_creation_5m: 3.75,  cache_creation_1h: 6,   cache_read: 0.30 },
+  'claude-sonnet-4-5-20250929':     { input: 3,  output: 15, cache_creation_5m: 3.75,  cache_creation_1h: 6,   cache_read: 0.30 },
   // Haiku 4.5 (with date-stamped variant Claude Code records).
   'claude-haiku-4-5':          { input: 1,  output: 5,  cache_creation_5m: 1.25,  cache_creation_1h: 2,   cache_read: 0.10 },
   'claude-haiku-4-5-20251001': { input: 1,  output: 5,  cache_creation_5m: 1.25,  cache_creation_1h: 2,   cache_read: 0.10 },
