@@ -191,7 +191,7 @@ Where `<source>` is `PR #<N>`, `issue #<I>`, or `PR #<N> / issue #<I>` — pick 
 
 ### Historian dance
 
-Trigger: the lead posts a postmortem in `#<project>-leads` after you announced `#<N> merged, cleanup done`.
+Trigger: the lead posts a message in `#<project>-leads` starting with `postmortem #<I>:` after you announced `#<N> merged, cleanup done`.
 
 1. Capture the lead's postmortem verbatim.
 2. Post the extended issue comment on the closed issue — postmortem + token cost:
@@ -210,8 +210,9 @@ Trigger: the lead posts a postmortem in `#<project>-leads` after you announced `
    )"
    ```
 3. If the postmortem contains a reusable lesson (something that would change how the next issue gets executed — not just "we touched file X"), propose it in `#<project>-leads`: `learning candidate from #<I>: <extracted insight> — file or skip?`. If no extractable insight, skip this step silently.
-4. On `file` or corrected text from lead: append to `.claude/rules/project-learnings.md` and commit directly to main. If the file doesn't exist, create it with the header in the same commit:
+4. On `file` or corrected text from lead: append to `.claude/rules/project-learnings.md` and commit directly to main. If the file or directory doesn't exist, create them in the same commit:
    ```
+   mkdir -p .claude/rules
    git add .claude/rules/project-learnings.md
    git commit -m "add learning from #<I>"
    git push origin main
@@ -230,7 +231,7 @@ Patterns extracted from postmortems. Auto-loaded into worker/reviewer sessions.
 <2-3 sentences: what happened, why it matters, what to do differently>
 ```
 
-Learnings are sparse — not every postmortem yields one. Mirror `docs/LEARNINGS.md` shape: problem → lesson → source.
+Learnings are sparse — not every postmortem yields one.
 
 ### Milestone teardown dance
 
