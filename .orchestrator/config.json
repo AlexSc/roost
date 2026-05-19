@@ -11,6 +11,17 @@
   },
   "plugins": {
     "github-prs": { "watched": [] },
-    "github-issues": { "watched": [] }
+    "github-issues": { "watched": [] },
+    "github-new-issues": {},
+    "github-commits": {
+      "watched": [
+        {
+          "repo": "AvesAlight/homebrew-tap",
+          "branch": "main",
+          "path": "Formula/roost.rb",
+          "channels": ["#roost-leads"]
+        }
+      ]
+    }
   }
 }
