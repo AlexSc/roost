@@ -100,6 +100,7 @@ if [ "$trigger" = "auto" ] && [ -n "$nick" ]; then
         printf '%s\n' '{"decision":"block","reason":"roost: compact inject in flight, debouncing re-inject"}'
         exit 0
       fi
+      log "auto-trigger: lock claimed, injecting /compact"
     fi
     # Background subshell: claude code reads our {"decision":"block"} on
     # stdout and unwinds its own auto-compact state machine; we want our

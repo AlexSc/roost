@@ -213,7 +213,22 @@ else
 fi
 teardown_tmpdir
 
-# -- Test 9: concurrent invocations — only one inject fires -------------------
+# -- Test 9: PostCompact clears lock even when mcp.pid is missing -------------
+# Lock cleanup must run regardless of the SIGUSR2 path's success.
+
+setup_tmpdir
+mkdir "$TDIR/compact-inject.lock.d"
+# no mcp.pid written — simulates MCP died between PreCompact and PostCompact
+env -i ROOST_DATA_DIR="$TDIR" "$POST_HOOK" >/dev/null 2>/dev/null
+
+if [ ! -d "$TDIR/compact-inject.lock.d" ]; then
+  ok "post-compact: lock cleared even when mcp.pid is missing"
+else
+  fail "post-compact: lock cleared even when mcp.pid is missing" "lock still exists"
+fi
+teardown_tmpdir
+
+# -- Test 10: concurrent invocations — only one inject fires ------------------
 # mkdir is POSIX-atomic: two simultaneous hook invocations can't both claim
 # the lock. Exactly one should inject; the other should debounce.
 
