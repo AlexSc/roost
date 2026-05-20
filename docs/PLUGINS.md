@@ -69,7 +69,7 @@ When two plugins want overlapping shapes (e.g. a linear plugin claiming bare `wa
 
 ### Migration from pre-0.7.0
 
-Plugins that used to receive every `Command` via `handleCommand` (the central parser model) need to add a `parseCommand` to claim what they want. `handleCommand` now only fires for `list`, `help`, and the plugin's own claimed commands. There are no built-in `watch`/`unwatch`/`watch-repo`/`unwatch-repo` Command kinds anymore; the dispatcher wraps claimed payloads as `{kind:'plugin', plugin:<name>, cmd:<your shape>}`.
+Plugins that used to receive every `Command` via `handleCommand` (the central parser model) need to add a `parseCommand` to claim what they want. `handleCommand` now only fires for `list`, `help`, and the plugin's own claimed commands. There are no built-in `watch`/`unwatch`/`watch-repo`/`unwatch-repo` Command kinds anymore; the dispatcher wraps claimed payloads as `{kind:'plugin', plugin:<name>, cmd:<your shape>, raw:<original DM line>}`. `raw` is dispatcher-injected for logging — plugin authors don't set it, but test code constructing synthetic `plugin` Commands must include it.
 
 ## Register on load
 

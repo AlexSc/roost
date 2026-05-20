@@ -133,12 +133,13 @@ describe('parseCommand (central — global verbs)', () => {
 })
 
 describe('parseCommand (plugin claims)', () => {
-  it('routes claims to the matching plugin', () => {
+  it('routes claims to the matching plugin and preserves raw line', () => {
     const issues = new StubPlugin('issues', null)
     const prs = new StubPlugin('prs', 'pr')
     const cmd = parseCommand('watch pr 10', [issues, prs], {}) as Extract<Command, { kind: 'plugin' }>
     expect(cmd.kind).toBe('plugin')
     expect(cmd.plugin).toBe('prs')
+    expect(cmd.raw).toBe('watch pr 10')
   })
 
   it('honors grammarPriority (higher wins on overlap)', () => {
@@ -386,6 +387,17 @@ describe('handleDm — routing', () => {
     expect(irc.dms[0].text).toBe('watching 5\n\nalready watching 5')
     const overlay = await loadLocalOverlay(dir)
     expect((overlay.plugins?.['listish'] as { watched: number[] }).watched).toEqual([5])
+  })
+
+  it('write-path log includes plugin name and raw line for plugin commands', async () => {
+    await writeConfig(dir, { project: 'roost', plugins: {} })
+    const issues = new StubPlugin('issues', null)
+    const { deps, irc } = makeDeps(dir, [issues])
+    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 7' })
+    const logLine = irc.logs.find(l => l.includes('cmd=plugin'))
+    expect(logLine).toBeDefined()
+    expect(logLine).toContain('plugin=issues')
+    expect(logLine).toContain('"watch 7"')
   })
 
   it('empty-body DMs are ignored silently', async () => {

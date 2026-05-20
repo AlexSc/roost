@@ -14,17 +14,18 @@ import { stubRateLimit } from './gh-test-helpers.js'
 
 // Test helpers — wrap the plugin-owned shapes in the dispatcher's
 // `{kind:'plugin'}` envelope so test call sites stay readable.
+// `raw` is a dispatcher-injected logging field; synthetic test commands use ''.
 function watchCmd(plugin: string, number: number, repo: string | null, channels: string[]): Command {
-  return { kind: 'plugin', plugin, cmd: { verb: 'watch', number, repo, channels } }
+  return { kind: 'plugin', plugin, cmd: { verb: 'watch', number, repo, channels }, raw: '' }
 }
 function unwatchCmd(plugin: string, number: number, repo: string | null): Command {
-  return { kind: 'plugin', plugin, cmd: { verb: 'unwatch', number, repo, channels: [] } }
+  return { kind: 'plugin', plugin, cmd: { verb: 'unwatch', number, repo, channels: [] }, raw: '' }
 }
 function watchRepoCmd(plugin: string, repo: string, branch: string | null, path: string | null, channels: string[]): Command {
-  return { kind: 'plugin', plugin, cmd: { verb: 'watch', repo, branch, path, channels } }
+  return { kind: 'plugin', plugin, cmd: { verb: 'watch', repo, branch, path, channels }, raw: '' }
 }
 function unwatchRepoCmd(plugin: string, repo: string, branch: string | null, path: string | null): Command {
-  return { kind: 'plugin', plugin, cmd: { verb: 'unwatch', repo, branch, path, channels: [] } }
+  return { kind: 'plugin', plugin, cmd: { verb: 'unwatch', repo, branch, path, channels: [] }, raw: '' }
 }
 
 function fakePrSnap(overrides: Partial<PrSnap> = {}): PrSnap {
