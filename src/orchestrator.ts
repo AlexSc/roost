@@ -126,7 +126,9 @@ async function runDaemon(stateDir: string): Promise<void> {
   const pidInfo = await writeDispatcherPid(stateDir)
   log(`orchestrator[daemon]: pid ${pidInfo.pid} written to ${stateDir}/dispatcher.pid\n`)
 
-  let { config, plugins, projectChannel } = await loadConfigWithPlugins(stateDir, log)
+  const boot = await loadConfigWithPlugins(stateDir, log)
+  const { plugins, projectChannel } = boot
+  let config = boot.config
   const { nick, server, port } = requireIrcConfig(config, 'daemon mode')
   const interval = Math.max(5, (config.irc?.interval_seconds ?? 60)) * 1000
   const initialChannels = bootChannels(plugins, config, projectChannel)
