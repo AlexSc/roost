@@ -15,6 +15,7 @@
 // pruned from `seen` (we don't prune today, so closed-then-reopened is
 // silently suppressed; that's fine, the operator can `watch <N>` for it).
 import type { OrchestratorConfig } from '../../config.js'
+import { assertEntryRepoMode } from '../../config.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
 import { labelNames, type GhRepoIssue } from './github-api.js'
@@ -38,6 +39,13 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
   desiredChannels(config: OrchestratorConfig): string[] {
     const slice = this.pluginConfig<NewIssuesPluginConfig>(config) ?? {}
     return slice.channels?.length ? [...slice.channels] : []
+  }
+
+  // Slice's `repo` inherits from `config.repo` in single mode and is required
+  // in multi mode. Mirrors the entry-level rule the per-watch plugins enforce.
+  assertRepoMode(config: OrchestratorConfig): void {
+    const slice = this.pluginConfig<NewIssuesPluginConfig>(config) ?? {}
+    assertEntryRepoMode(this.name, '(slice)', slice.repo, config.repo)
   }
 
   async runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult> {

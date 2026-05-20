@@ -1,6 +1,6 @@
 import type { Command } from '../../dispatcher-dm-handler.js'
 import type { OrchestratorConfig, WatchedEntry } from '../../config.js'
-import { resolveRepoEntry } from '../../config.js'
+import { assertEntryRepoMode, resolveRepoEntry } from '../../config.js'
 import { channelSlug, defaultProject, isMultiRepo, issueChannel } from '../../naming.js'
 import { BasePlugin, defaultPluginLogger, type PluginLogger, type TaggedEvent } from '../../plugin.js'
 import { GhClient, fetchRateLimit, computeRateLimitWarning, RATE_LIMIT_WINDOW_MS, type RateLimitInfo } from './github-api.js'
@@ -91,6 +91,18 @@ export abstract class GhBase extends GhPluginBase {
   // shared shape for every GhBase plugin.
   protected watched(config: OrchestratorConfig): WatchedEntry[] {
     return this.pluginConfig<GhPluginConfig>(config)?.watched ?? []
+  }
+
+  // Each watched entry must respect the active repo mode. In single mode an
+  // entry's repo (when set) must equal config.repo; in multi mode every entry
+  // must carry its own repo. The dispatcher calls this after every config
+  // load — boot, tick reload, and DM snapshot.
+  assertRepoMode(config: OrchestratorConfig): void {
+    const topRepo = config.repo
+    for (const entry of this.watched(config)) {
+      const id = typeof entry.number === 'number' ? `#${entry.number}` : '(unknown)'
+      assertEntryRepoMode(this.name, id, entry.repo, topRepo)
+    }
   }
 
   // No watches → no project lookup (avoids requiring `project`/`repo` on

@@ -1,6 +1,7 @@
 import { describe, it, expect, spyOn } from 'bun:test'
 import { GitHubPrsPlugin } from '../prs-plugin.js'
 import { GitHubIssuesPlugin } from '../issues-plugin.js'
+import { GitHubNewIssuesPlugin } from '../new-issues-plugin.js'
 import { GhPluginBase } from '../base.js'
 import { RATE_LIMIT_WINDOW_MS } from '../github-api.js'
 import type { OrchestratorConfig } from '../../../config.js'
@@ -495,6 +496,68 @@ describe('GhBase.handleCommand — prs plugin (target=pr)', () => {
     expect(out).toContain('github-prs commands')
     expect(out).toMatch(/watch pr <N>/)
     expect(out).toMatch(/unwatch pr <N>/)
+  })
+})
+
+describe('assertRepoMode — GhBase (PRs/issues)', () => {
+  it('accepts a single-repo slice whose entries omit or match repo', () => {
+    const cfg: OrchestratorConfig = {
+      project: 'p', repo: 'org/main',
+      plugins: { 'github-prs': { watched: [{ number: 1 }, { number: 2, repo: 'org/main' }] } },
+    }
+    expect(() => new GitHubPrsPlugin('#proj').assertRepoMode(cfg)).not.toThrow()
+  })
+
+  it('rejects a single-repo entry that pins a divergent repo', () => {
+    const cfg: OrchestratorConfig = {
+      project: 'p', repo: 'org/main',
+      plugins: { 'github-prs': { watched: [{ number: 1, repo: 'org/other' }] } },
+    }
+    expect(() => new GitHubPrsPlugin('#proj').assertRepoMode(cfg))
+      .toThrow(/single-repo mode.*github-prs #1 pins repo=org\/other/)
+  })
+
+  it('accepts a multi-repo slice where every entry carries repo', () => {
+    const cfg: OrchestratorConfig = {
+      project: 'p',
+      plugins: { 'github-issues': { watched: [{ number: 9, repo: 'org/a' }] } },
+    }
+    expect(() => new GitHubIssuesPlugin('#proj').assertRepoMode(cfg)).not.toThrow()
+  })
+
+  it('rejects a multi-repo entry missing repo', () => {
+    const cfg: OrchestratorConfig = {
+      project: 'p',
+      plugins: { 'github-issues': { watched: [{ number: 9 }] } },
+    }
+    expect(() => new GitHubIssuesPlugin('#proj').assertRepoMode(cfg))
+      .toThrow(/multi-repo mode.*github-issues #9 is missing one/)
+  })
+
+  it('passes through when the slice is absent', () => {
+    expect(() => new GitHubPrsPlugin('#proj').assertRepoMode({ project: 'p', repo: 'org/r' })).not.toThrow()
+  })
+})
+
+describe('assertRepoMode — GitHubNewIssuesPlugin', () => {
+  it('accepts a single-repo slice that omits repo (inherits config.repo)', () => {
+    const cfg: OrchestratorConfig = { project: 'p', repo: 'org/main', plugins: { 'github-new-issues': {} } }
+    expect(() => new GitHubNewIssuesPlugin('#proj').assertRepoMode(cfg)).not.toThrow()
+  })
+
+  it('rejects a single-repo slice that pins a divergent repo', () => {
+    const cfg: OrchestratorConfig = {
+      project: 'p', repo: 'org/main',
+      plugins: { 'github-new-issues': { repo: 'org/other' } },
+    }
+    expect(() => new GitHubNewIssuesPlugin('#proj').assertRepoMode(cfg))
+      .toThrow(/single-repo mode.*github-new-issues \(slice\) pins repo=org\/other/)
+  })
+
+  it('rejects a multi-repo slice missing repo', () => {
+    const cfg: OrchestratorConfig = { project: 'p', plugins: { 'github-new-issues': {} } }
+    expect(() => new GitHubNewIssuesPlugin('#proj').assertRepoMode(cfg))
+      .toThrow(/multi-repo mode.*github-new-issues \(slice\) is missing one/)
   })
 })
 
