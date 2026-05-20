@@ -74,7 +74,7 @@ When filing a followup issue, ask whether the work is primarily in service of a 
 
 ## 2026-05-20: Don't tag humans until agents have resolved all outstanding issues (from cross-project scratcher)
 
-Agents resolve all outstanding issues first; humans only get tagged when the team has nothing left to improve. In the ready-for-review dance: worker drafts PR, reviewer posts findings, worker addresses them, CI goes green, lead pressure-tests — only then does the lead explicitly signal "mark ready + add human." No auto-fire on worker-ready+CI-green. The concrete cost of premature tagging: human review time spent on issues the agent team would have caught.
+Agents resolve all outstanding issues first; humans only get tagged when the team has nothing left to improve. The APM does not tag a human reviewer — marking a PR ready, adding a reviewer, or re-requesting review — until the lead explicitly signals go. In the ready-for-review dance: worker drafts PR, reviewer posts findings, worker addresses them, CI goes green, lead pressure-tests — only then does the lead signal go. The concrete cost of premature tagging: human review time spent on issues the agent team would have caught.
 
 Attribution: alex, cross-project learning from scratcher milestone.
 

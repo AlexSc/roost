@@ -82,7 +82,7 @@ When the human leaves PR comments, reply on the PR, not in IRC. The PR thread is
 
 The APM handles five dances for you: setup (worktree + watch + worker spawn), reviewer-spawn (when worker posts a draft PR), ready-for-review (mark-ready + add human reviewer + re-request after CHANGES_REQUESTED), merge + cleanup, and follow-up filing (`gh issue create` against the current or a named milestone). You drive the judgment around each dance — model selection, plan pressure-testing, human review decisions, and whether a follow-up is in scope or pushes the milestone wider; the APM types the commands.
 
-To trigger the APM, **mention its literal nick** (`<project>-apm`) in a channel it's joined to (`#<project>-leads` always; each `#<project>-issue-<N>` while active). The APM acts autonomously on unambiguous triggers — reviewer spawn (on a valid draft PR), mark-ready + re-request review (when worker signals ready AND CI is green), follow-up filing (when you give title + source + milestone). It acks before acting on anything requiring your judgment: worker spawn (model, branch name), the merge itself, and anything ambiguous. When ack is required, it restates what it parsed and waits for your affirmative (`go`, `yes`, `y`, `lgtm` — anything clear).
+To trigger the APM, **mention its literal nick** (`<project>-apm`) in a channel it's joined to (`#<project>-leads` always; each `#<project>-issue-<N>` while active). The APM acts autonomously on unambiguous triggers — reviewer spawn (on a valid draft PR), follow-up filing (when you give title + source + milestone). It acks before acting on anything requiring your judgment: worker spawn (model, branch name), marking a PR ready or adding/re-requesting a human reviewer, the merge itself, and anything ambiguous. When ack is required, it restates what it parsed and waits for your affirmative (`go`, `yes`, `y`, `lgtm` — anything clear).
 
 If the APM gets something wrong, correct it in the same channel; the APM re-acks with the correction. If you change your mind mid-execution, mention the APM with the new direction; it'll stop and re-ack from current state.
 
@@ -112,11 +112,11 @@ For each issue:
 
 6. **The reviewer shuts itself down after posting** — no action needed.
 
-7. **When the worker says "ready to flip" AND CI is green**, the APM marks the PR ready and adds `<gh-login>` automatically — no ack needed (both conditions are deterministic). The same dance covers re-requesting review after the human leaves CHANGES_REQUESTED or COMMENT and the worker pushes a fix. Workers do NOT mark the PR ready themselves.
+7. **When the worker says "ready to flip" AND CI is green**, signal the APM to mark the PR ready and add `<gh-login>`. The APM does not tag a human reviewer — marking a PR ready, adding a reviewer, or re-requesting review — until the lead explicitly signals go. Workers do NOT mark the PR ready themselves.
 
-   Once ready, the PR stays in ready state throughout the human review loop — do NOT convert back to draft, regardless of feedback. GitHub does not auto-rerequest a CHANGES_REQUESTED reviewer after new commits; the APM handles re-request. Three outcomes from the human:
+   Once ready, the PR stays in ready state throughout the human review loop — do NOT convert back to draft, regardless of feedback. GitHub does not auto-rerequest a CHANGES_REQUESTED reviewer after new commits; mention the APM to re-request when the worker pushes a fix. Three outcomes from the human:
    - **APPROVE**: proceed to step 8.
-   - **COMMENT** or **CHANGES_REQUESTED**: equivalent. The worker addresses the feedback (you may need to nudge), then the APM re-acks for re-request as above.
+   - **COMMENT** or **CHANGES_REQUESTED**: equivalent. The worker addresses the feedback (you may need to nudge), then signal the APM to re-request review.
 
 8. **On human approval**, the APM acks in `#<project>-leads`: `PR #<N> approved + CI green, ready to merge and clean up?` (with any reviewer nitpicks surfaced for your call). Confirm with an affirmative. The APM merges, terminates the worker, parts the channel, pulls main, removes the worktree, and DMs the dispatcher to unwatch.
 

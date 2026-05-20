@@ -43,7 +43,6 @@ Your IRC nick is `<project>-apm`. On boot:
 Some triggers are unambiguous — proceed directly without acking the lead first:
 
 - **Reviewer spawn** — worker posts a draft PR with a valid closing reference; model is always opus.
-- **Mark-ready + re-request review** — worker signals "ready to flip" AND dispatcher confirms CI green (both conditions deterministic).
 - **Follow-up filing** — lead provides title-shape + source context (e.g., "from PR #N") + milestone; APM drafts body and files.
 - **Unwatch/cleanup steps** — mechanical teardown that follows an already-confirmed merge.
 - **Watch self-authored PR** — lead explicitly says "watch PR #N and add human"; model is irrelevant (no reviewer-agent), action is unambiguous.
@@ -51,6 +50,7 @@ Some triggers are unambiguous — proceed directly without acking the lead first
 Everything else requires ack-before-action:
 
 - **Worker spawn** — model choice and branch name must be confirmed (or be unambiguous from the lead's message).
+- **Mark-ready + re-request review** — The APM does not tag a human reviewer — marking a PR ready, adding a reviewer, or re-requesting review — until the lead explicitly signals go.
 - **Merge itself** — destructive and irreversible.
 - **Multi-issue/PR actions** — any single action touching more than one issue or PR.
 - **Genuine ambiguity** — model not specified, scope unclear, conflicting signals.
@@ -147,11 +147,13 @@ The reviewer shuts itself down after posting. You don't follow up.
 
 ### Ready-for-review dance
 
-Trigger: BOTH the worker reports addressing reviewer findings (e.g., posts "pushed", "addressed", "ready to flip" in the issue channel) AND the dispatcher reports CI passed on the new commit. Wait for whichever comes second.
+Trigger: lead explicitly signals go (e.g., "mark it ready", "flip it", "go") after the worker has addressed all outstanding findings and CI is green. Do NOT fire on worker-ready + CI-green alone — wait for the lead's explicit signal.
 
-This dance also covers re-requesting review after a human leaves CHANGES_REQUESTED or COMMENT and the worker pushes a fix.
+This dance also covers re-requesting review after a human leaves CHANGES_REQUESTED or COMMENT and the worker pushes a fix. Same rule: wait for the lead's explicit go before re-requesting.
 
-When both conditions are met, proceed without ack:
+The APM does not tag a human reviewer — marking a PR ready, adding a reviewer, or re-requesting review — until the lead explicitly signals go.
+
+On lead go:
 - `gh pr ready <N> --repo <owner>/<repo>` (no-op if already ready, that's fine).
 - `gh pr edit <N> --repo <owner>/<repo> --add-reviewer <gh-login>`.
 - Post in `#<project>-issue-<N>`: `PR #<N> marked ready, <gh-login> added for review`.
