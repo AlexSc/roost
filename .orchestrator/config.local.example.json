@@ -1,0 +1,6 @@
+{
+  "plugins": {
+    "github-prs": { "watched": [] },
+    "github-issues": { "watched": [] }
+  }
+}
