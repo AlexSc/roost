@@ -37,6 +37,8 @@ LOCK_DIR="$CONFIG_DIR/.dispatcher.start.lock"
 
 # shellcheck disable=SC1091
 source "$DIR/_dispatcher-pid-lib.sh"
+# shellcheck disable=SC1091
+source "$DIR/_lock-lib.sh"
 
 mkdir -p "$CONFIG_DIR"
 
@@ -76,10 +78,9 @@ spawn_daemon() {
 }
 
 acquire_lock_and_run() {
-  # `mkdir` is POSIX-atomic — winner gets the lock, losers see EEXIST.
-  if mkdir "$LOCK_DIR" 2>/dev/null; then
+  if acquire_dir_lock "$LOCK_DIR"; then
     # shellcheck disable=SC2064
-    trap "rmdir '$LOCK_DIR' 2>/dev/null || true" EXIT
+    trap "release_dir_lock '$LOCK_DIR'" EXIT
     if pid_file_is_live; then
       report_running
       return 0
@@ -117,7 +118,7 @@ fi
 # Stale lock recovery: no PID file appeared and no live dispatcher. The lock
 # holder crashed before writing. Forcibly clear the lock and retry once.
 echo "start-dispatcher: stale lock at $LOCK_DIR, recovering" >&2
-rmdir "$LOCK_DIR" 2>/dev/null || rm -rf "$LOCK_DIR"
+release_dir_lock "$LOCK_DIR"
 if acquire_lock_and_run; then
   exit 0
 fi

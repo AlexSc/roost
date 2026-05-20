@@ -1,7 +1,8 @@
-import { mkdir, rename, unlink, writeFile, readFile } from 'node:fs/promises'
+import { mkdir, rename, unlink, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { exclusiveCreate } from '../fs-lock.js'
 
 const execFileP = promisify(execFile)
 
@@ -262,8 +263,7 @@ export async function readDispatcherPid(stateDir: string): Promise<DispatcherPid
   return info
 }
 
-// O_EXCL via `wx` — node:fs/promises rather than Bun.write because the latter
-// has no exclusive-create flag. Stale file (no live owner) → unlink and retry once.
+// Stale file (no live owner) → unlink and retry once.
 export async function writeDispatcherPid(stateDir: string): Promise<DispatcherPidInfo> {
   await mkdir(stateDir, { recursive: true })
   const path = join(stateDir, DISPATCHER_PID_FILE)
@@ -273,17 +273,20 @@ export async function writeDispatcherPid(stateDir: string): Promise<DispatcherPi
     cmdline: [process.execPath, ...process.argv.slice(1)].join(' '),
   }
   const payload = JSON.stringify(info) + '\n'
-  try {
-    await writeFile(path, payload, { flag: 'wx' })
-    return info
-  } catch {
+  const result = await exclusiveCreate(path, payload)
+  if (!result.created) {
     const existing = await readDispatcherPid(stateDir)
     if (existing) throw new Error(`dispatcher already running (pid ${existing.pid})`)
     // Stale file with no live owner — remove and try once more.
     try { await unlink(path) } catch { /* race with another cleaner */ }
-    await writeFile(path, payload, { flag: 'wx' })
-    return info
+    const retry = await exclusiveCreate(path, payload)
+    if (!retry.created) {
+      // Lost retry race — a concurrent dispatcher just claimed this dir.
+      const winner = await readDispatcherPid(stateDir)
+      if (winner) throw new Error(`dispatcher already running (pid ${winner.pid})`)
+    }
   }
+  return info
 }
 
 export async function removeDispatcherPid(stateDir: string): Promise<void> {

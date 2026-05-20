@@ -8,6 +8,7 @@
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { exclusiveCreateSync } from './fs-lock.js'
 
 export type Ownership = 'owner' | 'passive'
 
@@ -25,14 +26,9 @@ const FILE = 'owner.session'
 // dirs via `roost spawn`, so this is a known edge, not a recurring bug.
 export function claimOwnership(dataDir: string, sessionId: string): Ownership {
   const p = path.join(dataDir, FILE)
-  try {
-    fs.writeFileSync(p, sessionId, { flag: 'wx', mode: 0o600 })
-    return 'owner'
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
-    const existing = fs.readFileSync(p, 'utf8').trim()
-    return existing === sessionId ? 'owner' : 'passive'
-  }
+  const result = exclusiveCreateSync(p, sessionId, { mode: 0o600 })
+  if (result.created) return 'owner'
+  return result.existing.trim() === sessionId ? 'owner' : 'passive'
 }
 
 // Read-only check — used by the permission-prompt hook. Returns 'no-gate'
