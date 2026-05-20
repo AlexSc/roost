@@ -54,14 +54,15 @@ Spawn the associate-pm (APM). It owns the rote setup/teardown — starting the d
 ```bash
 roost spawn <project>-apm --agent associate-pm --cache-ttl 1h --steer-compact --channels '#<project>-leads' \
   --prompt 'human=<human> gh-login=<gh-login>' \
-  --perm-irc --perm-target <project>-lead-pm
+  --perm-irc --perm-target <project>-lead-pm \
+  --ask-irc '#<project>-leads' --ask-target <project>-lead-pm
 ```
 
 Pass the same `<human>` / `<gh-login>` values you parsed from your own initial prompt. If the prompt is missing them the APM will ask in `#<project>-leads` as a one-shot rescue.
 
 (`roost spawn` errors out if you pass `--model` alongside `--agent`; see `roost spawn --help`.) On boot the APM will start the dispatcher daemon if it isn't already running, then post a hello in `#<project>-leads`. If the hello doesn't arrive within a minute, check the APM session.
 
-See `roost spawn --help` ("Agent class guidance") for the role→flag heuristic — what to pass with `--cache-ttl` and `--steer-compact` for each agent class.
+See `roost spawn --help` ("Agent class guidance") for the role→flag heuristic — what to pass with `--cache-ttl`, `--steer-compact`, and `--ask-irc` for each agent class.
 
 ## Working In Channels
 
