@@ -54,6 +54,12 @@ Gate this in the lead's pre-review pressure-test, not the worker's plan. Questio
 
 Different from §#410 (artifact-shape): that's about durable artifacts (prompts, conventions). This is about behavior shapes (does the API actually do X). Same load-bearing-assumption muscle.
 
+## 2026-05-20: Run survey/audit issues before paired specific cleanup issues (from #457)
+
+When a milestone pairs a survey/audit issue with specific cleanup issues, run the survey first. It either obsoletes the specifics (saving the work) or confirms them with concrete data — running specifics-first risks doing work the survey would have re-scoped.
+
+Concrete: #457 (orchestrator rereview) paired with #473 (lock primitives) and #475 (tmux buffer-chain). Running the survey first confirmed both specifics were still valid and gave a concrete LOC baseline; running specifics-first would have risked work the survey then re-scoped.
+
 ## 2026-05-20: When you see N copies of the same intervention accumulating, debounce at the producer (from #470)
 
 When N copies of the same intervention accumulate in a queue, debounce at the producer — not the receiver. The receiver can't tell stale from fresh; the producer knows it just fired. Add a TTL-gated lock at injection time rather than retrofitting dedup downstream. Pattern: lock-before-inject when an inject point has no idempotency guarantee.
