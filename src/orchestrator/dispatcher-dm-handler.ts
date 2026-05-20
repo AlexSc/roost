@@ -14,8 +14,10 @@ import { splitCommands } from './plugins/grammar.js'
 
 // `plugin` carries an opaque cmd payload — the plugin that produced it is the
 // only one that handles it. `list` / `help` broadcast to every plugin.
+// `raw` on `plugin` is the original DM line, injected by the dispatcher at
+// parse time so daemon.log entries show what the operator actually typed.
 export type Command =
-  | { kind: 'plugin'; plugin: string; cmd: unknown }
+  | { kind: 'plugin'; plugin: string; cmd: unknown; raw: string }
   | { kind: 'list' }
   | { kind: 'help' }
   | { kind: 'unknown'; raw: string; error: string }
@@ -81,7 +83,7 @@ export function parseCommand(line: string, plugins: Plugin[], config: Orchestrat
       const result = p.parseCommand?.(line)
       if (result == null) continue
       if (result.kind === 'error') return { kind: 'unknown', raw: line, error: result.message }
-      return { kind: 'plugin', plugin: p.name, cmd: result.cmd }
+      return { kind: 'plugin', plugin: p.name, cmd: result.cmd, raw: line }
     }
     const names = plugins.map(p => p.name).sort().join(', ') || '(none)'
     return { kind: 'unknown', raw: line, error: `no plugin handles \`${line}\` — enabled plugins: ${names}` }
@@ -246,7 +248,7 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
   if (writeFailed) return
   for (const cmd of cmds) {
     const parts = [`cmd=${cmd.kind}`]
-    if (cmd.kind === 'plugin') parts.push(`plugin=${cmd.plugin}`)
+    if (cmd.kind === 'plugin') parts.push(`plugin=${cmd.plugin}`, `raw=${JSON.stringify(cmd.raw)}`)
     deps.log(`dispatcher-dm-handler: ${dm.sender} ${parts.join(' ')}`)
   }
   deps.dm(dm.sender, replies.join('\n\n'))
