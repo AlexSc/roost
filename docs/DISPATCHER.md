@@ -21,11 +21,46 @@ See `src/orchestrator/naming.ts` for the full namespacing convention.
 
 ## Setup
 
-Copy the template, then edit:
+Run `bin/roost init` (writes both config files plus the gitignore), or do
+it by hand:
 
 ```sh
-cp .orchestrator/config.example.json .orchestrator/config.json
+cp .orchestrator/config.example.json       .orchestrator/config.json
+cp .orchestrator/config.local.example.json .orchestrator/config.local.json
 ```
+
+### Two-file split
+
+`.orchestrator/config.json` is **tracked** and holds the shareable project
+shape: `project`, `repo`, `agent_logins`, `irc`, plus the static plugin
+slices the team agrees on — currently `github-new-issues.watched` and
+`github-commits.watched`. PR-reviewed changes go here.
+`config.example.json` mirrors that shape as a fork template.
+
+`.orchestrator/config.local.json` is **gitignored** and holds the
+dispatcher-mutated overlay: PR/issue watches added via `watch <N>` DMs land
+in `plugins.github-prs.watched` / `plugins.github-issues.watched` here.
+Concurrent operators don't clobber each other's live entries.
+`config.local.example.json` is the tracked template for it — empty
+`github-prs` / `github-issues` slices that enable the two DM-driven
+plugins out of the box.
+
+The loader merges the two files. The enabled plugin set is the **union**
+of `Object.keys(plugins)` across both, so a slice that lives only in the
+local overlay still enables its plugin. Most fields are local-wins on
+conflict; `plugins.<name>.watched` arrays are **concatenated** — both
+sources contribute live entries. DM commands operate on the local overlay
+only: `unwatch <N>` on a tracked entry returns
+`in tracked config.json — hand-edit to remove`, since the dispatcher won't
+modify tracked operator/project state.
+
+Existing operators upgrading from the single-file layout: your old
+config.json keeps working as-is. The dispatcher stops writing to it on
+the next watch; new entries land in config.local.json. To bring a
+tracked entry under dispatcher control, hand-edit `config.json` to
+remove it — the dispatcher will pick it up via a fresh `watch <N>`.
+There's no automatic migration: refusing to mutate tracked entries is
+the contract, not a bug.
 
 Fields:
 
@@ -91,8 +126,10 @@ State files in `.orchestrator/`:
 
 | File | Purpose |
 |---|---|
-| `config.json` | Tracked in git. Hand-edited or mutated via DMs to the dispatcher (`watch <N>`, `unwatch <N>`, `watch pr <N>`, etc.). |
-| `config.example.json` | Tracked. Template for forks. |
+| `config.json` | Tracked in git. Shareable project shape (static slices only — `github-new-issues`, `github-commits`). Hand-edited only; the dispatcher never writes here. See "Two-file split" above. |
+| `config.local.json` | Gitignored. Dispatcher-mutated overlay for DM-driven watches (`watch <N>`, `unwatch <N>`, `watch pr <N>`). Concatenated onto config.json's `plugins.<name>.watched`. |
+| `config.example.json` | Tracked. Template for `config.json` in forks (static shape). |
+| `config.local.example.json` | Tracked. Template for `config.local.json` — empty `github-prs` / `github-issues` scaffolds that enable the DM-driven plugins. |
 | `state.json` | Last seen GH state per watched entry. Re-seedable. |
 | `last-tick.txt` | Heartbeat timestamp. Use for healthchecks. |
 | `last-error.txt` | Last fatal tick error. Cleared on success. |

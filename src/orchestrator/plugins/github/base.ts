@@ -74,6 +74,12 @@ interface GhPluginConfig {
   watched?: WatchedEntry[]
 }
 
+// Shared phrasing for "this watch lives in the tracked file; the dispatcher
+// won't touch it". Centralized so a rename of config.json (or a future
+// path knob) only flips one string.
+const trackedRefusal = (label: string, n: number, action: string) =>
+  `${label} #${n} in tracked config.json — hand-edit to ${action}`
+
 // Watch-list scaffolding for the two GitHub plugins (PRs, issues). Owns the
 // `<issue-channel> + entry.channels` collector, `{ watched?: WatchedEntry[] }`
 // slice convention, and `handleCommand` for watch/unwatch/list/help.
@@ -122,83 +128,113 @@ export abstract class GhBase extends GhPluginBase {
   // ---- DM command handling --------------------------------------------
 
   // Inbound DM command surface. The dispatcher (dispatcher-dm-handler.ts) calls this
-  // once per parsed command inside its mutateConfig pass — we mutate our
-  // own slice in place. Returns the reply line(s) when we handle the
-  // command, null when the command isn't ours. Never throws.
-  handleCommand(config: OrchestratorConfig, cmd: Command): string | null {
-    if (cmd.kind === 'list') return this.formatListSection(config)
+  // once per parsed command inside its mutateConfig pass. Reads consult
+  // `merged` (config.json + config.local.json union); writes target `local`
+  // — config.json is read-only from the dispatcher. Returns the reply line
+  // when we handle the command, null when it isn't ours. Never throws.
+  handleCommand(merged: OrchestratorConfig, local: OrchestratorConfig, cmd: Command): string | null {
+    if (cmd.kind === 'list') return this.formatListSection(merged)
     if (cmd.kind === 'help') return this.formatHelpSection()
     if (cmd.kind === 'watch') {
       if (cmd.target !== this.target) return null
-      return this.applyWatch(config, cmd.number, cmd.channels)
+      return this.applyWatch(merged, local, cmd.number, cmd.channels)
     }
     if (cmd.kind === 'unwatch') {
       if (cmd.target !== this.target) return null
-      return this.applyUnwatch(config, cmd.number)
+      return this.applyUnwatch(merged, local, cmd.number)
     }
     return null
   }
 
-  // Read-or-create the typed slice under `config.plugins[name]`. Plugins
+  // Read-or-create the typed slice under `local.plugins[name]`. Plugins
   // own their slice shape; this is the one mutation seam.
-  private slice(config: OrchestratorConfig): GhPluginConfig {
-    config.plugins ??= {}
-    const existing = config.plugins[this.name]
+  private localSlice(local: OrchestratorConfig): GhPluginConfig {
+    local.plugins ??= {}
+    const existing = local.plugins[this.name]
     if (existing && typeof existing === 'object') return existing as GhPluginConfig
     const fresh: GhPluginConfig = {}
-    config.plugins[this.name] = fresh
+    local.plugins[this.name] = fresh
     return fresh
   }
 
-  private applyWatch(config: OrchestratorConfig, number: number, channels: string[]): string {
+  private applyWatch(merged: OrchestratorConfig, local: OrchestratorConfig, number: number, channels: string[]): string {
     // Multi-repo mode has no inherit target for entry.repo — the bare DM
     // grammar can't disambiguate, so reject it. A cross-repo DM grammar is
     // a known followup; until then, edit the watched list in config.json.
-    if (isMultiRepo(config)) {
+    if (isMultiRepo(merged)) {
       return `error: cannot watch ${this.label} #${number} in multi-repo mode (no config.repo) — bare \`watch <N>\` has no repo; cross-repo DM grammar is a known followup`
     }
-    const slice = this.slice(config)
-    slice.watched ??= []
-    const watched = slice.watched
-    let entry = watched.find(e => e.number === number)
-    if (!entry) {
-      entry = { number }
+    const mergedEntries = this.watched(merged)
+    const inMerged = mergedEntries.find(e => e.number === number)
+    if (!inMerged) {
+      const slice = this.localSlice(local)
+      slice.watched ??= []
+      const entry: WatchedEntry = { number }
       if (channels.length) entry.channels = [...channels]
-      watched.push(entry)
+      slice.watched.push(entry)
       return channels.length
         ? `watching ${this.label} #${number} + ${channels.join(' ')}`
         : `watching ${this.label} #${number}`
     }
     if (!channels.length) return `already watching ${this.label} #${number}`
-    const existing = new Set(entry.channels ?? [])
+    // Adding channels: only the local-overlay entry is writable. If the
+    // number lives only in tracked config.json, surface the hand-edit
+    // requirement instead of silently failing.
+    const localEntries = this.pluginConfig<GhPluginConfig>(local)?.watched ?? []
+    const localEntry = localEntries.find(e => e.number === number)
+    if (!localEntry) {
+      return trackedRefusal(this.label, number, 'add channels')
+    }
+    const existing = new Set(localEntry.channels ?? [])
     const added: string[] = []
     for (const c of channels) if (!existing.has(c)) { existing.add(c); added.push(c) }
     if (!added.length) return `${this.label} #${number} channels unchanged`
-    entry.channels = [...existing]
+    localEntry.channels = [...existing]
     return `${this.label} #${number} + ${added.join(' ')}`
   }
 
-  private applyUnwatch(config: OrchestratorConfig, number: number): string {
+  private applyUnwatch(merged: OrchestratorConfig, local: OrchestratorConfig, number: number): string {
     // Same multi-repo restriction as applyWatch: bare `unwatch <N>` is
     // ambiguous when N can live in multiple repos.
-    if (isMultiRepo(config)) {
+    if (isMultiRepo(merged)) {
       return `error: cannot unwatch ${this.label} #${number} in multi-repo mode (no config.repo) — bare \`unwatch <N>\` has no repo; cross-repo DM grammar is a known followup`
     }
-    const slice = this.slice(config)
-    const watched = slice.watched ?? []
-    const idx = watched.findIndex(e => e.number === number)
-    if (idx < 0) return `not watching ${this.label} #${number}`
-    watched.splice(idx, 1)
-    return `unwatched ${this.label} #${number}`
+    const localEntries = this.pluginConfig<GhPluginConfig>(local)?.watched ?? []
+    const localIdx = localEntries.findIndex(e => e.number === number)
+    if (localIdx >= 0) {
+      localEntries.splice(localIdx, 1)
+      return `unwatched ${this.label} #${number}`
+    }
+    const inMerged = this.watched(merged).some(e => e.number === number)
+    if (inMerged) {
+      return trackedRefusal(this.label, number, 'remove')
+    }
+    return `not watching ${this.label} #${number}`
   }
 
-  private formatListSection(config: OrchestratorConfig): string {
-    const entries = this.watched(config)
-    const header = `${this.name} (${entries.length}):`
-    if (!entries.length) return `${header}\n  (none)`
-    const lines = entries.map(e => {
-      const chans = e.channels?.length ? ` + ${e.channels.join(' ')}` : ''
-      return `  #${e.number}${chans}`
+  private formatListSection(merged: OrchestratorConfig): string {
+    // Concat-merged watched lists can carry the same number from both
+    // base and local (e.g. post-upgrade reconcile). Dedup by number with
+    // a channel union so the operator-visible reply matches what's
+    // actually being scraped.
+    const entries = this.watched(merged)
+    const byNumber = new Map<number, { number: number; channels: Set<string> }>()
+    const order: number[] = []
+    for (const e of entries) {
+      let bucket = byNumber.get(e.number)
+      if (!bucket) {
+        bucket = { number: e.number, channels: new Set<string>() }
+        byNumber.set(e.number, bucket)
+        order.push(e.number)
+      }
+      for (const c of e.channels ?? []) bucket.channels.add(c)
+    }
+    const header = `${this.name} (${byNumber.size}):`
+    if (!byNumber.size) return `${header}\n  (none)`
+    const lines = order.map(n => {
+      const bucket = byNumber.get(n)!
+      const chans = bucket.channels.size ? ` + ${[...bucket.channels].join(' ')}` : ''
+      return `  #${n}${chans}`
     })
     return [header, ...lines].join('\n')
   }

@@ -10,8 +10,6 @@
     "interval_seconds": 10
   },
   "plugins": {
-    "github-prs": { "watched": [] },
-    "github-issues": { "watched": [] },
     "github-new-issues": { "watched": [{ "repo": "AvesAlight/roost" }] },
     "github-commits": {
       "watched": [
