@@ -39,3 +39,7 @@ Three repeats of a bug class in one milestone is the escalation signal — flip 
 ## 2026-05-19: Frame "could go either way" design calls as explicit questions, not defended picks (from #433)
 
 When a worker hits a design call mid-plan with two plausible answers, surface it to the lead as an explicit question with the trade-offs spelled out. Don't pick one and defend it. A defended choice typically resurfaces as a rework round in human review; a framed question gets resolved cheaply at plan stage. The asymmetry of conviction is the lever — workers convey "I see two options" rather than "I chose option A," and the lead negotiates before code lands.
+
+## 2026-05-19: When fixing a prompt failure mode, audit whether the trigger is narrower than the right fix (from #448)
+
+Adding a behavior rule to agent prompts to address a specific failure? Audit whether the failure mode is narrower than the rule needs to be. The #448 trigger was "inline PR thread comment" but the right fix covers all GitHub PR reply surfaces — inline diff threads, top-level review summaries, and PR conversation comments. Phrasing the rule against the trigger example leaves adjacent failure modes unpatched. Generalize at first draft; the reviewer agent will catch over-narrowing, but it's cheaper to think one level up while writing.
