@@ -19,8 +19,8 @@ export class GitHubPrsPlugin extends GhBase {
 
   // Partition linked issues into those routable in the current mode (same-repo
   // in single-mode; everything in multi-mode) and those dropped (foreign-repo
-  // in single-mode). Returning both halves lets the caller emit a stderr
-  // warning for drops without re-running the partition.
+  // in single-mode). Called once per scraped PR per tick — the result is
+  // threaded through every routing decision so the partition stays cheap.
   private static partitionLinked(
     config: OrchestratorConfig,
     prRepo: string,
@@ -39,19 +39,17 @@ export class GitHubPrsPlugin extends GhBase {
   // Auto-detected channels for a PR event: linked-issue channels (slugged per
   // each linked issue's own repo — closures can cross repos), project channel
   // for no-linked-issues warnings, or PR's own issue channel as fallback.
-  // In single-repo mode, cross-repo linked issues are dropped here (the
-  // caller has already logged a stderr warning for them).
+  // `routable` is pre-computed by `partitionLinked` once per scrape.
   private static prEventChannels(
     config: OrchestratorConfig,
     project: string,
     event: OrchestratorEvent,
     projectChannel: string,
     prRepo: string,
+    routable: LinkedIssue[],
   ): string[] {
     if (event.pr == null) return []
     if (event.kind === 'pr_no_linked_issues') return [projectChannel]
-    const linked = event.linked_issues ?? []
-    const { routable } = GitHubPrsPlugin.partitionLinked(config, prRepo, linked)
     if (routable.length) {
       return routable.map(li => issueChannel(project, li.number, channelSlug(config, li.repo)))
     }
@@ -102,12 +100,28 @@ export class GitHubPrsPlugin extends GhBase {
 
     const curState: PrPluginState = { prs: {} }
     const taggedEvents: TaggedEvent[] = []
+    // Comprehensive channel set: static (config) + dynamic (linked-issues
+    // discovered during scrape). Slug each linked-issue channel against its
+    // *own* repo — `closingIssuesReferences` crosses repos, so the PR's slug
+    // is not the right answer.
+    const channels = new Set<string>(this.desiredChannels(config))
     for (const { key, snap, events, entryChannels } of scraped) {
       curState.prs[key] = snap
-      // Log dropped cross-repo links once per scrape (not per event) — the
-      // surfacing is operator-facing, not per-IRC-message.
-      const { dropped } = GitHubPrsPlugin.partitionLinked(config, snap.repo, snap.linked_issues ?? [])
-      GitHubPrsPlugin.logDroppedLinked(this.log, snap.repo, snap.number, dropped)
+      // Partition once per scrape — both halves are reused: `routable` for
+      // every event's channel-resolution + the dispatcher channel set,
+      // `dropped` for the stderr warning.
+      const { routable, dropped } = GitHubPrsPlugin.partitionLinked(config, snap.repo, snap.linked_issues ?? [])
+      for (const li of routable) channels.add(issueChannel(project, li.number, channelSlug(config, li.repo)))
+      // Debounced cross-repo drop warning: emit at most once per head_oid.
+      // `closingIssuesReferences` is re-fetched on head_oid change (see
+      // scraper.ts), so a force-push that alters closures re-triggers.
+      const prevWarnedOid = prev?.prs[key]?.warned_drops_for_oid ?? null
+      if (dropped.length) {
+        if (prevWarnedOid !== snap.head_oid) {
+          GitHubPrsPlugin.logDroppedLinked(this.log, snap.repo, snap.number, dropped)
+        }
+        snap.warned_drops_for_oid = snap.head_oid
+      }
       for (const event of events) {
         if (event.kind === 'pr_added_to_watch') {
           const linked = event.linked_issues ?? []
@@ -115,7 +129,7 @@ export class GitHubPrsPlugin extends GhBase {
           // with the clearer "events won't be routed" message on the same tick.
           if (linked.length) {
             const routingChannels = this.resolveChannels(
-              GitHubPrsPlugin.prEventChannels(config, project, event, projectChannel, snap.repo),
+              GitHubPrsPlugin.prEventChannels(config, project, event, projectChannel, snap.repo, routable),
               entryChannels
             ).filter(ch => ch !== projectChannel)
             taggedEvents.push({
@@ -127,20 +141,10 @@ export class GitHubPrsPlugin extends GhBase {
         }
         if (!shouldPush(event)) continue
         taggedEvents.push({
-          channels: this.resolveChannels(GitHubPrsPlugin.prEventChannels(config, project, event, projectChannel, snap.repo), entryChannels),
+          channels: this.resolveChannels(GitHubPrsPlugin.prEventChannels(config, project, event, projectChannel, snap.repo, routable), entryChannels),
           payload: formatPayload(event),
         })
       }
-    }
-
-    // Comprehensive channel set: static (config) + dynamic (linked-issues
-    // discovered during scrape). Slug each linked-issue channel against its
-    // *own* repo — `closingIssuesReferences` crosses repos, so the PR's slug
-    // is not the right answer.
-    const channels = new Set<string>(this.desiredChannels(config))
-    for (const snap of Object.values(curState.prs)) {
-      const { routable } = GitHubPrsPlugin.partitionLinked(config, snap.repo, snap.linked_issues ?? [])
-      for (const li of routable) channels.add(issueChannel(project, li.number, channelSlug(config, li.repo)))
     }
 
     taggedEvents.push(...await this.observeRateLimit(projectChannel))

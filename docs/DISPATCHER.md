@@ -91,6 +91,29 @@ mode and is required per entry in multi-repo mode. `channels` adds
 destinations on top of the auto-routed issue channel (PR events also route
 to each linked issue's channel, slugged the same way in multi-repo mode).
 
+### Cross-repo PR closures
+
+`closingIssuesReferences` can cross repos — a PR in repo A may close an
+issue in repo B. The slug for each linked-issue channel is derived from
+the linked issue's own repo, not the PR's repo:
+
+- **Multi-repo mode:** PR `org/a#25` closing `org/b#14` routes events to
+  `#<project>-b-issue-14`. If `org/b` is also watched, the PR-side and
+  issue-side events converge in the same channel.
+- **Single-repo mode (`config.repo` set), same-repo linked issue:**
+  routes to bare `#<project>-issue-<N>` as before.
+- **Single-repo mode, cross-repo linked issue:** the foreign-repo issue
+  is dropped from routing (no synthesized slug in single-mode) and the
+  dispatcher emits one stderr line per drop with the remediation: add the
+  foreign repo to `config.json` or switch to multi-repo mode. The drop
+  warning is debounced per `head_oid` — it re-fires when the PR force-pushes
+  and the closing references are re-resolved.
+  
+  Operator-visible signal in this case is **dual**: the IRC channel still
+  shows `now watching PR ...` (because `gh` did return a linked issue,
+  just not one we can address), but stderr carries the drop notice.
+  Read stderr when in doubt.
+
 A plugin not listed under `plugins` is not instantiated — there is no top-level
 fallback. The first-party set shipped in this repo is `github-prs`,
 `github-issues`, `github-new-issues`, `github-commits`. External plugins are
