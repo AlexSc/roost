@@ -150,11 +150,15 @@ function mergePluginSlice(base: unknown, local: unknown): unknown {
   if (typeof base !== 'object' || typeof local !== 'object' || Array.isArray(base) || Array.isArray(local)) {
     return local
   }
+  // structuredClone the concatenated entries so a plugin author who
+  // mutates an entry on the merged view can't reach back into base or
+  // local and silently corrupt persistent state. The contract says
+  // "mutate local only" — this enforces it by reference.
   const merged = { ...(base as Record<string, unknown>), ...(local as Record<string, unknown>) }
   const baseWatched = (base as Record<string, unknown>).watched
   const localWatched = (local as Record<string, unknown>).watched
   if (Array.isArray(baseWatched) && Array.isArray(localWatched)) {
-    merged.watched = [...baseWatched, ...localWatched]
+    merged.watched = structuredClone([...baseWatched, ...localWatched])
   }
   return merged
 }
@@ -235,6 +239,12 @@ export async function mutateConfig(
   try {
     await prev.catch(() => {})
     const [base, local] = await Promise.all([loadConfigBase(stateDir), loadLocalOverlay(stateDir)])
+    // Freeze base so an accidental mutation in `fn` throws at the bug
+    // site instead of silently vanishing on the next write (only `local`
+    // is persisted back to disk). Shallow freeze is enough here — nested
+    // slices that get reached from base mostly arrive through the merged
+    // view (which is cloned in mergePluginSlice for `watched`).
+    Object.freeze(base)
     await fn(base, local)
     await writeLocalConfig(stateDir, local)
   } finally {

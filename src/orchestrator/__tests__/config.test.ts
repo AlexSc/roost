@@ -74,6 +74,17 @@ describe('mergeConfigs', () => {
     )
     expect(Object.keys(merged.plugins!).sort()).toEqual(['github-commits', 'github-prs'])
   })
+
+  it('clones concatenated watched entries — mutating a merged entry does not leak into base/local', () => {
+    const baseSlice = { watched: [{ number: 1, channels: ['#a'] }] }
+    const localSlice = { watched: [{ number: 2, channels: ['#b'] }] }
+    const merged = mergeConfigs({ plugins: { x: baseSlice } }, { plugins: { x: localSlice } })
+    const mergedEntries = (merged.plugins!.x as { watched: { number: number; channels: string[] }[] }).watched
+    mergedEntries[0].channels.push('#leaked')
+    mergedEntries[1].channels.push('#leaked')
+    expect(baseSlice.watched[0].channels).toEqual(['#a'])
+    expect(localSlice.watched[0].channels).toEqual(['#b'])
+  })
 })
 
 describe('loadConfig (with overlay)', () => {
@@ -174,6 +185,16 @@ describe('mutateConfig', () => {
     await writeFile(join(dir, 'config.local.json'), JSON.stringify({ repo: 'preserved/repo' }))
     await mutateConfig(dir, () => { /* no-op */ })
     expect((await loadLocalOverlay(dir)).repo).toBe('preserved/repo')
+  })
+
+  it('freezes base so accidental mutations throw at the bug site', async () => {
+    await expect(
+      mutateConfig(dir, (base) => {
+        // Strict mode (TS modules are always strict) makes this throw.
+        base.repo = 'accidental/write'
+      })
+    ).rejects.toThrow()
+    expect((await loadConfigBase(dir)).repo).toBeUndefined()
   })
 })
 
