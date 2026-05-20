@@ -187,7 +187,7 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
   // Any parse failure aborts the batch — a typo shouldn't half-commit.
   const unknowns = cmds.filter((c): c is Extract<Command, { kind: 'unknown' }> => c.kind === 'unknown')
   if (unknowns.length) {
-    for (const u of unknowns) deps.log(`dispatcher-dm-handler: ${dm.sender} parse: ${u.error}`)
+    for (const u of unknowns) deps.log(`dispatcher-dm-handler: ${dm.sender} parse: ${u.error} raw=${JSON.stringify(u.raw)}`)
     deps.dm(dm.sender, unknowns.map(u => `error: ${u.error}`).join('\n'))
     return
   }
