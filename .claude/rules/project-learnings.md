@@ -31,3 +31,7 @@ Self-check: read the sentence aloud. If it has more than one connector, split it
 ## 2026-05-19: Restate approved naming/ordering decisions verbatim in the plan (from #434)
 
 When the lead has approved a specific naming or ordering decision in chat (e.g. `<project>-<slug>-worker-<N>` rather than just "slug-aware nick"), restate the exact string in your plan back to the lead. Paraphrasing loses load-bearing detail and pushes the mismatch out to human review instead of catching it in plan review.
+
+## 2026-05-19: Three repeats of a bug class in one milestone triggers escalation to worker-driven design (from #450)
+
+Three repeats of a bug class in one milestone is the escalation signal — flip from lead-rolled-in fix to worker-driven design with review. Recurrence count, not severity, is what triggers the flip. Cheap fixes on operator-facing surfaces (config files, tracked templates, docs) rarely stay cheap; the cost compounds across every future operator.
