@@ -111,7 +111,6 @@ describe('observeRateLimitFromInfo — cooldown gate', () => {
     expect(first.events).toHaveLength(1)
 
     // Second call immediately after: same statics, warnedAt is set → no event
-    const seed2 = [...first.history, { remaining: 5000, ts: now - 160_000 }].filter(h => h.ts >= now - RATE_LIMIT_WINDOW_MS)
     const second = observeRateLimitFromInfo(info(80, 60 * 60_000), first.history, s, noop, '#proj', 'GH', now + 1_000)
     expect(second.events).toHaveLength(0)
   })

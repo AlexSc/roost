@@ -325,6 +325,7 @@ describe('LinearIssuesPlugin.observeRateLimit — warning emission', () => {
     ;(p as any)._rateLimitHistory = [
       { remaining: 2500, ts: Date.now() - 160_000 },
     ]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const events = (p as any).observeRateLimit('#proj-leads')
     const warnings = events.filter((e: { payload: { text?: string } }) => e.payload.text?.includes('rate limit warning'))
     expect(warnings).toHaveLength(1)
@@ -334,12 +335,14 @@ describe('LinearIssuesPlugin.observeRateLimit — warning emission', () => {
 
   it('no warning on cold start (empty history)', () => {
     const p = plugin(rlClient(rlInfo(100)))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const events = (p as any).observeRateLimit('#proj-leads')
     expect(events.filter((e: { payload: { text?: string } }) => e.payload.text?.includes('rate limit warning'))).toHaveLength(0)
   })
 
   it('no warning when getLastRateLimit returns null', () => {
     const p = plugin(rlClient(null))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const events = (p as any).observeRateLimit('#proj-leads')
     expect(events).toEqual([])
   })
@@ -350,6 +353,7 @@ describe('LinearIssuesPlugin.observeRateLimit — warning emission', () => {
     ;(p as any)._rateLimitHistory = [
       { remaining: 2500, ts: Date.now() - RATE_LIMIT_WINDOW_MS - 10_000 },
     ]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const events = (p as any).observeRateLimit('#proj-leads')
     expect(events.filter((e: { payload: { text?: string } }) => e.payload.text?.includes('rate limit warning'))).toHaveLength(0)
   })
