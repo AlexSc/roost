@@ -37,8 +37,17 @@ function formatThreadReply(ev: LinearThreadReplyEvent): string {
 function formatDisappeared(ev: LinearSeedEvent): string {
   return (
     `WARN Issue ${ev.identifier} no longer accessible — dropping from watch. ` +
-    `Re-watch with \`watch linear ${ev.identifier}\` if the issue is restored.`
+    `Re-watch with \`watch linear ${ev.identifier}\` if the issue is restored, ` +
+    `or \`unwatch linear ${ev.identifier}\` to drop the channel.`
   )
+}
+
+// `linear_issue_added_to_watch` is normally formatted inline in
+// `LinearIssuesPlugin.runTick` because its text references the routing
+// channels (not present on the event). This branch is a defensive fallback
+// for any out-of-band caller — keeps the format surface complete.
+function formatAddedToWatch(ev: LinearSeedEvent): string {
+  return `now watching linear issue ${ev.identifier}`
 }
 
 function formatBacklogSeed(ev: LinearSeedEvent): string {
@@ -57,6 +66,7 @@ export function formatLinearEvent(event: LinearEvent): string {
   if (kind === 'linear_thread_reply') return formatThreadReply(event as LinearThreadReplyEvent)
   if (kind === 'linear_issue_disappeared') return formatDisappeared(event as LinearSeedEvent)
   if (kind === 'linear_issue_has_existing_comments') return formatBacklogSeed(event as LinearSeedEvent)
+  if (kind === 'linear_issue_added_to_watch') return formatAddedToWatch(event as LinearSeedEvent)
   return `[${kind}] ${JSON.stringify(event).slice(0, 280)}`
 }
 

@@ -49,10 +49,12 @@ describe('formatLinearEvent — oneline shapes (issue body examples)', () => {
     )
   })
 
-  it('formats linear_issue_disappeared (matches issue example wording)', () => {
+  it('formats linear_issue_disappeared (matches issue example wording + unwatch hint)', () => {
     const ev: LinearSeedEvent = { kind: 'linear_issue_disappeared', identifier: 'C-758' }
     expect(formatLinearEvent(ev)).toBe(
-      'WARN Issue C-758 no longer accessible — dropping from watch. Re-watch with `watch linear C-758` if the issue is restored.'
+      'WARN Issue C-758 no longer accessible — dropping from watch. ' +
+      'Re-watch with `watch linear C-758` if the issue is restored, ' +
+      'or `unwatch linear C-758` to drop the channel.'
     )
   })
 
@@ -70,6 +72,34 @@ describe('formatLinearEvent — oneline shapes (issue body examples)', () => {
     expect(formatLinearEvent(ev)).toBe(
       `Issue C-758 thread reply by alice on bob's comment — ${url}#comment-c2`
     )
+  })
+
+  it('formats linear_thread_reply with null parent_author (parent outside snapshot window)', () => {
+    const ev: LinearThreadReplyEvent = {
+      kind: 'linear_thread_reply',
+      identifier: 'C-758',
+      comment_id: 'c2',
+      comment_url: `${url}#comment-c2`,
+      parent_comment_id: 'c1',
+      parent_author: null,
+      parent_comment_url: null,
+      author: 'alice',
+    }
+    expect(formatLinearEvent(ev)).toBe(
+      `Issue C-758 thread reply by alice on ?'s comment — ${url}#comment-c2`
+    )
+  })
+
+  it('formats linear_issue_disappeared with both re-watch and unwatch hints', () => {
+    const ev: LinearSeedEvent = { kind: 'linear_issue_disappeared', identifier: 'C-758' }
+    const out = formatLinearEvent(ev)
+    expect(out).toContain('watch linear C-758')
+    expect(out).toContain('unwatch linear C-758')
+  })
+
+  it('formats linear_issue_added_to_watch via the fallback branch (defensive)', () => {
+    const ev: LinearSeedEvent = { kind: 'linear_issue_added_to_watch', identifier: 'C-758' }
+    expect(formatLinearEvent(ev)).toBe('now watching linear issue C-758')
   })
 
   it('formats linear_issue_has_existing_comments', () => {

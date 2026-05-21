@@ -139,7 +139,8 @@ export function selectGithubAttachments(atts: RawLinearAttachment[]): GithubAtta
     if (a.sourceType !== 'github') continue
     const parsed = parseGithubPrUrl(a.url)
     if (!parsed) continue
-    out.push({ id: a.id, pr_repo: parsed.repo, pr_number: parsed.number, pr_url: a.url ?? '' })
+    // parseGithubPrUrl short-circuits on falsy URL, so `a.url` is truthy here.
+    out.push({ id: a.id, pr_repo: parsed.repo, pr_number: parsed.number, pr_url: a.url as string })
   }
   return out
 }

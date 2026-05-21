@@ -220,9 +220,10 @@ export class LinearIssuesPlugin extends BasePlugin {
   // End-of-tick threshold check — reads `getLastRateLimit()` from the client
   // (already populated by spawnLinear on each successful call). Mirrors
   // `GhPluginBase.observeRateLimit`: history ring, projection via
-  // computeRateLimitWarning, cooldown-gated emit.
+  // computeRateLimitWarning, cooldown-gated emit. Only called after a
+  // watched-entry tick, so `getClient()` is guaranteed to have been seeded.
   protected observeRateLimit(projectChannel: string): TaggedEvent[] {
-    const info = this._client?.getLastRateLimit() ?? this._envClient?.getLastRateLimit() ?? null
+    const info = this.getClient().getLastRateLimit()
     if (!info) return []
 
     const now = Date.now()

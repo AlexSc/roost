@@ -28,6 +28,8 @@ export interface ScrapeResult {
   events: LinearEvent[]
 }
 
+// `parent { id }` is equivalent to the spec's flat `parentId` — Linear's
+// GraphQL accepts either form for thread-reply linkage.
 export const ISSUE_QUERY = `query LinearIssue($id: String!) {
   issue(id: $id) {
     id
