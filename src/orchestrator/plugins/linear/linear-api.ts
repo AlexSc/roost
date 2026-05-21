@@ -38,7 +38,6 @@ const RESET_HEADERS = [
 const TRANSIENT_FETCH_PATTERNS: { re: RegExp; label: string }[] = [
   { re: /\btimed out\b/i, label: 'timeout' },
   { re: /\bThe operation was aborted\b/i, label: 'timeout' },
-  { re: /\babort(ed)?\b/i, label: 'timeout' },
   { re: /\bconnection refused\b/i, label: 'connection-refused' },
   { re: /\bconnection reset\b/i, label: 'connection-reset' },
   { re: /\bsocket hang up\b/i, label: 'connection-reset' },
@@ -65,10 +64,10 @@ export class LinearError extends Error {
   }
 }
 
-// HTTP 401 / "AUTHENTICATION_ERROR" — surfaced as a distinct type so dispatcher
-// boot can fatal cleanly: `catch (e) { if (e instanceof LinearAuthError) ... }`.
+// HTTP 401 — surfaced as a distinct type so dispatcher boot can fatal cleanly:
+// `catch (e) { if (e instanceof LinearAuthError) ... }`.
 export class LinearAuthError extends LinearError {
-  constructor(msg: string, opts: { status?: number | null; code?: string | null; body?: string } = {}) {
+  constructor(msg: string, opts: { status?: number | null; body?: string } = {}) {
     super(msg, opts)
     this.name = 'LinearAuthError'
   }
