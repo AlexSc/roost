@@ -407,15 +407,62 @@ describe('LinearClient.graphql + getLastRateLimit', () => {
     const client = new LinearClient('k', h.log, {
       sleep: h.sleep,
       fetch: mockFetch([
-        { status: 200, body: okBody({ x: 1 }), headers: { 'content-type': 'application/json' } },
+        { status: 200, body: okBody({ x: 1 }), headers: { 'content-type': 'application/json', 'x-some-future-ratelimit-shape': '99' } },
         { status: 200, body: okBody({ y: 2 }), headers: { 'content-type': 'application/json' } },
       ], h),
     })
     await client.graphql('{ x }')
     await client.graphql('{ y }')
     const warns = h.logs.filter(l => l.includes('[ratelimit] WARN') && l.includes('no recognized rate-limit headers'))
-    expect(warns.length).toBe(1)  // one-shot
-    expect(warns[0]).toContain('content-type')  // observed-headers dump for debugging
+    expect(warns.length).toBe(1)  // one-shot until a recognized shape arrives
+    // Header dump is restricted to rate-limit-shaped keys to avoid leaking
+    // arbitrary response headers (e.g. set-cookie) into daemon.log.
+    expect(warns[0]).toContain('x-some-future-ratelimit-shape')
+    expect(warns[0]).not.toContain('content-type')
+  })
+
+  it('WARN re-fires after recognized headers arrive and then drop again', async () => {
+    // Clearing the flag on a recognized response means a later regression in
+    // header detection still produces a WARN. Sticky-once would hide a real
+    // production regression behind a successful first request.
+    const h = harness()
+    const client = new LinearClient('k', h.log, {
+      sleep: h.sleep,
+      fetch: mockFetch([
+        { status: 200, body: okBody({ x: 1 }), headers: { 'content-type': 'application/json' } },     // miss → WARN
+        { status: 200, body: okBody({ y: 2 }), headers: OK_HEADERS },                                  // hit → clears
+        { status: 200, body: okBody({ z: 3 }), headers: { 'content-type': 'application/json' } },     // miss again → WARN
+      ], h),
+    })
+    await client.graphql('{ x }')
+    await client.graphql('{ y }')
+    await client.graphql('{ z }')
+    const warns = h.logs.filter(l => l.includes('[ratelimit] WARN') && l.includes('no recognized rate-limit headers'))
+    expect(warns.length).toBe(2)
+  })
+
+  it('filters non-rate-limit-shaped headers from the WARN dump', async () => {
+    const h = harness()
+    const client = new LinearClient('k', h.log, {
+      sleep: h.sleep,
+      fetch: mockFetch([
+        { status: 200, body: okBody({ x: 1 }), headers: {
+          'content-type': 'application/json',
+          'set-cookie': 'session=secret-token; Path=/',
+          'authorization': 'should-never-appear-but-guard-anyway',
+          'x-some-future-ratelimit-shape': '99',
+          'retry-after': '60',
+        } },
+      ], h),
+    })
+    await client.graphql('{ x }')
+    const warn = h.logs.find(l => l.includes('[ratelimit] WARN'))
+    expect(warn).toBeDefined()
+    expect(warn).toContain('x-some-future-ratelimit-shape')
+    expect(warn).toContain('retry-after')
+    expect(warn).not.toContain('set-cookie')
+    expect(warn).not.toContain('secret-token')
+    expect(warn).not.toContain('authorization')
   })
 })
 

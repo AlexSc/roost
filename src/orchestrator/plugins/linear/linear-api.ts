@@ -141,6 +141,19 @@ function headersToObject(headers: Headers): Record<string, string> {
   return obj
 }
 
+// Restrict the missing-headers WARN dump to rate-limit-shaped header keys so a
+// `set-cookie` (or any future sensitive header on the GraphQL endpoint) can't
+// leak into daemon.log. The whole point of the WARN is to surface unknown
+// rate-limit header shapes; arbitrary headers don't help.
+const RATE_LIMIT_KEY_RE = /rate.?limit|complexity|retry.?after/i
+function filterRateLimitHeaders(headers: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(headers)) {
+    if (RATE_LIMIT_KEY_RE.test(k)) out[k] = v
+  }
+  return out
+}
+
 // Sole call site for `fetch` against Linear's GraphQL endpoint. Mirrors
 // `spawnGh`'s retry/backoff shape; classifier diverges (HTTP status + GraphQL
 // extensions.code instead of `gh` stderr strings).
@@ -281,9 +294,9 @@ const PROBE_QUERY = `query {
 // `apiKey` via DI; the env-read lives in the `fromEnv` factory.
 export class LinearClient {
   private _lastRateLimit: RateLimitInfo | null = null
-  // First successful response without recognized rate-limit headers triggers
-  // a one-shot WARN so the silent-predictor failure mode is detectable.
-  // Cleared once a recognized shape arrives; never re-fires.
+  // First response without recognized rate-limit headers triggers a WARN so
+  // the silent-predictor failure mode is detectable. Cleared once a recognized
+  // shape arrives — a later regression in header detection still WARNs.
   private _missingHeadersWarned = false
 
   constructor(
@@ -313,12 +326,13 @@ export class LinearClient {
     const result = await spawnLinear(this.apiKey, query, variables, { log: this.log, ...this.deps })
     if (result.rateLimit) {
       this._lastRateLimit = result.rateLimit
+      this._missingHeadersWarned = false
     } else if (!this._missingHeadersWarned) {
       this._missingHeadersWarned = true
       this.log(
         `[ratelimit] WARN: linear response had no recognized rate-limit headers — predictor will not fire. ` +
         `Inspect observed headers and update REMAINING_HEADERS/LIMIT_HEADERS/RESET_HEADERS in linear-api.ts. ` +
-        `Observed headers: ${JSON.stringify(result.headers)}\n`,
+        `Observed rate-limit-shaped headers: ${JSON.stringify(filterRateLimitHeaders(result.headers))}\n`,
       )
     }
     return result.body.data
