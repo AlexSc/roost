@@ -39,24 +39,18 @@ export class GitHubPrsPlugin extends GhBase {
   // Lazy — the resolver pulls `LINEAR_API_KEY` from env via LinearClient.
   // Deferring construction until a non-empty Linear watch set is observed keeps
   // dispatcher boot working when no Linear plugin is enabled. Tests inject via
-  // `_setLinearResolverForTest`.
+  // `_setLinearQueryForTest`.
   private _linearResolver: LinearAttachmentResolver | null = null
-  private _linearQueryOverride: AttachmentQuery | null = null
 
   // Test seam — wires an injected query function in place of the env-built
   // LinearClient. Used by github plugin tests that exercise cross-link routing
   // without standing up a real Linear API.
   _setLinearQueryForTest(query: AttachmentQuery | null): void {
-    this._linearQueryOverride = query
     this._linearResolver = query ? new LinearAttachmentResolver(query) : null
   }
 
   private getLinearResolver(): LinearAttachmentResolver {
     if (this._linearResolver) return this._linearResolver
-    if (this._linearQueryOverride) {
-      this._linearResolver = new LinearAttachmentResolver(this._linearQueryOverride)
-      return this._linearResolver
-    }
     const client = LinearClient.fromEnv(this.log)
     this._linearResolver = new LinearAttachmentResolver(makeBatchedAttachmentQuery(client))
     return this._linearResolver
