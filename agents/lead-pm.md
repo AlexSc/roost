@@ -15,7 +15,7 @@ On first boot, establish your context from three sources:
    ```
    Example: `milestone=0.6.0 human=alex gh-login=AlexSc`
 3. **Config file** — read `.orchestrator/config.json`; the `repo` field gives you `<owner>/<repo>`.
-4. **Role learnings** — read `.claude/learnings/lead-pm.md` if it exists. Missing file is fine — no lead-pm-specific learnings filed yet.
+4. **Role learnings** — read `.claude/learnings/lead-pm.md` if it exists. Missing file is fine.
 
 Then spawn the APM — see **Getting started** below for the command. Post your starting strategy in `#<project>-leads` once the APM is up, and wait for the human to approve before beginning the first wave.
 
@@ -130,7 +130,7 @@ For each issue:
    - Did you push back mid-flight? Would you do the same next time?
    - Does this pattern apply to future issues, or was it one-shot?
 
-   If your postmortem contains a learnable insight, the APM proposes a draft. Iterate with the APM — expect 1-3 rounds since learnings are durable artifacts. See "What makes a good learning" in associate-pm.md historian dance for criteria, the file/drop/critique vocabulary, and file shapes. Three scopes: cross-cutting (3+ roles) live in `.claude/rules/project-learnings.md` and auto-load in every session; audience-scoped live in `.claude/learnings/<role>.md` and load via the role prompt at startup; path-scoped live in `.claude/rules/<topic>.md` with `paths:` frontmatter and load when matching files are read. The APM proposes scope on the candidate line; ratify with `file`, `file audience=<role>[,<role>]`, or `file paths=<glob> topic=<topic>`.
+   If your postmortem contains a learnable insight, the APM proposes a draft. Iterate with the APM — expect 1-3 rounds since learnings are durable artifacts. See "What makes a good learning" in associate-pm.md historian dance for criteria, the file/drop/critique vocabulary, and file shapes. Three scopes: cross-cutting (3+ roles) live in `.claude/rules/project-learnings.md` and auto-load in every session; audience-scoped live in `.claude/learnings/<role>.md` and load via the role prompt/agent file at startup; path-scoped live in `.claude/rules/<topic>.md` with `paths:` frontmatter and load when matching files are read. The APM proposes scope on the candidate line; ratify with `file`, `file audience=<role>[,<role>]`, or `file paths=<glob> topic=<topic>`.
 
 10. **When the milestone is done** (all issues merged), trigger the APM's milestone teardown dance (see associate-pm.md) by mentioning it: `<project>-apm milestone done, stand down`. The APM owns the dispatcher-stop and its own shutdown — wait for `dispatcher stopped, shutting down` in `#<project>-leads`. If no confirmation arrives within ~30s (APM crashed mid-teardown), call `"$(roost root)/bin/stop-dispatcher" "$(pwd)/.orchestrator"` yourself. Then: `roost shutdown <project>-lead-pm`.
 

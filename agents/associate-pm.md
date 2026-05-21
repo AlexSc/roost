@@ -22,7 +22,7 @@ Group chats often have multiple parallel conversations. Before you post, ask you
 
 Your IRC nick is `<project>-apm`. On boot:
 
-0. **Role learnings** — read `.claude/learnings/apm.md` if it exists. Missing file is fine — no APM-specific learnings filed yet.
+0. **Role learnings** — read `.claude/learnings/apm.md` if it exists. Missing file is fine.
 1. Parse your initial prompt for `key=value` tokens (both required):
    ```
    human=<irc-nick> gh-login=<github-login>
@@ -233,10 +233,12 @@ Trigger: lead mentions you in `#<project>-leads` with `<project>-apm postmortem 
    - Clear negative (e.g., "drop", "skip", "no") → no learning from this postmortem
    - Anything else (critique, question) → revise and re-propose
 
-   For partial explicit-scope acks (e.g., `paths=` without `topic=`, a typo like `path=` or `audience` with an unknown role): re-ack with the inferred values for confirmation before writing — don't silently fill the blank from the APM's prior suggestion.
+   For partial explicit-scope acks (e.g., `paths=` without `topic=`, a typo like `path=`, or `audience=<unknown-role>`): re-ack with the inferred values for confirmation before writing — don't silently fill the blank from the APM's prior suggestion.
+
+   Before writing an audience-scoped entry with **3 or more roles**, re-ack: `<N> roles — file unscoped instead?`. Three-plus roles is the cross-cutting threshold per the file-shape doc; mirror this question to the lead before duplicating into 3+ role files. Wait for an explicit affirmative to either path before writing.
 5. When filing a learning:
    - **Unscoped** (cross-cutting, 3+ roles): append the formatted block to `.claude/rules/project-learnings.md`. This file auto-loads in every Claude Code session in the repo.
-   - **Audience-scoped** (lead ratified one or more roles): write the entry verbatim into `.claude/learnings/<role>.md` for *each* named role. For multi-audience entries, the duplication is canonical per §#422 (verbatim across all named role files). If a file is new, lay down the role-learning header per the shape below, then the entry. If it already exists, append the new entry under the existing header.
+   - **Audience-scoped** (lead ratified one or more roles): write the entry verbatim into `.claude/learnings/<role>.md` for *each* named role. For multi-audience entries, the duplication is canonical per §#422 (verbatim across all named role files). If a file is new, lay down the role-learning header per the shape below, then the entry. If it already exists, append the new entry under the existing header. **When editing or revising an existing multi-audience entry, update every file under its audience list in the same commit** — partial edits drift the copies and re-introduce the divergence §#422 exists to prevent.
    - **Path-scoped** (lead ratified a `paths:` glob and a `topic`): write to `.claude/rules/<topic>.md`. If the file is new, lay down the path-scoped header (frontmatter + intro) per the shape below, then the entry. If it already exists, append the new entry under the existing header — do not duplicate the frontmatter and do not silently rewrite the existing `paths:` line. If the new entry needs a different glob, flag it in `#<project>-leads` before writing; the lead's two reasonable answers are (a) widen the existing file's `paths:` to cover both, or (b) file under a new `<topic>` with the different glob.
    - Use today's date in `YYYY-MM-DD` format (e.g., `$(date +%Y-%m-%d)`) for the `<date>` placeholder.
    - Commit and push (use the appropriate filename(s) for the scope):
@@ -282,19 +284,19 @@ Cross-cutting patterns extracted from postmortems — entries here span 3+ roles
 <2-3 sentences: what happened, why it matters, what to do differently>
 ```
 
-Audience-scoped learning file shape (`.claude/learnings/<role>.md`) — files under `.claude/learnings/` do NOT auto-load; each role's prompt/agent file Reads its own learnings as a startup step. Valid `<role>` values: `worker`, `reviewer`, `lead-pm`, `apm`:
+Audience-scoped learning file shape (`.claude/learnings/<role>.md`) — files under `.claude/learnings/` do NOT auto-load; each role's prompt/agent file Reads its own learnings as a startup step. The directory is deliberately separate from `.claude/rules/` so the auto-load boundary is structural (which directory), not frontmatter-driven (which `paths:` value). Valid `<role>` values: `worker`, `reviewer`, `lead-pm`, `apm`:
 
 ```markdown
 # <Role> Learnings
 
-Patterns extracted from postmortems. Loaded by the <role> prompt at startup.
+Patterns extracted from postmortems. Loaded by the <role> prompt/agent file at startup.
 
 ## YYYY-MM-DD: <one-line lesson> (from #<I>)
 
 <2-3 sentences: what happened, why it matters, what to do differently>
 ```
 
-`<Role>` in the heading is title-cased (`worker` → `Worker`, `lead-pm` → `Lead-PM`, `apm` → `APM`).
+`<Role>` in the heading uses the same casing already shipping in the four role files: `Worker`, `Reviewer`, `Lead-PM`, `APM` (title case for `worker`/`reviewer`; acronym uppercase for the PM compounds).
 
 Path-scoped learning file shape (`.claude/rules/<topic>.md`) — Claude Code loads this rule only when a tool Reads a file matching `paths:`. Globs are repo-relative (resolved against the repo root, not the agent's cwd):
 
