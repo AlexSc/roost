@@ -380,6 +380,102 @@ fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
 
+# -- Test 21: loopback IRC host injects --append-system-prompt trust statement ---
+# Default channels (#roost), default host (127.0.0.1) — auto-mode classifier
+# would otherwise block IRC outbound on the operator's first @-mention.
+# bash %q backslash-escapes spaces and punctuation in the trust text, so we
+# strip backslashes before substring matching the human-readable content.
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
+inner_cmd_text="${inner_cmd//\\/}"
+if [ -n "$inner_cmd" ] \
+    && echo "$inner_cmd" | grep -qF -- '--append-system-prompt' \
+    && echo "$inner_cmd_text" | grep -qF 'joined channels #roost' \
+    && echo "$inner_cmd_text" | grep -qF 'channel_message'; then
+  ok "loopback default: inner_cmd contains --append-system-prompt with channels and reply hint"
+else
+  fail "loopback default: inner_cmd contains --append-system-prompt with channels and reply hint" "inner_cmd=$inner_cmd"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 22: custom --channels list lands inside the trust statement ----------
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" --channels '#scratch,#side' 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
+inner_cmd_text="${inner_cmd//\\/}"
+if [ -n "$inner_cmd" ] \
+    && echo "$inner_cmd" | grep -qF -- '--append-system-prompt' \
+    && echo "$inner_cmd_text" | grep -qF 'joined channels #scratch,#side'; then
+  ok "custom --channels: trust statement names the requested channels verbatim"
+else
+  fail "custom --channels: trust statement names the requested channels verbatim" "inner_cmd=$inner_cmd"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 23: non-loopback IRC host skips injection and warns ------------------
+# Trust model only holds for local ergo; remote hosts get a warning + no injection
+# so the operator knows why the auto-mode workaround applies.
+
+setup
+out="$(ROOST_IRC_SERVER=192.0.2.1 ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
+if [ -n "$inner_cmd" ] \
+    && ! echo "$inner_cmd" | grep -qF -- '--append-system-prompt' \
+    && echo "$out" | grep -q "is not loopback" \
+    && echo "$out" | grep -q "skipping auto-mode IRC trust injection"; then
+  ok "non-loopback host: inner_cmd has no --append-system-prompt; warning printed"
+else
+  fail "non-loopback host: inner_cmd has no --append-system-prompt; warning printed" "out=$out inner_cmd=$inner_cmd"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 24: empty --channels skips injection silently ------------------------
+# No channels = nothing to authorize; skip without scaring the operator.
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" --channels '' 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
+if [ -n "$inner_cmd" ] \
+    && ! echo "$inner_cmd" | grep -qF -- '--append-system-prompt' \
+    && ! echo "$out" | grep -q "is not loopback"; then
+  ok "empty --channels on loopback: no --append-system-prompt, no warning"
+else
+  fail "empty --channels on loopback: no --append-system-prompt, no warning" "out=$out inner_cmd=$inner_cmd"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 25: --agent path also gets the trust injection -----------------------
+# Trust applies regardless of permission-mode source; agent frontmatter
+# permissionMode:auto would block IRC just like the --model auto path does.
+
+setup
+mkdir -p "$TDIR/.claude/agents"
+printf -- '---\nname: opusauto\ndescription: opus auto agent\nmodel: opus\npermissionMode: auto\n---\nbody\n' > "$TDIR/.claude/agents/opusauto.md"
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --agent opusauto --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
+inner_cmd_text="${inner_cmd//\\/}"
+if [ -n "$inner_cmd" ] \
+    && echo "$inner_cmd" | grep -qF -- '--append-system-prompt' \
+    && echo "$inner_cmd_text" | grep -qF 'joined channels #roost'; then
+  ok "--agent path: trust statement still injected"
+else
+  fail "--agent path: trust statement still injected" "inner_cmd=$inner_cmd"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]
