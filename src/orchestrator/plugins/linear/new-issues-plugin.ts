@@ -36,6 +36,7 @@ export class LinearNewIssuesPlugin extends BasePlugin {
   private readonly log: PluginLogger
   private readonly client: LinearClient
   private _rateLimitHistory: Array<{ remaining: number; ts: number }> = []
+  // Per-instance Map (vs class-static _statics for rate-limit) — team-missing is a per-watcher signal, rate-limit is per-API-budget shared across instances.
   private _teamNotFoundWarnedAt = new Map<string, number>()
 
   private static readonly _statics: RateLimitStatics = { warnedAt: null }
@@ -169,7 +170,7 @@ export class LinearNewIssuesPlugin extends BasePlugin {
           this._teamNotFoundWarnedAt.set(team, now)
           taggedEvents.push({
             channels: [...announcementChannels],
-            payload: { kind: 'oneline', text: `[linear-new-issues] team ${team} not found — renamed or deleted? Unwatch with: unwatch linear-team ${team}` },
+            payload: { kind: 'oneline', text: `[linear-new-issues] team ${team} not found — renamed or deleted? Unwatch with: \`unwatch linear-team ${team}\`` },
           })
         }
         continue
