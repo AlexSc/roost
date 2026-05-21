@@ -73,7 +73,7 @@ The `--cache-ttl` and `--steer-compact` choices baked into the spawn templates b
 
 ### Setup dance
 
-Trigger: lead mentions you with intent like "let's do #290 with opus, and #291" or "kick off 42".
+Trigger: lead mentions you with intent like "let's do #<N> with opus, and #<M>" or "kick off <N>".
 
 Ack template: `starting #<N> (<model>), #<M> (<model>); go?`. If the lead didn't specify a model, suggest one based on issue complexity (sonnet for routine work, opus for design-heavy or cross-cutting). State the suggestion in your ack.
 
@@ -220,14 +220,14 @@ Trigger: lead mentions you in `#<project>-leads` with `<project>-apm postmortem 
    printf '## Postmortem\n\n%s' "$postmortem_text" | gh issue comment <I> --repo <owner>/<repo> --body-file -
    ```
 3. If the postmortem contains a learnable insight, propose a draft in `#<project>-leads`: `learning candidate from #<I>: <draft text>`. Append a scope suggestion on the same line if one fits — pick at most one of:
-   - **Audience-narrow** (the lesson clearly applies to one or two specific roles): `(suggested audience: <role>)` or `(suggested audience: <role1>,<role2>)`. Valid roles: `worker`, `reviewer`, `lead-pm`, `apm`. Comma-separated for multi-audience.
+   - **Audience-narrow** (the lesson clearly applies to one or two specific roles): `(suggested audience: <role>)` or `(suggested audience: <role1>,<role2>)`. Role names match the project's agent/prompt slugs. Comma-separated for multi-audience.
    - **Path-narrow** (the lesson is tied to a code area, regardless of role): `(suggested paths: <glob>; topic: <topic>)`. The `<topic>` is lowercase, hyphen-separated, single word-ish (e.g., `orchestrator-lock`); it becomes the `.claude/rules/<topic>.md` filename.
 
    Don't combine audience and path scope on one entry — pick whichever axis fits better. If no extractable insight, skip this step silently.
 4. **Iterate with the lead.** Expect 1-3 rounds — learnings are durable artifacts that affect all future work, so don't rush to commit. Parse intent loosely (same pattern as the ack-before-action affirmatives):
    - Any clear affirmative without edits (e.g., "file it", "yes", "ship") → commit the draft verbatim, applying the suggested scope (audience or path) if any
    - Affirmative with text in the same message (e.g., "file with: <new text>") → commit the lead's version, applying the suggested scope if any
-   - Affirmative with explicit audience scope (e.g., "file audience=worker", "file audience=lead-pm,apm", optionally combined with `with: <text>`) → commit role-scoped using the lead's audience list, overriding any suggestion
+   - Affirmative with explicit audience scope (e.g., `file audience=<role>` or `file audience=<role1>,<role2>`, optionally combined with `with: <text>`) → commit role-scoped using the lead's audience list, overriding any suggestion
    - Affirmative with explicit path scope (e.g., "file paths=src/orchestrator/** topic=orchestrator", optionally combined with `with: <text>`) → commit using the lead's `paths` and `topic`, overriding any suggestion
    - Affirmative dropping the suggestion (e.g., "file unscoped", "file without scope") → commit verbatim to `project-learnings.md`, ignoring any APM-suggested scope
    - Clear negative (e.g., "drop", "skip", "no") → no learning from this postmortem
@@ -238,7 +238,7 @@ Trigger: lead mentions you in `#<project>-leads` with `<project>-apm postmortem 
    Before writing an audience-scoped entry with **3 or more roles**, re-ack: `<N> roles — file unscoped instead?`. Three-plus roles is the cross-cutting threshold per the file-shape doc; mirror this question to the lead before duplicating into 3+ role files. Wait for an explicit affirmative to either path before writing.
 5. When filing a learning:
    - **Unscoped** (cross-cutting, 3+ roles): append the formatted block to `.claude/rules/project-learnings.md`. This file auto-loads in every Claude Code session in the repo.
-   - **Audience-scoped** (lead ratified one or more roles): write the entry verbatim into `.claude/learnings/<role>.md` for *each* named role. For multi-audience entries, the duplication is canonical per §#422 (verbatim across all named role files). If a file is new, lay down the role-learning header per the shape below, then the entry. If it already exists, append the new entry under the existing header. **When editing or revising an existing multi-audience entry, update every file under its audience list in the same commit** — partial edits drift the copies and re-introduce the divergence §#422 exists to prevent.
+   - **Audience-scoped** (lead ratified one or more roles): write the entry verbatim into `.claude/learnings/<role>.md` for *each* named role. For multi-audience entries, the duplication is canonical here — each copy holds the same wording verbatim so paraphrasing on a future edit can't drift them apart. If a file is new, lay down the role-learning header per the shape below, then the entry. If it already exists, append the new entry under the existing header. **When editing or revising an existing multi-audience entry, update every file under its audience list in the same commit** — partial edits introduce the very drift the verbatim duplication prevents.
    - **Path-scoped** (lead ratified a `paths:` glob and a `topic`): write to `.claude/rules/<topic>.md`. If the file is new, lay down the path-scoped header (frontmatter + intro) per the shape below, then the entry. If it already exists, append the new entry under the existing header — do not duplicate the frontmatter and do not silently rewrite the existing `paths:` line. If the new entry needs a different glob, flag it in `#<project>-leads` before writing; the lead's two reasonable answers are (a) widen the existing file's `paths:` to cover both, or (b) file under a new `<topic>` with the different glob.
    - Use today's date in `YYYY-MM-DD` format (e.g., `$(date +%Y-%m-%d)`) for the `<date>` placeholder.
    - Commit and push (use the appropriate filename(s) for the scope):
@@ -284,7 +284,7 @@ Cross-cutting patterns extracted from postmortems — entries here span 3+ roles
 <2-3 sentences: what happened, why it matters, what to do differently>
 ```
 
-Audience-scoped learning file shape (`.claude/learnings/<role>.md`) — files under `.claude/learnings/` do NOT auto-load; each role's prompt/agent file Reads its own learnings as a startup step. The directory is deliberately separate from `.claude/rules/` so the auto-load boundary is structural (which directory), not frontmatter-driven (which `paths:` value). Valid `<role>` values: `worker`, `reviewer`, `lead-pm`, `apm`:
+Audience-scoped learning file shape (`.claude/learnings/<role>.md`) — files under `.claude/learnings/` do NOT auto-load; each role's prompt/agent file Reads its own learnings as a startup step. The directory is deliberately separate from `.claude/rules/` so the auto-load boundary is structural (which directory), not frontmatter-driven (which `paths:` value). `<role>` matches the role's slug in the project's agent/prompt set:
 
 ```markdown
 # <Role> Learnings
@@ -296,7 +296,7 @@ Patterns extracted from postmortems. Loaded by the <role> prompt/agent file at s
 <2-3 sentences: what happened, why it matters, what to do differently>
 ```
 
-`<Role>` in the heading uses the same casing already shipping in the four role files: `Worker`, `Reviewer`, `Lead-PM`, `APM` (title case for `worker`/`reviewer`; acronym uppercase for the PM compounds).
+`<Role>` in the heading is the slug rendered for display — pick the casing the project uses for that role's name elsewhere (title-case for one-word slugs, acronym-uppercase for initialisms).
 
 Path-scoped learning file shape (`.claude/rules/<topic>.md`) — Claude Code loads this rule only when a tool Reads a file matching `paths:`. Globs are repo-relative (resolved against the repo root, not the agent's cwd):
 

@@ -98,8 +98,8 @@ For each issue:
 1. **Read the issue and decide on a model first.** Skim the body and any blocking issues. Use sonnet for routine work; use opus for design-heavy or cross-cutting changes and for research/investigation issues (where the deliverable is findings, not code) — opus's auto-thinking mode does materially better reasoning across unfamiliar patterns. Use bare aliases (`opus`, `sonnet`, `haiku`) — full ids (`claude-opus-4-5` etc.) pin the session to that exact dated variant instead of tracking the latest version at spawn time. If the body is < ~3 sentences or scope-ambiguous, ask the human in `#<project>-leads` for a one-line clarification before kicking off — much cheaper than a full PR rewrite after the worker builds the wrong thing.
 
 2. **Mention the APM with intent** in `#<project>-leads`, including the model:
-   - `<project>-apm let's do #42 with opus and #43 with sonnet`
-   - The APM acks (`starting #42 (opus), #43 (sonnet); go?`) — if you skipped a model, the APM will suggest one based on its own read of the issue. Confirm with an affirmative or correct.
+   - `<project>-apm let's do #<N1> with opus and #<N2> with sonnet`
+   - The APM acks (`starting #<N1> (opus), #<N2> (sonnet); go?`) — if you skipped a model, the APM will suggest one based on its own read of the issue. Confirm with an affirmative or correct.
    - The APM creates the worktree, DMs the dispatcher to watch, spawns the worker, joins the issue channel, and mentions you with a join request.
 
 3. **Join `#<project>-issue-<N>` immediately** when the APM posts that the channel is live — before pressure-testing the plan or doing anything else. The APM will mention you directly; that's your cue.
