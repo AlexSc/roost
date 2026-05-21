@@ -182,6 +182,250 @@ describe('GitHubPrsPlugin.runTick', () => {
   })
 })
 
+describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
+  stubRateLimit()
+
+  function plugin(query: ((ids: string[]) => Promise<Array<{ identifier: string; attachments: { nodes: Array<{ id: string; sourceType: string | null; url: string | null }> } | null }>>) | null): GitHubPrsPlugin {
+    const p = new GitHubPrsPlugin('#proj')
+    p._setLinearQueryForTest(query)
+    return p
+  }
+
+  function attachment(prUrl: string): { id: string; sourceType: string | null; url: string | null } {
+    return { id: `att-${prUrl}`, sourceType: 'github', url: prUrl }
+  }
+
+  it('routes a PR event to the Linear-issue channel when an attachment matches the PR URL', async () => {
+    const commentEv: OrchestratorEvent = {
+      kind: 'pr_review_comment',
+      repo: 'org/repo', pr: 25, url: 'https://github.com/org/repo/pull/25',
+      author: 'alice', body: 'x', body_preview: 'x', is_worker_reply: false,
+      comment_id: 1, comment_url: 'https://example.com/c/1',
+      linked_issues: [],
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap({ linked_issues: [] }),
+      events: [commentEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: {
+          'github-prs': { watched: [{ number: 25 }] },
+          'linear-issues': { watched: [{ identifier: 'C-758' }] },
+        },
+      }
+      const result = await plugin(async () => [
+        { identifier: 'C-758', attachments: { nodes: [attachment('https://github.com/org/repo/pull/25')] } },
+      ]).runTick(cfg, { prs: {} })
+      expect(result.taggedEvents).toHaveLength(1)
+      expect(result.taggedEvents[0]?.channels.sort()).toEqual(['#proj-issue-25', '#proj-issue-c-758'])
+      expect(result.channels).toContain('#proj-issue-c-758')
+    } finally { spy.mockRestore() }
+  })
+
+  it('does not route to Linear when the linear-issues slice is absent (no resolver constructed)', async () => {
+    const commentEv: OrchestratorEvent = {
+      kind: 'pr_review_comment',
+      repo: 'org/repo', pr: 25, url: 'u',
+      author: 'alice', body: 'x', body_preview: 'x', is_worker_reply: false,
+      comment_id: 1, comment_url: 'https://example.com/c/1',
+      linked_issues: [],
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap(), events: [commentEv],
+    })
+    try {
+      let calls = 0
+      const queryFn = async () => { calls++; return [] }
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: { 'github-prs': { watched: [{ number: 25 }] } },
+      }
+      const result = await plugin(queryFn).runTick(cfg, { prs: {} })
+      expect(calls).toBe(0)
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-issue-25'])
+      expect(result.channels).not.toContain('#proj-issue-c-758')
+    } finally { spy.mockRestore() }
+  })
+
+  it('stops routing to the Linear channel on the next tick when the attachment is removed', async () => {
+    const commentEv: OrchestratorEvent = {
+      kind: 'pr_review_comment',
+      repo: 'org/repo', pr: 25, url: 'u',
+      author: 'alice', body: 'x', body_preview: 'x', is_worker_reply: false,
+      comment_id: 1, comment_url: 'https://example.com/c/1',
+      linked_issues: [],
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap(), events: [commentEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: {
+          'github-prs': { watched: [{ number: 25 }] },
+          'linear-issues': { watched: [{ identifier: 'C-758' }] },
+        },
+      }
+      let attached = true
+      const p = plugin(async () => attached
+        ? [{ identifier: 'C-758', attachments: { nodes: [attachment('https://github.com/org/repo/pull/25')] } }]
+        : [{ identifier: 'C-758', attachments: { nodes: [] } }])
+      const tick1 = await p.runTick(cfg, { prs: {} })
+      expect(tick1.taggedEvents[0]?.channels).toContain('#proj-issue-c-758')
+      attached = false
+      const tick2 = await p.runTick(cfg, tick1.state)
+      expect(tick2.taggedEvents[0]?.channels).not.toContain('#proj-issue-c-758')
+      expect(tick2.taggedEvents[0]?.channels).toContain('#proj-issue-25')
+    } finally { spy.mockRestore() }
+  })
+
+  it('issues exactly one Linear query per tick regardless of N watched PRs', async () => {
+    const ev: OrchestratorEvent = {
+      kind: 'pr_review_comment',
+      repo: 'org/repo', pr: 0, url: 'u',
+      author: 'alice', body: 'x', body_preview: 'x', is_worker_reply: false,
+      comment_id: 1, comment_url: 'https://example.com/c/1',
+      linked_issues: [],
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockImplementation(async (_repo: string, num: number) => ({
+      snap: fakePrSnap({ number: num }),
+      events: [{ ...ev, pr: num } as OrchestratorEvent],
+    }))
+    try {
+      let calls = 0
+      const queryFn = async (ids: string[]) => {
+        calls++
+        return ids.map(id => ({ identifier: id, attachments: { nodes: [] } }))
+      }
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: {
+          'github-prs': { watched: [{ number: 1 }, { number: 2 }, { number: 3 }, { number: 4 }] },
+          'linear-issues': { watched: [{ identifier: 'C-1' }, { identifier: 'C-2' }, { identifier: 'C-3' }] },
+        },
+      }
+      await plugin(queryFn).runTick(cfg, { prs: {} })
+      expect(calls).toBe(1)
+    } finally { spy.mockRestore() }
+  })
+
+  it('routes to multiple Linear channels when a PR is attached to multiple Linear issues', async () => {
+    const ev: OrchestratorEvent = {
+      kind: 'pr_review_comment',
+      repo: 'org/repo', pr: 25, url: 'u',
+      author: 'alice', body: 'x', body_preview: 'x', is_worker_reply: false,
+      comment_id: 1, comment_url: 'https://example.com/c/1',
+      linked_issues: [],
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap(), events: [ev],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: {
+          'github-prs': { watched: [{ number: 25 }] },
+          'linear-issues': { watched: [{ identifier: 'C-1' }, { identifier: 'C-2' }] },
+        },
+      }
+      const result = await plugin(async () => [
+        { identifier: 'C-1', attachments: { nodes: [attachment('https://github.com/org/repo/pull/25')] } },
+        { identifier: 'C-2', attachments: { nodes: [attachment('https://github.com/org/repo/pull/25')] } },
+      ]).runTick(cfg, { prs: {} })
+      expect(result.taggedEvents[0]?.channels.sort()).toEqual([
+        '#proj-issue-25', '#proj-issue-c-1', '#proj-issue-c-2',
+      ])
+    } finally { spy.mockRestore() }
+  })
+
+  it('lists Linear channels in the pr_added_to_watch heads-up when only a Linear cross-link exists', async () => {
+    const seedEv: OrchestratorEvent = {
+      kind: 'pr_added_to_watch', repo: 'org/repo', pr: 25, url: 'u', title: 't',
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap(), events: [seedEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: {
+          'github-prs': { watched: [{ number: 25 }] },
+          'linear-issues': { watched: [{ identifier: 'C-758' }] },
+        },
+      }
+      const result = await plugin(async () => [
+        { identifier: 'C-758', attachments: { nodes: [attachment('https://github.com/org/repo/pull/25')] } },
+      ]).runTick(cfg, { prs: {} })
+      expect(result.taggedEvents).toHaveLength(1)
+      const text = (result.taggedEvents[0]?.payload as { kind: 'oneline'; text: string }).text
+      expect(text).toContain('#proj-issue-c-758')
+    } finally { spy.mockRestore() }
+  })
+
+  it('routes pr_no_linked_issues to the project channel only, even when a Linear cross-link exists', async () => {
+    const warnEv: OrchestratorEvent = {
+      kind: 'pr_no_linked_issues', repo: 'org/repo', pr: 25, url: 'u', title: 't',
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap(), events: [warnEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: {
+          'github-prs': { watched: [{ number: 25 }] },
+          'linear-issues': { watched: [{ identifier: 'C-758' }] },
+        },
+      }
+      const result = await plugin(async () => [
+        { identifier: 'C-758', attachments: { nodes: [attachment('https://github.com/org/repo/pull/25')] } },
+      ]).runTick(cfg, { prs: {} })
+      const warn = result.taggedEvents.find(e => (e.payload as { kind: string }).kind === 'oneline')
+      expect(warn?.channels).toEqual(['#proj-leads'])
+    } finally { spy.mockRestore() }
+  })
+
+  it('declares Linear channels in desiredChannels for every watched Linear identifier', () => {
+    const cfg: OrchestratorConfig = {
+      project: 'proj', repo: 'org/repo',
+      plugins: {
+        'github-prs': { watched: [{ number: 25 }] },
+        'linear-issues': { watched: [{ identifier: 'C-1' }, { identifier: 'C-2' }] },
+      },
+    }
+    const p = new GitHubPrsPlugin('#proj')
+    const chans = p.desiredChannels(cfg)
+    expect(chans).toContain('#proj-issue-c-1')
+    expect(chans).toContain('#proj-issue-c-2')
+  })
+
+  it('degrades to github-only routing when the Linear query throws (best-effort)', async () => {
+    const commentEv: OrchestratorEvent = {
+      kind: 'pr_review_comment',
+      repo: 'org/repo', pr: 25, url: 'u',
+      author: 'alice', body: 'x', body_preview: 'x', is_worker_reply: false,
+      comment_id: 1, comment_url: 'https://example.com/c/1',
+      linked_issues: [],
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap(), events: [commentEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: {
+          'github-prs': { watched: [{ number: 25 }] },
+          'linear-issues': { watched: [{ identifier: 'C-758' }] },
+        },
+      }
+      const result = await plugin(async () => { throw new Error('linear down') }).runTick(cfg, { prs: {} })
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-issue-25'])
+    } finally { spy.mockRestore() }
+  })
+})
+
 describe('GitHubIssuesPlugin.runTick', () => {
   stubRateLimit()
 
