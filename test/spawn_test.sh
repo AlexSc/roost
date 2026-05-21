@@ -380,24 +380,25 @@ fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
 
-# -- Test 21: loopback IRC host injects --append-system-prompt trust statement ---
+# -- Test 21: loopback IRC host stages trust file + wires --append-system-prompt-file ---
 # Default channels (#roost), default host (127.0.0.1) — auto-mode classifier
 # would otherwise block IRC outbound on the operator's first @-mention.
-# bash %q backslash-escapes spaces and punctuation in the trust text, so we
-# strip backslashes before substring matching the human-readable content.
+# Trust text goes through a file (not an inline flag value) to sidestep zsh
+# extended_glob expanding the `#` in `#roost` to a "no matches" glob error
+# before claude ever runs.
 
 setup
 out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1 || true)"
 data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
 inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
-inner_cmd_text="${inner_cmd//\\/}"
+trust_text="$(cat "$data_dir/trust-prompt.txt" 2>/dev/null)"
 if [ -n "$inner_cmd" ] \
-    && echo "$inner_cmd" | grep -qF -- '--append-system-prompt' \
-    && echo "$inner_cmd_text" | grep -qF 'joined channels #roost' \
-    && echo "$inner_cmd_text" | grep -qF 'channel_message'; then
-  ok "loopback default: inner_cmd contains --append-system-prompt with channels and reply hint"
+    && echo "$inner_cmd" | grep -qF -- "--append-system-prompt-file $data_dir/trust-prompt.txt" \
+    && echo "$trust_text" | grep -qF 'joined channels #roost' \
+    && echo "$trust_text" | grep -qF 'channel_message'; then
+  ok "loopback default: inner_cmd wires --append-system-prompt-file; trust text has channels + reply hint"
 else
-  fail "loopback default: inner_cmd contains --append-system-prompt with channels and reply hint" "inner_cmd=$inner_cmd"
+  fail "loopback default: inner_cmd wires --append-system-prompt-file; trust text has channels + reply hint" "inner_cmd=$inner_cmd trust=$trust_text"
 fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
@@ -408,13 +409,13 @@ setup
 out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" --channels '#scratch,#side' 2>&1 || true)"
 data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
 inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
-inner_cmd_text="${inner_cmd//\\/}"
+trust_text="$(cat "$data_dir/trust-prompt.txt" 2>/dev/null)"
 if [ -n "$inner_cmd" ] \
-    && echo "$inner_cmd" | grep -qF -- '--append-system-prompt' \
-    && echo "$inner_cmd_text" | grep -qF 'joined channels #scratch,#side'; then
+    && echo "$inner_cmd" | grep -qF -- '--append-system-prompt-file' \
+    && echo "$trust_text" | grep -qF 'joined channels #scratch,#side'; then
   ok "custom --channels: trust statement names the requested channels verbatim"
 else
-  fail "custom --channels: trust statement names the requested channels verbatim" "inner_cmd=$inner_cmd"
+  fail "custom --channels: trust statement names the requested channels verbatim" "inner_cmd=$inner_cmd trust=$trust_text"
 fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
@@ -428,12 +429,13 @@ out="$(ROOST_IRC_SERVER=192.0.2.1 ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spa
 data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
 inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
 if [ -n "$inner_cmd" ] \
-    && ! echo "$inner_cmd" | grep -qF -- '--append-system-prompt' \
+    && ! echo "$inner_cmd" | grep -qF -- '--append-system-prompt-file' \
+    && [ ! -f "$data_dir/trust-prompt.txt" ] \
     && echo "$out" | grep -q "is not loopback" \
     && echo "$out" | grep -q "skipping auto-mode IRC trust injection"; then
-  ok "non-loopback host: inner_cmd has no --append-system-prompt; warning printed"
+  ok "non-loopback host: no flag, no trust file, warning printed"
 else
-  fail "non-loopback host: inner_cmd has no --append-system-prompt; warning printed" "out=$out inner_cmd=$inner_cmd"
+  fail "non-loopback host: no flag, no trust file, warning printed" "out=$out inner_cmd=$inner_cmd"
 fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
@@ -446,11 +448,12 @@ out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" -
 data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
 inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
 if [ -n "$inner_cmd" ] \
-    && ! echo "$inner_cmd" | grep -qF -- '--append-system-prompt' \
+    && ! echo "$inner_cmd" | grep -qF -- '--append-system-prompt-file' \
+    && [ ! -f "$data_dir/trust-prompt.txt" ] \
     && ! echo "$out" | grep -q "is not loopback"; then
-  ok "empty --channels on loopback: no --append-system-prompt, no warning"
+  ok "empty --channels on loopback: no flag, no trust file, no warning"
 else
-  fail "empty --channels on loopback: no --append-system-prompt, no warning" "out=$out inner_cmd=$inner_cmd"
+  fail "empty --channels on loopback: no flag, no trust file, no warning" "out=$out inner_cmd=$inner_cmd"
 fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
@@ -465,13 +468,13 @@ printf -- '---\nname: opusauto\ndescription: opus auto agent\nmodel: opus\npermi
 out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --agent opusauto --cwd "$TDIR" 2>&1 || true)"
 data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
 inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
-inner_cmd_text="${inner_cmd//\\/}"
+trust_text="$(cat "$data_dir/trust-prompt.txt" 2>/dev/null)"
 if [ -n "$inner_cmd" ] \
-    && echo "$inner_cmd" | grep -qF -- '--append-system-prompt' \
-    && echo "$inner_cmd_text" | grep -qF 'joined channels #roost'; then
+    && echo "$inner_cmd" | grep -qF -- '--append-system-prompt-file' \
+    && echo "$trust_text" | grep -qF 'joined channels #roost'; then
   ok "--agent path: trust statement still injected"
 else
-  fail "--agent path: trust statement still injected" "inner_cmd=$inner_cmd"
+  fail "--agent path: trust statement still injected" "inner_cmd=$inner_cmd trust=$trust_text"
 fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
