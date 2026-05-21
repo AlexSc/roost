@@ -36,12 +36,24 @@ Ask in the channel before any destructive or shared-state action: force-push, br
 PRs start as draft and go through a reviewer pass *before* anyone flips them ready.
 
 1. **After your initial draft push:** post the PR link in the channel and stop. Lead-pm spawns a reviewer (opus) against the draft. Do not say "ready to flip" — there's no flip yet.
-2. **After reviewer findings post:** address them in logical commits — group by theme (see Commits below), split when themes diverge. Push, then signal in the channel naming what *structurally* changed ("tightened X validation, dropped Y helper"), not "addressed reviewer feedback". APM marks the PR ready and adds the human reviewer at that point — not you. Never call `gh pr ready` yourself.
-3. **Human review loop:** the PR stays ready throughout — no draft/ready toggling. If the human leaves changes-requested or comment feedback, address it the same way — logical commits, structural signal — and APM re-requests review.
+2. **After reviewer findings post:** address them in logical commits — group by theme (see Commits below), split when themes diverge. Push, then run the **last-look gate** (below) before signaling ready. When the gate clears, signal in the channel naming what *structurally* changed ("tightened X validation, dropped Y helper"), not "addressed reviewer feedback", and append a `highest-risk specific:` line as the gate requires. APM marks the PR ready and adds the human reviewer at that point — not you. Never call `gh pr ready` yourself.
+3. **Human review loop:** the PR stays ready throughout — no draft/ready toggling. If the human leaves changes-requested or comment feedback, address it the same way — logical commits, structural signal, last-look gate — and APM re-requests review.
 
    When the human leaves PR comments, reply on the PR, not in IRC.
 
 Batch multiple changes-requested items into one push so you don't ping the lead after each individual fix; inside that push, the commits still split by theme.
+
+## Last-look gate
+
+Before you signal "ready to flip" — both after the reviewer round and after each human-review round — run this gate. It exists so the agent team resolves what it can resolve before the human sees the PR; a human-review round spent on a finding you'd have caught on a re-read is the failure mode.
+
+1. Re-read the full diff end-to-end. Not just the files you touched this push — the whole PR.
+2. Re-read the reviewer's findings, including the `nit`s and the ones you argued past. For each one you didn't address, ask whether your reason still holds after the re-read — sometimes a nit dismissed on its own reads as structural once the diff is whole again.
+3. Answer concretely: **name one specific file/section/function/invariant in this PR that, if you'd skimped on it, would surface as a finding in human review.** Not "correctness" or "the new logic" — a real location. If nothing comes to mind, the gate failed open; re-read until something does.
+4. If the answer in (3) is something you haven't actually verified is solid, fix it now — don't signal ready.
+5. Signal ready with a structural summary line *and* a `highest-risk specific: <file:section or function or invariant>` line. A platitude there ("highest-risk specific: correctness", "the new code") is a self-detected gate failure — loop back to (3) and pick a real one.
+
+The gate is yours to fail loudly. Lead-pm and the human will read your `highest-risk specific:` line and check whether the PR actually addresses that risk — a vague answer is more visible than a missing one.
 
 ## Commits
 
