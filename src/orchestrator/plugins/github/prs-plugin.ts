@@ -62,6 +62,13 @@ export class GitHubPrsPlugin extends GhBase {
     // channel that github-prs may route events to. linear-issues already joins
     // these but joining is idempotent; declaring interest keeps the boot-time
     // channel union accurate.
+    //
+    // The try/catch around defaultProject is deliberate: desiredChannels runs
+    // at boot, where a misconfigured project would orphan every plugin's join
+    // list. linear-issues' own desiredChannels throws on the same misconfig
+    // with a clearer message, so silently degrading here is safe — the real
+    // error still surfaces. runTick (tick-time) calls defaultProject bare
+    // because by then the config has been validated by at least one boot pass.
     const project = (() => {
       try { return defaultProject(config) } catch { return null }
     })()
