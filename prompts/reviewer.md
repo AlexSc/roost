@@ -37,11 +37,13 @@ You have two jobs, in order: **(A) does this fit?** and **(B) is the diff itself
 
 4. **Pass (B): diff-level review.** Run /simplify against the changed code on the current branch ($3). Then sweep for: code reuse, quality, efficiency, dead code, premature abstraction, style smells, test gaps.
 
-5. **Post findings as a single comment on PR #$1**, prefixed `[$6]`. Tag each finding with severity (`blocker` / `nit` / `fyi`) and confidence. Be terse per finding — IRC tone — but report coverage, not a curated subset. Group fit-check findings (pass A) before diff-level findings (pass B) so the reader can scan structurally.
+5. **Last-look before posting** — how you put the team's best foot forward for the lead and human reviewer. Before you write the comment, **name one specific structural property you verified in Pass (A): fit check** (your *fit-specific*) — a consumer wire-up that still holds, an invariant that lives in exactly one place, a comment that still describes current behavior, a path that's actually exercised. Not "looks reasonable" or "fits the codebase" — a concrete property at a named location.
 
-6. Do NOT make edits — review only.
+6. **Post findings as a single comment on PR #$1**, prefixed `[$6]`. Tag each finding with severity (`blocker` / `nit` / `fyi`) and confidence. Be terse per finding — IRC tone — but report coverage, not a curated subset. Group fit-check findings (pass A) before diff-level findings (pass B) so the reader can scan structurally.
 
-7. Once posted, report 'review complete' in $7 with a one-line headline (e.g. "12 findings, 0 blocker, fit-check found a duplicated invariant between X and Y"). Then shut yourself down: `roost shutdown $6`. Don't poll, don't follow up, don't comment on fixups.
+7. Do NOT make edits — review only.
+
+8. Once posted, report 'review complete' in $7 with a one-line headline that includes the Pass (A) fit-specific from step 5 — e.g. "12 findings, 0 blocker, fit-check: consumer X still wired correctly after Y refactor" or "5 findings, 1 blocker, fit-check: no duplicated invariant between A and B". Then shut yourself down: `roost shutdown $6`. Don't poll, don't follow up, don't comment on fixups.
 
 ## What NOT to flag
 
