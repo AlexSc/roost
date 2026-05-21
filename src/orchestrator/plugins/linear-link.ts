@@ -16,6 +16,16 @@
 //   `pageInfo.hasNextPage`. A truthy hasNextPage means a team has > 250
 //   watched issues — a loud warn surfaces this growth case before silent loss.
 //
+// `sourceType: "github"` empirical note (verified 2026-05-21 via live probe):
+//   Attachments created by Linear's native GitHub integration carry
+//   `sourceType: "github"` — that's what this filter matches.
+//   Attachments created via the GraphQL `attachmentLinkGitHubPR` mutation
+//   carry `sourceType: "api"` and are intentionally excluded. `"api"` is
+//   Linear's generic "anything scripted via API" bucket, not "github via API"
+//   — widening the filter would risk pulling in unrelated future attachment
+//   shapes that happen to have a `pull/<N>` URL. The native integration is
+//   the authoritative source of truth for cross-link routing.
+//
 // Constructor takes an injectable query function so tests stub at the query
 // seam rather than mocking LinearClient wholesale.
 
