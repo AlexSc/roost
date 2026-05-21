@@ -404,18 +404,22 @@ fi
 teardown
 
 # -- Test 22: custom --channels list lands inside the trust statement ----------
+# Whitespace inside the comma-separated list is stripped before rendering
+# (operator may type `--channels '#a, #b'`); trust text uses _channels_for_trust
+# rather than raw $channels for a clean comma-only join.
 
 setup
-out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" --channels '#scratch,#side' 2>&1 || true)"
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" --channels '#scratch, #side' 2>&1 || true)"
 data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
 inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
 trust_text="$(cat "$data_dir/trust-prompt.txt" 2>/dev/null)"
 if [ -n "$inner_cmd" ] \
     && echo "$inner_cmd" | grep -qF -- '--append-system-prompt-file' \
-    && echo "$trust_text" | grep -qF 'joined channels #scratch,#side'; then
-  ok "custom --channels: trust statement names the requested channels verbatim"
+    && echo "$trust_text" | grep -qF 'joined channels #scratch,#side' \
+    && ! echo "$trust_text" | grep -qF '#scratch, #side'; then
+  ok "custom --channels: trust statement names the channels with whitespace stripped"
 else
-  fail "custom --channels: trust statement names the requested channels verbatim" "inner_cmd=$inner_cmd trust=$trust_text"
+  fail "custom --channels: trust statement names the channels with whitespace stripped" "inner_cmd=$inner_cmd trust=$trust_text"
 fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
