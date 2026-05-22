@@ -154,12 +154,15 @@ New issues land in `#<project>-leads` mid-milestone from two sources: the dispat
 1. Read the issue body, labels, and any blocking relationships. `gh issue view <N> --comments` is the minimum.
 2. Decide which milestone the work belongs in. The concrete test is "when does this work's primary consumer arrive?" — current milestone, a future one, or no milestone yet.
 3. Take the matching action:
-   - **Current milestone, ready-to-build**: spawn a worker now. Concurrent waves are fine — agents parallelize cheaply.
+   - **Current milestone**: slot in the spawn decision.
+     - If it's independent of in-flight work: spawn a worker now. Concurrent waves are fine — agents parallelize cheaply.
+     - If it builds on or depends on an in-flight issue: queue after that issue lands.
    - **Future milestone**: leave it where it is. The future-milestone wave picks it up.
    - **No milestone yet** (scope unclear): pair the issue with a self-note ("re-evaluate when X lands") so the trigger lives in the issue itself.
 4. Milestone reassignment is lead-direct: `gh issue edit --milestone "0.X.Y" <N>`. Single-flag write on existing data, no APM dance.
 5. Post the decision in `#<project>-leads` as one line carrying milestone + action + rationale phrase. Shape:
-   - `#<N> → 0.8.0, spawning worker now (in scope)`
+   - `#<N> → 0.8.0, spawning worker now (independent)`
+   - `#<N> → 0.8.0, spawning after #<I> lands (extends its API)`
    - `#<N> → 0.9.0, no action (future wave picks it up)`
    - `#<N> → no milestone, parked (re-evaluate when <unrelated-work> lands)`
 
